@@ -1,4 +1,5 @@
 import { turnSecretScrubber, type TurnSecretScrubber } from "./turn-secret-scrubber.ts";
+import { listItemRows } from "./vault-db.ts";
 
 /**
  * What the session trace keeps of the vault. A `vault_read` result carrying secure or sealed
@@ -14,19 +15,41 @@ const LOCKED_RESULT = /Vault items \((secure|sealed) tier\)/;
 
 type Rec = Record<string, unknown>;
 
-function lockedResult(output: string): { tier: string; items: string[] } | null {
+/** Every item name the vault holds, never a value. A name is not a secret: `vault_list` hands them out. */
+function vaultItemNames(): string[] {
+  try {
+    return listItemRows().map((r) => r.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The tier and the item names of a locked read. The names are only those that match an item the
+ * vault really holds: a value is never taken for a name, however its lines start (a list of
+ * recovery codes begins its lines with `- `, as the result's own item lines do).
+ */
+function lockedResult(output: string, knownNames: () => readonly string[]): { tier: string; items: string[] } | null {
   const m = LOCKED_RESULT.exec(output);
   if (!m) return null;
-  const items = output.replace(/\\n/g, "\n").split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2).replace(/ \([^)]*\):.*$/, ""));
+  const known = new Set(knownNames());
+  const items: string[] = [];
+  for (const line of output.replace(/\\n/g, "\n").split("\n")) {
+    if (!line.startsWith("- ")) continue;
+    const name = line.slice(2).replace(/ \([^)]*\):.*$/, "");
+    if (known.has(name) && !items.includes(name)) items.push(name);
+  }
   return { tier: m[1]!, items };
 }
 
 /** The record as the trace may store it. */
-export function filterVaultTraceRecord(sessionId: string | null, payload: unknown, scrubber: TurnSecretScrubber = turnSecretScrubber): unknown {
+export function filterVaultTraceRecord(
+  sessionId: string | null, payload: unknown, scrubber: TurnSecretScrubber = turnSecretScrubber, knownNames: () => readonly string[] = vaultItemNames,
+): unknown {
   if (!payload || typeof payload !== "object") return payload;
   const p = payload as Rec;
   if (p.type === "tool_result" && typeof p.output === "string") {
-    const locked = lockedResult(p.output);
+    const locked = lockedResult(p.output, knownNames);
     if (locked) {
       const { output: _output, ...rest } = p;
       return { ...rest, withheld: true, tier: locked.tier, items: locked.items };

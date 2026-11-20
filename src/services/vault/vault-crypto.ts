@@ -98,6 +98,47 @@ export function unwrapDek(kek: Buffer, nonce: Buffer, wrapped: Buffer, tier: Vau
   return dek && dek.length === KEY_BYTES ? dek : null;
 }
 
+// ---------------------------------------------------------------------------
+// Attached files
+// ---------------------------------------------------------------------------
+
+/**
+ * One part of an attached file: `body` (the bytes, in the file on disk) or `meta` (the original
+ * name and checksum, in the database). The additional data binds each to its tier, its item and
+ * its attachment, so a file copied onto another attachment, item or tier does not open.
+ */
+export type VaultFilePart = "body" | "meta";
+const fileAad = (tier: VaultLockedTier, itemId: string, attachmentId: string, part: VaultFilePart) =>
+  Buffer.from(`${AAD_PREFIX}|file|${tier}|${itemId}|${attachmentId}|${part}`, "utf8");
+
+export function encryptFilePart(
+  dek: Buffer, tier: VaultLockedTier, itemId: string, attachmentId: string, part: VaultFilePart, plaintext: Buffer,
+): { nonce: Buffer; ciphertext: Buffer } {
+  return seal(dek, plaintext, fileAad(tier, itemId, attachmentId, part));
+}
+
+/** The plaintext, or null when it does not open under this key, tier, item, attachment and part. */
+export function decryptFilePart(
+  dek: Buffer, tier: VaultLockedTier, itemId: string, attachmentId: string, part: VaultFilePart, nonce: Buffer, ciphertext: Buffer,
+): Buffer | null {
+  return open(dek, nonce, ciphertext, fileAad(tier, itemId, attachmentId, part));
+}
+
+/** Every encrypted file on disk starts with these bytes, then its nonce, then ciphertext and tag. */
+export const VAULT_FILE_MAGIC = Buffer.from("PPMVF1", "ascii");
+
+/** The bytes of a file on disk for `sealed` (from `encryptFilePart`). */
+export function vaultFileBytes(sealed: { nonce: Buffer; ciphertext: Buffer }): Buffer {
+  return Buffer.concat([VAULT_FILE_MAGIC, sealed.nonce, sealed.ciphertext]);
+}
+
+/** The nonce and ciphertext of a file read from disk, or null when it is not one of the vault's. */
+export function parseVaultFileBytes(bytes: Buffer): { nonce: Buffer; ciphertext: Buffer } | null {
+  const head = VAULT_FILE_MAGIC.length;
+  if (bytes.length < head + NONCE_BYTES + TAG_BYTES || !bytes.subarray(0, head).equals(VAULT_FILE_MAGIC)) return null;
+  return { nonce: bytes.subarray(head, head + NONCE_BYTES), ciphertext: bytes.subarray(head + NONCE_BYTES) };
+}
+
 export interface VaultPayload { value: string; note?: string }
 
 export function encryptItem(dek: Buffer, tier: VaultLockedTier, itemId: string, payload: VaultPayload): { nonce: Buffer; ciphertext: Buffer } {

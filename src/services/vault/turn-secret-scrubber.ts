@@ -19,6 +19,34 @@ export const HOLD_MS = 24 * 60 * 60_000;
  */
 const MIN_VALUE_CHARS = 4;
 
+/** The most lines of one value held on their own: each is a pattern run over every text checked. */
+export const MAX_LINE_FRAGMENTS = 24;
+/** `-----BEGIN OPENSSH PRIVATE KEY-----` and its END: in every key, so not a secret of this one. */
+const ARMOR_LINE = /^-{3,}\s*(?:BEGIN|END)\b.*-{3,}$/;
+
+/**
+ * What to look for of one value: the value whole, then each of its lines that is distinctive enough
+ * to stand alone. A multi-line value (an address, a list of recovery codes) is often repeated a line
+ * at a time, and the whole-value match misses that. A line, less any list marker, counts when it
+ * has at least 8 characters besides spaces and a digit among them, or at least 12: short or common
+ * lines ("Edinburgh", "Flat 4") and a key's BEGIN/END armour would otherwise be stripped out of
+ * ordinary text. At most `MAX_LINE_FRAGMENTS` lines, the longest first: a long key would otherwise
+ * add a pattern per line to every check of every chat's text.
+ */
+export function secretFragments(value: string): string[] {
+  if (!/[\r\n]/.test(value)) return [value];
+  const lines = new Set<string>();
+  for (const raw of value.split(/\r\n?|\n/)) {
+    // A list's own marker ("- ", "3. ") is not part of what an AI repeats: "your code is A9WD-…".
+    const line = raw.trim().replace(/^(?:[-*•+]|\d{1,3}[.)])\s+/, "");
+    if (ARMOR_LINE.test(line)) continue;
+    const loose = line.replace(/\s+/g, "");
+    if (loose.length >= 12 || (loose.length >= 8 && /\d/.test(loose))) lines.add(line);
+  }
+  const kept = [...lines].sort((a, b) => b.length - a.length).slice(0, MAX_LINE_FRAGMENTS);
+  return [value, ...kept];
+}
+
 interface Held { name: string; pattern: RegExp; loose: string }
 interface Entry { items: Held[]; until: number }
 
@@ -57,8 +85,9 @@ export function createTurnSecretScrubber(opts: { now?: () => number; canonical?:
     hold(sessionId: string, items: readonly { name: string; value: string }[]): void {
       const id = canonical(sessionId);
       const entry = held.get(id) ?? { items: [], until: 0 };
+      // The whole value first, so a value repeated in full becomes one tag rather than one per line.
       for (const { name, value } of items) {
-        for (const form of formsOf(value)) {
+        for (const form of secretFragments(value).flatMap(formsOf)) {
           const loose = loosen(form);
           if (loose.length < MIN_VALUE_CHARS) continue;
           if (!entry.items.some((h) => h.loose === loose)) entry.items.push({ name, pattern: patternFor(form), loose });
@@ -72,7 +101,8 @@ export function createTurnSecretScrubber(opts: { now?: () => number; canonical?:
     scrub(text: string, sessionId?: string): string {
       let out = text;
       // A function, so `$&` or `$1` in an item's name is never read as a replacement pattern.
-      for (const h of entriesFor(sessionId)) out = out.replace(h.pattern, () => `[vault:${h.name}]`);
+      // Brackets dropped from the name, so the tag stays one `[vault:…]` wherever it is parsed.
+      for (const h of entriesFor(sessionId)) out = out.replace(h.pattern, () => `[vault:${h.name.replace(/[[\]]/g, "")}]`);
       return out;
     },
 

@@ -2038,8 +2038,42 @@ an address, a passport number). Three tiers kept apart on purpose (`src/shared/v
 - **Leaks blocked.** Values handed to an AI are held per chat for a day, or until the chat is
   deleted (`turn-secret-scrubber.ts`; values under 4 characters are not matched): the session trace stores a locked read as withheld item names and
   scrubs repeats (`vault-trace-filter.ts`); the notebook and every session-tool call refuse text
-  holding one; Telegram text and every notification are scrubbed; a card is announced only as
-  "Unlock needed". Nothing in `/api/vault` logs a body.
+  holding one; Telegram text and every notification are scrubbed. Nothing in `/api/vault` logs a body.
+- **Multi-line values** (an address, recovery codes, a key; still at most 8,000 characters, line
+  endings stored as `\n`). The field is a textarea drawn as discs while hidden
+  (`-webkit-text-security`, in Chromium, Safari and Firefox 150), else a block of dots that opens on
+  Show. The scrubber and the history rewrite also hold each distinctive line of such a value (8+
+  characters with a digit, or 12+, less a list marker), since an AI often repeats one line. The
+  trace keeps a read's item names only when they are names of real items (a value line starting
+  `- ` once read as one). Telegram text is scrubbed before Markdown is turned into HTML and before
+  a long message is cut, so neither a bullet nor a cut can change a value's shape.
+- **Files** (migration 78, `vault-attachments.service.ts`). A Secure or Sealed item may hold up to
+  10 photos or PDFs (JPEG, PNG, WebP, PDF, told from the first bytes; 10 MB each, 200 MB in all).
+  Each is AES-256-GCM under the tier's data key, additional data naming tier, item, file and part,
+  written once to `<PPM dir>/vault-files/<random>.bin` (`vault-files.dev/` beside `ppm.dev.db`) and
+  never changed. The original name and checksum are encrypted in `vault_attachments`; lists, Settings
+  and `vault_list` show the user's label, the type and the size. No AI reads a file. The browser
+  shrinks a photo to 2,000 px and redraws it, which drops its EXIF, unless "Keep the original" is
+  ticked. `POST /api/vault/files/:id/content` answers the decrypted file to the page that unlocked it
+  (`no-store`, `nosniff`, `sandbox`); the viewer revokes its object URL on close and after 60 s.
+  Moving an item re-encrypts its files under the other tier's key; Public cannot hold files. A
+  removed file is moved to `vault-files/retired/` and deleted after the next snapshot has kept what
+  it needs (at the latest after 7 days); a start-up sweep retires files no row names. The folder is
+  inside the PPM directory, so every filesystem door refuses it; an AI's own Read tool can open it
+  but finds only ciphertext under random names.
+- **Backups** (`db-backup-vault-files.ts`). After each snapshot the files it names are hard-linked
+  (copied across drives) into `<backups>/vault-files/`, where one copy serves every snapshot;
+  retention drops files no kept snapshot names, and `ppm restore` puts back the files the restored
+  database names, reporting any it cannot find. Deleting a tier does not reach into backups: older
+  snapshots keep its encrypted items and files until they age out (about four weeks), still opening
+  only with that tier's password at the time of the snapshot (a password change re-wraps the key,
+  not the files).
+- **Telegram notice** (`assistant-telegram-db-notices.ts`). A card is announced with the item names,
+  the tier and the ask ("asks to open the Sealed item Passport", "proposes saving …"), never a value,
+  the AI's purpose or a file. Two link buttons: Open in PPM (the chat holding the card) and Open
+  Vault (`/?openVault=<item id>`, Settings → Vault scrolled to the item). The links carry an id only
+  and go through PPM's sign-in; the tier's password is asked for on the page. Push and ntfy still
+  say only "Unlock needed in the PPM vault", since they can land on a lock screen.
 - **Settings → Vault**: the Secure tier stays open five minutes (Lock now) for the one page that
   typed the password: the page sends a random handle kept in memory, so PPM's auth token alone never
   reaches an open tier, and moving an item out to Public always asks for the password. Every Sealed
@@ -2061,9 +2095,11 @@ an address, a passport number). Three tiers kept apart on purpose (`src/shared/v
 is reopened, and what was sent to Anthropic or OpenAI cannot be removed. The scrubber is a
 fallback: a value spelled out differently gets past it. The Public tier is not protected at all.
 While a Secure window is open, a process that can read PPM's memory can take that key (the Sealed
-tier never stays open). JavaScript strings cannot be wiped. Deleted items stay in older `ppm.db`
-backups until they expire. Verify with `tests/e2e/vault-canary-e2e.mjs` (Docker, capped), which
-checks every storage place for the marker values.
+tier never stays open). JavaScript strings cannot be wiped. Deleted items and files stay in older
+backups until they expire. Losing a tier's password loses its files too, backups included. Verify
+with `tests/e2e/vault-canary-e2e.mjs` (Docker, capped), which checks every storage place for the
+marker values, and `tests/e2e/vault-attachments-e2e.mjs` for multi-line values, files and the
+Telegram notice.
 
 ## Startup
 

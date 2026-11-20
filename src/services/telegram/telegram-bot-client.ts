@@ -14,7 +14,7 @@
 import { createLogger } from "../logger.ts";
 import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { BOT_TOKEN_RE, botFileUrl, botMethodUrl, scrubToken } from "./telegram-api-base.ts";
-import { splitTelegramHtml, stripTelegramHtml } from "./telegram-html-format.ts";
+import { scrubVaultForTelegramHtml, splitTelegramHtml, stripTelegramHtml } from "./telegram-html-format.ts";
 import type {
   InlineKeyboardMarkup,
   TelegramApiResult,
@@ -73,9 +73,7 @@ const FILE_PATH_RE = /^[\w-]+(?:\/[\w.-]+)*$/;
  * relay is sending it. A fallback; the vault's own rules keep those values off Telegram first.
  */
 function scrubText(v: string): string {
-  if (!turnSecretScrubber.any()) return v;
-  // The tag is HTML-safe in a parse_mode HTML message: an item name's own <, > and & are dropped.
-  return turnSecretScrubber.scrub(v).replace(/\[vault:([^\]]*)\]/g, (_m, n: string) => `[vault:${n.replace(/[<>&]/g, "")}]`);
+  return scrubVaultForTelegramHtml(v);
 }
 
 function withoutVaultValues(body: Record<string, unknown>): Record<string, unknown> {

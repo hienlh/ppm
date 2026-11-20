@@ -32,7 +32,8 @@ export const VAULT_TOOL_DEFINITIONS: readonly Json[] = [
     name: VAULT_LIST_TOOL,
     description:
       "List the items in the user's PPM vault: id, tier, name and kind, never a value. Tiers: `public` (read freely), "
-      + "`secure` (the user unlocks it on a card in PPM) and `sealed` (one item per card; shown to the user unless they give it to you).",
+      + "`secure` (the user unlocks it on a card in PPM) and `sealed` (one item per card; shown to the user unless they give it to you). "
+      + "An item may list `files` (photos or PDFs): only the user can open those, in PPM; you cannot read them.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -75,8 +76,22 @@ export const VAULT_TOOL_DEFINITIONS: readonly Json[] = [
 const ADVICE = "These came from the user's vault. Use them only for the purpose you gave; do not repeat them back unless the user needs to see them; "
   + "never write them to the notebook, a file, a report or another chat.";
 
+/**
+ * A value as the AI reads it. One line stays on the item's line. Several lines go in a fenced block,
+ * byte for byte, so a key or a certificate written out from it is exactly what was stored (an
+ * indent would have to be taken off again), and no line of it can pass for another item. The
+ * fence is longer than any run of backticks inside the value.
+ */
+export function valueBlock(text: string): string {
+  if (!/[\r\n]/.test(text)) return text;
+  const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map((m) => m[0].length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  const lines = text.split(/\r\n?|\n/).length;
+  return `(${lines} lines, exactly as between the fences)\n${fence}\n${text}\n${fence}`;
+}
+
 function valuesText(tier: VaultTier, items: VaultItemValue[]): string {
-  const lines = items.map((i) => `- ${i.name} (${VAULT_KIND_LABELS[i.kind]}): ${i.value}${i.note ? `\n  note: ${i.note}` : ""}`);
+  const lines = items.map((i) => `- ${i.name} (${VAULT_KIND_LABELS[i.kind]}): ${valueBlock(i.value)}${i.note ? `\n  note: ${valueBlock(i.note)}` : ""}`);
   return `${tier === "public" ? "Public vault items:" : `Vault items (${tier} tier). ${ADVICE}`}\n${lines.join("\n")}`;
 }
 
@@ -182,7 +197,11 @@ export function createVaultTools(deps: {
       try {
         if (name === VAULT_LIST_TOOL) {
           const s = service.status();
-          const items = service.listItems().map((i) => ({ id: i.id, tier: i.tier, name: i.name, kind: i.kind, updatedAt: new Date(i.updatedAt).toISOString() }));
+          // Files show as label, type and size only: no AI opens one, and their original names stay encrypted.
+          const items = service.listItems().map((i) => ({
+            id: i.id, tier: i.tier, name: i.name, kind: i.kind, updatedAt: new Date(i.updatedAt).toISOString(),
+            ...(i.attachments?.length ? { files: i.attachments.map((f) => ({ label: f.label, type: f.type, size: f.size })) } : {}),
+          }));
           return textResult(JSON.stringify({ tiers: { public: true, secure: s.tiers.secure.enabled, sealed: s.tiers.sealed.enabled }, items }, null, 2));
         }
         if (name === VAULT_READ_TOOL) return await read(caller, args, signal);

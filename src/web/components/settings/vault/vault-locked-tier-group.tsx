@@ -9,6 +9,7 @@ import { formatCountdown } from "@/lib/vault-client";
 import { VAULT_TIER_LABELS, type VaultItemMeta, type VaultLockedTier, type VaultTierStatus } from "../../../../shared/vault";
 import { SectionHeader } from "../settings-rows";
 import { VaultItemRow, type VaultRevealed } from "./vault-item-row";
+import type { VaultFileActions } from "./vault-file-list";
 
 const INTRO: Record<VaultLockedTier, string> = {
   secure: "Encrypted under its own password. The AI reads an item only after you type that password on a card in PPM, once or for a few minutes.",
@@ -23,6 +24,8 @@ export interface VaultTierActions {
   onEdit: (item: VaultItemMeta) => void;
   onMove: (item: VaultItemMeta) => void;
   onDelete: (item: VaultItemMeta) => void;
+  onAddFile: (item: VaultItemMeta) => void;
+  fileActions: VaultFileActions;
   onChangePassword: () => void;
   onDeleteTier: () => void;
   /** Secure only. */
@@ -85,6 +88,8 @@ export function VaultLockedTierGroup({ tier, status, items, revealed, now, actio
             onEdit={() => actions.onEdit(item)}
             onMove={() => actions.onMove(item)}
             onDelete={() => actions.onDelete(item)}
+            onAddFile={() => actions.onAddFile(item)}
+            fileActions={actions.fileActions}
           />
         ))}
       </div>

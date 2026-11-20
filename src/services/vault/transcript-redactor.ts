@@ -3,7 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { readFileChunks } from "../file-chunks.ts";
 import { createLogger } from "../logger.ts";
-import { HOLD_MS } from "./turn-secret-scrubber.ts";
+import { HOLD_MS, secretFragments } from "./turn-secret-scrubber.ts";
 
 /**
  * After a turn in which an AI was handed secure or sealed values, rewrites the provider's history
@@ -46,10 +46,13 @@ function loosePattern(value: string): RegExp {
 
 function itemOf(name: string, value: string): Item | null {
   if (value.replace(/\s+/g, "").length < 4) return null;
+  // The whole value, then each distinctive line of a multi-line one (an AI repeating one line).
   // The raw line holds the JSON-escaped form; a value with a quote, a backslash or a newline
   // only matches there in that form.
-  const jsonForm = JSON.stringify(value).slice(1, -1);
-  const forms = jsonForm === value ? [value] : [value, jsonForm];
+  const forms = secretFragments(value).flatMap((v) => {
+    const jsonForm = JSON.stringify(v).slice(1, -1);
+    return jsonForm === v ? [v] : [v, jsonForm];
+  });
   return { name, patterns: forms.map(loosePattern) };
 }
 

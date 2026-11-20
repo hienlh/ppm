@@ -10,6 +10,7 @@
  * `text (url)` so the person sees where it goes before tapping it.
  */
 import { escapeTelegramHtml } from "../notification-format.ts";
+import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { redactLogText, SECRET_RULES } from "../../shared/log-redact.ts";
 import { findPathsInText, inlineCodePath } from "../../web/lib/local-path-detect.ts";
 import { telegramPathLink } from "./telegram-path-link-cache.ts";
@@ -25,8 +26,11 @@ const RULE = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 
 export function markdownToTelegramHtml(md: string): string {
+  // A vault value an AI read is taken out before formatting: once a line of it has become a
+  // bullet, bold or code, the HTML no longer matches the value the client's own check looks for.
+  const source = turnSecretScrubber.any() ? turnSecretScrubber.scrub(md) : md;
   // NUL is the placeholder marker below; it has no business in a chat message anyway.
-  const lines = md.replace(/\r\n?/g, "\n").replace(/\u0000/g, "").split("\n");
+  const lines = source.replace(/\r\n?/g, "\n").replace(/\u0000/g, "").split("\n");
   const out: string[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -192,7 +196,20 @@ function nextStack(stack: OpenTag[], token: string): OpenTag[] {
  * Tags open at the cut are closed at the end of one message and opened again at the start of
  * the next, so each message is valid on its own. Messages with no visible text are dropped.
  */
-export function splitTelegramHtml(html: string, max = TELEGRAM_MESSAGE_MAX): string[] {
+/**
+ * `html` with every vault value an AI read lately replaced by `[vault:<name>]`, the tag kept valid in
+ * a `parse_mode: "HTML"` message (an item name's own <, > and & dropped). The Bot API client runs it
+ * on every text it sends; the splitter runs it before cutting.
+ */
+export function scrubVaultForTelegramHtml(html: string): string {
+  if (!turnSecretScrubber.any()) return html;
+  return turnSecretScrubber.scrub(html).replace(/\[vault:([^\]]*)\]/g, (_m, n: string) => `[vault:${n.replace(/[<>&]/g, "")}]`);
+}
+
+export function splitTelegramHtml(rawHtml: string, max = TELEGRAM_MESSAGE_MAX): string[] {
+  // Before the cut too: a vault value cut across two messages matches in neither of them. The
+  // tag is HTML-safe, as the client's own scrub makes it (an item name's <, > and & dropped).
+  const html = scrubVaultForTelegramHtml(rawHtml);
   const chunks: string[] = [];
   const push = (chunk: string) => { if (stripTelegramHtml(chunk).trim()) chunks.push(chunk); };
   if (html.length <= max) {

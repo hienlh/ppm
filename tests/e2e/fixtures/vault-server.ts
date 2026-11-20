@@ -390,6 +390,16 @@ async function testRoute(req: Request, path: string): Promise<Response> {
     const sent = await client.sendPhotos(chatId, [{ bytes: png, filename: "form.png", caption }]);
     return json({ ok: sent.ok });
   }
+  // A public https address for PPM (as a tunnel gives it), so Telegram links go out as URL buttons
+  // instead of inline text; `{ url: null }` puts the fixture's own answer back.
+  if (path === "/__vault-test/public-url" && req.method === "POST") {
+    const { url } = await req.json() as { url: string | null };
+    const { tunnelService } = await import("../../../src/services/tunnel.service");
+    const own = tunnelService as unknown as { getTunnelUrl: () => string | null; __fixtureOriginal?: () => string | null };
+    own.__fixtureOriginal ??= own.getTunnelUrl.bind(tunnelService);
+    own.getTunnelUrl = url ? () => url : own.__fixtureOriginal;
+    return json({ ok: true });
+  }
   if (path.startsWith("/__vault-test/tg/")) {
     return (await telegram.route(req, path.slice("/__vault-test/tg/".length))) ?? json({ error: "unknown test route" }, 404);
   }

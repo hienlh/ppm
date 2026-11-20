@@ -15,7 +15,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 77;
+export const CURRENT_SCHEMA_VERSION = 78;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1623,6 +1623,30 @@ export function runMigrations(database: Database): void {
     // reads its attachments exactly as it did and never sees the voice. Only adds a column.
     addColumnIfMissing(database, "chat_drafts", "voice", "TEXT");
     database.exec(`PRAGMA user_version = 77;`);
+  }
+
+  if (current < 78) {
+    // Files attached to a vault item of a locked tier (`src/services/vault/vault-attachments*.ts`).
+    // The bytes live encrypted on disk under the PPM directory (`vault-files/`), never in this
+    // table; a row holds the user's label, the type and size, the file's random name on disk,
+    // and the original file name and checksum encrypted under the tier's key. No public tier.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS vault_attachments (
+        id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL,
+        tier TEXT NOT NULL CHECK (tier IN ('secure', 'sealed')),
+        label TEXT NOT NULL,
+        mime TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        file_id TEXT NOT NULL UNIQUE,
+        meta_nonce BLOB NOT NULL,
+        meta_ciphertext BLOB NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    database.exec(`CREATE INDEX IF NOT EXISTS idx_vault_attachments_item ON vault_attachments(item_id)`);
+    database.exec(`PRAGMA user_version = 78;`);
   }
 }
 

@@ -94,7 +94,30 @@ export function VaultNameInput({ value, onChange, disabled }: { value: string; o
   );
 }
 
-/** A value field, masked until the user asks to see it. */
+/**
+ * Whether this browser can draw a textarea's characters as discs (`-webkit-text-security`):
+ * Chromium and Safari can, Firefox cannot. Where it cannot, a hidden value is shown as a block of
+ * dots and typing into it starts by showing it, so a value is never on screen while it says hidden.
+ */
+export function canMaskTextarea(): boolean {
+  try {
+    return typeof CSS !== "undefined" && CSS.supports("-webkit-text-security", "disc");
+  } catch {
+    return false;
+  }
+}
+
+/** "4 lines · 52 / 8,000", the size of a value without its content. */
+export function valueSizeLabel(value: string): string {
+  const lines = value ? value.split("\n").length : 0;
+  return `${lines} line${lines === 1 ? "" : "s"} · ${value.length.toLocaleString()} / ${VAULT_MAX_VALUE_LENGTH.toLocaleString()}`;
+}
+
+/**
+ * A value field of one or many lines (an address, a list of recovery codes, a key), hidden until
+ * the user asks to see it. Hidden, each character is drawn as a disc where the browser can do that,
+ * else the field is a block of dots that opens on Show.
+ */
 export function VaultValueInput({ value, onChange, disabled, placeholder = "Value", masked = true }: {
   value: string;
   onChange: (v: string) => void;
@@ -104,29 +127,55 @@ export function VaultValueInput({ value, onChange, disabled, placeholder = "Valu
   masked?: boolean;
 }) {
   const [visible, setVisible] = useState(!masked);
+  const [discs] = useState(canMaskTextarea);
+  const hiddenBlock = !visible && !discs;
   return (
-    <div className="flex gap-2">
-      <Input
-        type={visible ? "text" : "password"}
-        aria-label="Value"
-        placeholder={placeholder}
-        autoComplete="off"
-        spellCheck={false}
-        maxLength={VAULT_MAX_VALUE_LENGTH}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-11 md:h-9 font-mono"
-      />
-      <button
-        type="button"
-        onClick={() => setVisible(!visible)}
-        aria-label={visible ? "Hide value" : "Show value"}
-        aria-pressed={visible}
-        className="inline-flex size-11 md:size-9 shrink-0 items-center justify-center rounded-lg border border-border text-text-secondary can-hover:hover:bg-panel-2"
-      >
-        {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-      </button>
+    <div className="space-y-1">
+      <div className="flex gap-2">
+        {hiddenBlock ? (
+          <button
+            type="button"
+            onClick={() => setVisible(true)}
+            disabled={disabled}
+            aria-label="Hidden value. Show it to type or edit"
+            data-vault-value-hidden=""
+            className="min-h-24 flex-1 rounded-lg border border-dashed border-border bg-panel-2 px-3 py-2 text-left font-mono text-sm text-text-subtle"
+          >
+            {value ? `•••••••• (${valueSizeLabel(value).split(" · ")[0]})` : "Hidden. Tap Show to type."}
+          </button>
+        ) : (
+          <textarea
+            aria-label="Value"
+            placeholder={placeholder}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            data-gramm="false"
+            maxLength={VAULT_MAX_VALUE_LENGTH}
+            rows={3}
+            value={value}
+            disabled={disabled}
+            onChange={(e) => onChange(e.target.value)}
+            data-vault-value-masked={visible ? undefined : ""}
+            className={cn(
+              "min-h-24 max-h-72 w-full flex-1 resize-y rounded-lg border border-border bg-surface px-3 py-2 font-mono text-base md:text-sm text-foreground",
+              "placeholder:text-text-subtle disabled:opacity-60",
+              !visible && "[-webkit-text-security:disc]",
+            )}
+          />
+        )}
+        <button
+          type="button"
+          onClick={() => setVisible(!visible)}
+          aria-label={visible ? "Hide value" : "Show value"}
+          aria-pressed={visible}
+          className="inline-flex size-11 md:size-9 shrink-0 items-center justify-center rounded-lg border border-border text-text-secondary can-hover:hover:bg-panel-2"
+        >
+          {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+        </button>
+      </div>
+      {value.length > 0 && <p className="text-right text-[11px] text-text-subtle" data-vault-value-size="">{valueSizeLabel(value)}</p>}
     </div>
   );
 }

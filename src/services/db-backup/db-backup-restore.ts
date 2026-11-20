@@ -1,7 +1,8 @@
 import { copyFileSync, existsSync, linkSync, renameSync, rmSync, statSync } from "node:fs";
-import { resolve } from "node:path";
-import { formatBackupStamp } from "./db-backup-paths.ts";
+import { basename, resolve } from "node:path";
+import { formatBackupStamp, getBackupsDir } from "./db-backup-paths.ts";
 import { verifyBackupFile } from "./db-backup-sync.ts";
+import { backupVaultFilesDir, collectVaultFiles, restoreVaultFiles } from "./db-backup-vault-files.ts";
 import { readStatus } from "../supervisor-state.ts";
 import { createLogger } from "../logger.ts";
 
@@ -35,6 +36,8 @@ export interface RestoreResult {
   dbPath: string;
   archivedTo: string | null;
   bytes: number;
+  /** The vault files the restored database names: put back (or already there), and not found. */
+  vaultFiles?: { restored: number; missing: number };
 }
 
 /** The filesystem calls a restore can fail in; tests replace them to make each step fail. */
@@ -140,6 +143,18 @@ export function restoreDb(
     throw new Error(`Staged file failed integrity_check (${staged.detail}). Current database at ${dbPath} was not touched.`);
   }
 
+  // The database being replaced may name vault files the snapshot does not (added since): keep
+  // them beside the snapshots first, or the next sweep and snapshot would remove what undoing the
+  // restore needs. Read with its write-ahead log, which a read-only open could not replay.
+  if (existsSync(dbPath)) {
+    try {
+      const kept = collectVaultFiles(dbPath, dbPath, backupVaultFilesDir(getBackupsDir(), basename(dbPath)), { withLog: true });
+      if (kept.missing.length) log.warn(`${kept.missing.length} vault file(s) the replaced database names were not found to keep`);
+    } catch (e) {
+      log.warn(`vault files of the replaced database not kept: ${(e as Error).message}`);
+    }
+  }
+
   // The live file is archived under a second name instead of being moved, so
   // `dbPath` never stops existing: the rename below replaces it in one step.
   let archivedTo: string | null = null;
@@ -180,7 +195,16 @@ export function restoreDb(
 
   const bytes = statSync(dbPath).size;
   log.info(`restored ${backupPath} over ${dbPath} (previous archived to ${archivedTo ?? "(none)"}, ${bytes} B, force=${!!opts.force})`);
-  return { restoredFrom: backupPath, dbPath, archivedTo, bytes };
+  // The vault's files the restored database names, from the folder kept beside the snapshots.
+  let vaultFiles: RestoreResult["vaultFiles"];
+  try {
+    const r = restoreVaultFiles(backupPath, dbPath);
+    vaultFiles = { restored: r.kept, missing: r.missing.length };
+    if (r.missing.length) log.warn(`${r.missing.length} vault file(s) the restored database names were not found beside the snapshot`);
+  } catch (e) {
+    log.warn(`vault files not restored: ${(e as Error).message}`);
+  }
+  return { restoredFrom: backupPath, dbPath, archivedTo, bytes, ...(vaultFiles ? { vaultFiles } : {}) };
 }
 
 /** Resolve a user-supplied backup argument: absolute/relative path, or a bare snapshot filename. */

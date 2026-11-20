@@ -48,7 +48,57 @@ export interface VaultItemMeta {
   kind: VaultItemKind;
   createdAt: number;
   updatedAt: number;
+  /** Files attached to a secure or sealed item: label, type and size only. */
+  attachments?: VaultAttachmentMeta[];
 }
+
+// ---------------------------------------------------------------------------
+// Files attached to an item
+// ---------------------------------------------------------------------------
+
+/**
+ * A photo or PDF attached to an item of a locked tier (a passport scan, an NI card, a bill).
+ * Encrypted under that tier's data key and kept on disk under the PPM directory. The original
+ * file name is encrypted too: what anyone may list is the label the user gave it, the type and
+ * the size. Only the user sees a file, in PPM, on the device that unlocked it; no AI reads one.
+ */
+export const VAULT_FILE_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"] as const;
+export type VaultFileType = (typeof VAULT_FILE_TYPES)[number];
+export const isVaultFileType = (v: unknown): v is VaultFileType => typeof v === "string" && (VAULT_FILE_TYPES as readonly string[]).includes(v);
+
+export const VAULT_FILE_MAX_BYTES = 10 * 1024 * 1024;
+export const VAULT_FILES_PER_ITEM = 10;
+export const VAULT_FILES_TOTAL_BYTES = 200 * 1024 * 1024;
+export const VAULT_MAX_LABEL_LENGTH = 120;
+/** How long a file opened for preview stays on screen before it closes itself. */
+export const VAULT_FILE_PREVIEW_MS = 60_000;
+/** The longest side a photo is shrunk to before upload, unless the user keeps the original. */
+export const VAULT_PHOTO_MAX_SIDE = 2_000;
+
+export interface VaultAttachmentMeta {
+  id: string;
+  itemId: string;
+  label: string;
+  type: VaultFileType;
+  size: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export const VAULT_FILE_TYPE_LABELS: Record<VaultFileType, string> = {
+  "image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WebP", "application/pdf": "PDF",
+};
+
+/** "412 KB", "2.9 MB". */
+export function formatVaultFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** What Settings → Vault says before a tier is deleted: its files stay in older backups. */
+export const VAULT_DELETE_TIER_BACKUP_NOTE =
+  "Older backups of PPM's database keep this tier's encrypted items and files until they age out (about four weeks). They still open only with this tier's password.";
 
 export interface VaultTierStatus {
   enabled: boolean;
@@ -158,7 +208,20 @@ export interface VaultCardAnswerResult {
 /** What happens to a value once the AI was given it: shown on the cards and in Settings. */
 export const VAULT_HISTORY_LIMIT = "After the turn PPM removes the value from the chat's history files on this machine; the open chat keeps it in memory until it is reopened, and what was sent to Anthropic or OpenAI cannot be removed.";
 
-/** Every notification about a vault card, wherever it lands: no item, tier or purpose. */
+/**
+ * The address inside PPM that opens Settings → Vault, on one item when given: `/?openVault=<id>`
+ * (`all` for the pane itself). It carries an item id and nothing else — no value, no token — and
+ * goes through PPM's sign-in like any other page; a locked tier still asks for its password there.
+ */
+export const VAULT_LINK_PARAM = "openVault";
+export const VAULT_LINK_ALL = "all";
+const VAULT_ITEM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isVaultItemId = (v: unknown): v is string => typeof v === "string" && VAULT_ITEM_ID.test(v);
+export function vaultSettingsPath(itemId?: string | null): string {
+  return `/?${VAULT_LINK_PARAM}=${itemId && isVaultItemId(itemId) ? itemId : VAULT_LINK_ALL}`;
+}
+
+/** A push or ntfy notification about a vault card (it can land on a lock screen): no item, tier or purpose. The Telegram notice names the item and tier (`assistant-telegram-db-notices.ts`). */
 export const VAULT_NOTIFICATION_BODY = "Unlock needed in the PPM vault";
 
 /** How long a sealed value shown on the card stays visible before it hides itself. */

@@ -7,6 +7,8 @@ import { openSettings } from "@/components/settings/open-settings";
 import { openAssistant } from "@/components/assistant/open-assistant";
 import { isAssistantProject } from "../../shared/assistant-project";
 import { assistantLinkFromLocation, type AssistantDeepLink } from "@/lib/assistant-deep-link";
+import { addressWithoutVaultLink, type VaultDeepLink } from "@/lib/vault-deep-link";
+import { useVaultFocusStore } from "@/stores/vault-focus-store";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { isValidDesignSlug } from "../../services/design/design-slug";
 import { designTabMetadata } from "@/lib/design/design-tab-metadata";
@@ -283,6 +285,16 @@ function onceWindowLayerIsReady(open: () => void): void {
  * on screen — never as a chat of some project. The address itself is dropped: it names no
  * workspace, so the workspace's own address takes over from here.
  */
+/**
+ * Opens Settings → Vault on the item an address names (`/?openVault=<id>`, a vault card's Telegram
+ * notice). The parameter is dropped from the address first, so a reload does not open it again.
+ */
+export function openVaultFromAddress(link: VaultDeepLink): void {
+  window.history.replaceState(null, "", addressWithoutVaultLink(window.location.href));
+  useVaultFocusStore.getState().focus(link.itemId);
+  onceWindowLayerIsReady(() => openSettings("vault"));
+}
+
 export function openAssistantFromAddress(link: AssistantDeepLink): void {
   window.history.replaceState(null, "", "/");
   onceWindowLayerIsReady(() => openAssistant(link));

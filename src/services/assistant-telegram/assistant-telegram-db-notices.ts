@@ -15,7 +15,9 @@
  * deduplicated where it is raised (`db-login-attention.ts`).
  */
 import { dbApprovalBroker } from "../db-ai-tools/db-approval-broker.ts";
-import { onVaultCardShown } from "../vault/vault-unlock-broker.ts";
+import { onVaultCardShown, type VaultCardShownListener } from "../vault/vault-unlock-broker.ts";
+import { notificationLink } from "../notification-link.ts";
+import { VAULT_TIER_LABELS, vaultSettingsPath, type VaultCardInput } from "../../shared/vault.ts";
 import { dbAttentionEvents, type DbAttentionBus, type DbAttentionEvents } from "../db-ai-tools/db-attention-events.ts";
 import { getSessionProjectName, getSessionProvider, getSessionTitle, resolveMigratedSession } from "../db.service.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
@@ -59,7 +61,9 @@ export interface DbNoticesDeps {
   /** The id a session goes by now: Codex renames a new chat during its first turn. */
   canonical?: (sessionId: string) => string;
   /** Where vault cards are announced (the vault broker's by default; tests pass their own). */
-  onVaultCard?: (listener: (sessionId: string, requestId: string) => void) => () => void;
+  onVaultCard?: (listener: VaultCardShownListener) => () => void;
+  /** The absolute link for a path inside PPM (Settings → Vault); `notificationLink` by default. */
+  pathLink?: (path: string) => Promise<string>;
   /** Quiet hours, and whether a held approval still waits (tests pass a fake clock and window). */
   quiet?: QuietHoldDeps;
   /** Whether the user is at PPM, so a notice goes out without a sound. */
@@ -137,11 +141,44 @@ export function loginNoticeHtml(chat: DescribedChat, connectionName: string): st
   ].join("\n");
 }
 
+/** The closing line of every vault notice: the answer and the password belong to PPM. */
+export const VAULT_ANSWER_IN_PPM = "Open PPM to answer it. The password is typed there, never here.";
+
+export const OPEN_VAULT = "Open Vault";
+
 /**
- * A vault card waits in a chat. One fixed line and the link to the chat: never the item, the tier
- * or the purpose, and never a way to answer — unlocking takes the tier's password, typed in PPM.
+ * A vault card waits in a chat: which items, which tier and what is asked, with two ways into PPM
+ * (the chat holding the card, and Settings → Vault on the item). Item names are the user's own.
+ * Never a value (a card holds none), never the AI's own text (its stated purpose, the name it
+ * proposes for a new item), and never a file or its name.
  */
-export const VAULT_NOTICE_HTML = "🔒 <b>Unlock needed in PPM</b>\n\nOpen PPM to answer the vault card. It cannot be answered here.";
+export function vaultNoticeHtml(chat: DescribedChat, input: VaultCardInput): string {
+  const who = whichChat(chat);
+  const item = (n: string) => `<b>${name(n, "an item")}</b>`;
+  let what: string;
+  if (input.kind === "read-secure") {
+    const names = input.items.filter((i) => input.requested.includes(i.id)).map((i) => item(i.name));
+    const listed = names.slice(0, 5).join(", ") + (names.length > 5 ? ` and ${names.length - 5} more` : "");
+    what = names.length === 1
+      ? `${who} asks to read the <b>Secure</b> item ${listed}.`
+      : `${who} asks to read ${names.length} <b>Secure</b> items: ${listed}.`;
+  } else if (input.kind === "read-sealed") {
+    what = `${who} asks to open the <b>Sealed</b> item ${item(input.item.name)}.`;
+  } else {
+    // The proposed name is the AI's own text, like its purpose: it stays in PPM.
+    what = `${who} proposes saving a new item to the vault (suggested tier: <b>${VAULT_TIER_LABELS[input.suggestedTier]}</b>). `
+      + "You see and settle the name, tier and value in PPM.";
+  }
+  const title = input.kind === "propose" ? "Save to the vault?" : "Vault unlock requested";
+  return [`🔒 <b>${title}</b>`, "", what, "", VAULT_ANSWER_IN_PPM].join("\n");
+}
+
+/** The item Settings → Vault lands on for a card: the one it names, when it names one. */
+export function vaultNoticeItem(input: VaultCardInput): string | null {
+  if (input.kind === "read-sealed") return input.item.id;
+  if (input.kind === "read-secure") return input.requested[0] ?? null;
+  return null;
+}
 
 export class AssistantTelegramDbNotices {
   private offs: Array<() => void> = [];
@@ -167,9 +204,12 @@ export class AssistantTelegramDbNotices {
       events.on("approval_shown", (p) => this.onShown(p)),
       events.on("approval_reminder", (p) => this.onReminder(p)),
       events.on("login_needed", (p) => this.onLogin(p)),
-      (this.deps.onVaultCard ?? onVaultCardShown)((sessionId) => {
+      (this.deps.onVaultCard ?? onVaultCardShown)((sessionId, _requestId, input) => {
         if (this.inQuietHours()) return void log.info("vault card: notice not sent in quiet hours");
-        this.send(sessionId, "vault card", () => VAULT_NOTICE_HTML);
+        const itemId = vaultNoticeItem(input);
+        this.send(sessionId, "vault card", (chat) => vaultNoticeHtml(chat, input), undefined, async () => [
+          { label: OPEN_VAULT, url: await this.vaultLink(itemId) },
+        ]);
       }),
     ];
   }
@@ -208,16 +248,25 @@ export class AssistantTelegramDbNotices {
     try { return this.quiet.quietEnd() !== null; } catch { return false; }
   }
 
-  private send(sessionId: string, label: string, render: (chat: DescribedChat) => string, onSilentSend?: (chatId: string, messageId: number) => void): void {
+  /** The address of Settings → Vault, on `itemId` when given: an id only, behind PPM's sign-in. */
+  private vaultLink(itemId: string | null): Promise<string> {
+    return (this.deps.pathLink ?? ((path: string) => notificationLink({ project: "", sessionId: "", path })))(vaultSettingsPath(itemId));
+  }
+
+  private send(
+    sessionId: string, label: string, render: (chat: DescribedChat) => string, onSilentSend?: (chatId: string, messageId: number) => void,
+    extraLinks?: () => Promise<{ label: string; url: string }[]>,
+  ): void {
     let chats: string[];
     try { chats = this.connectedChats().filter(canSendTo); } catch { chats = []; }
     if (!chats.length) return;
-    void this.deliver(chats, sessionId, label, render, onSilentSend).catch((e) => log.warn(`${label} notice for ${sessionId} not sent: ${(e as Error).message}`));
+    void this.deliver(chats, sessionId, label, render, onSilentSend, extraLinks).catch((e) => log.warn(`${label} notice for ${sessionId} not sent: ${(e as Error).message}`));
   }
 
   private async deliver(
     chats: string[], asked: string, label: string, render: (chat: DescribedChat) => string,
     onSilentSend?: (chatId: string, messageId: number) => void,
+    extraLinks?: () => Promise<{ label: string; url: string }[]>,
   ): Promise<void> {
     // Held through quiet hours, or sent just as Codex renamed the chat: name and link the chat as it is now.
     let sessionId = asked;
@@ -225,14 +274,17 @@ export class AssistantTelegramDbNotices {
     const chat = this.describe(sessionId);
     let html = render(chat);
     const url = await this.deps.chatLink(chat.project, chat.providerId, sessionId).catch(() => null);
-    const link = url ? placeLink(url) : {};
-    if (link.inline) html += `\n\n${link.inline}`;
+    const extra = extraLinks ? await extraLinks().catch(() => []) : [];
+    // Each link is a button when Telegram takes it (public https), else a line of the text.
+    const links = [...(url ? [placeLink(url)] : []), ...extra.map((l) => placeLink(l.url, l.label))];
+    for (const l of links) if (l.inline) html += `\n\n${l.inline}`;
+    const buttons = links.flatMap((l) => (l.button ? [l.button] : []));
     for (const chatId of chats) {
       this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, {
         html,
-        ...(link.button ? {
-          markup: { inline_keyboard: [[link.button]] },
-          fallbackHtml: `${html}\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}`,
+        ...(buttons.length ? {
+          markup: { inline_keyboard: buttons.map((b) => [b]) },
+          fallbackHtml: `${html}${buttons.map((b) => `\n\n${escapeTelegramHtml(b.text)}: ${escapeTelegramHtml(b.url!)}`).join("")}`,
         } : {}),
       }, {
         label,
