@@ -95,7 +95,7 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
           frequent action moves to the bottom toolbar (thumb zone) below instead. */}
       {isSheet ? (
         <>
-          <MobileExplorerTopBar slice={slice} onClose={closeSheet} />
+          <MobileExplorerTopBar windowId={windowId} slice={slice} nav={nav} onClose={closeSheet} />
           <MobilePlacesStrip host={host} currentPath={slice.path} onNavigate={nav.go} vocab={skin.vocab} />
         </>
       ) : (

@@ -16,6 +16,7 @@ import type { DropRunner } from "./dnd/entry-drop-executor";
 import { usePathDropTarget } from "./dnd/use-path-drop-target";
 import { useDropTransfer, type DropTransfer } from "./dnd/use-drop-transfer";
 import { useExplorerPinsStore } from "./explorer-pins-store";
+import { placeLabelMap } from "./place-labels";
 import { FileTypeIcon } from "./icons/file-type-icon";
 import type { SkinVocab } from "./skins/skin-types";
 import { usePrefersCoarsePointer } from "./use-coarse-long-press";
@@ -111,6 +112,8 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
   const pins = useExplorerPinsStore((s) => s.pins);
   const unpin = useExplorerPinsStore((s) => s.unpin);
   const isActive = (path: string) => path === currentPath;
+  // Two pinned folders sharing a name ("Projects" on C: and on D:) each say where they are.
+  const labels = placeLabelMap(pins, host);
   // One drop-transfer context for the whole sidebar — every place lands through the same
   // collision prompt rather than each row owning its own dialog state.
   const { run, uploadRun, prompts } = useDropTransfer(host?.sep ?? "/", host?.platform);
@@ -126,7 +129,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
           {pins.map((pin) => (
             <Place
               key={pin.path}
-              label={pin.name}
+              label={labels.get(pin.path) ?? pin.name}
               path={pin.path}
               icon={Pin}
               active={isActive(pin.path)}
@@ -144,7 +147,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
           {host.pinned.map((entry) => (
             <Place
               key={entry.path}
-              label={entry.name}
+              label={labels.get(entry.path) ?? entry.name}
               path={entry.path}
               icon={FolderPlaceIcon}
               active={isActive(entry.path)}

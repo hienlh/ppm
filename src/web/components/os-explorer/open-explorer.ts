@@ -1,15 +1,27 @@
 /**
  * The one way anything outside this folder opens a file-explorer window.
  *
- * Callers (command palette, nav rail, project-tree context menu) should not have to know
- * about window kinds or payload keys, and passing no path should land somewhere sensible
- * rather than at a hardcoded "/" that does not exist on Windows.
+ * Callers (command palette, nav rail, project-tree context menu, the Assistant, a `/files` link,
+ * a path in an AI answer) should not have to know about window kinds or payload keys, and
+ * passing no path should land somewhere sensible rather than at a hardcoded "/" that does not
+ * exist on Windows.
  */
 
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
+import { useExplorerStore } from "./explorer-store";
 import { cachedHomedir, getHostInfo } from "./use-host-info";
 import { MOBILE_EXPLORER_WINDOW_ID, openMobileExplorer } from "./use-explorer-open-state";
+
+export interface OpenExplorerOptions {
+  /** A file in `path` to select (and scroll to) once the folder is listed. */
+  select?: string | null;
+}
+
+/** Select `file` in a window's slice; the list view scrolls to the anchor once its row is listed. */
+function selectInSlice(windowId: string, file: string): void {
+  useExplorerStore.getState().patch(windowId, { selection: new Set([file]), anchor: file });
+}
 
 /**
  * Open an explorer at `path`, or at the host's home directory when omitted — a floating
@@ -17,9 +29,10 @@ import { MOBILE_EXPLORER_WINDOW_ID, openMobileExplorer } from "./use-explorer-op
  * `MOBILE_EXPLORER_WINDOW_ID` (mobile), or null when the home lookup failed and no path
  * was given.
  */
-export async function openExplorer(path?: string): Promise<string | null> {
+export async function openExplorer(path?: string, opts: OpenExplorerOptions = {}): Promise<string | null> {
   if (isMobileDevice()) {
     await openMobileExplorer(path);
+    if (opts.select) selectInSlice(MOBILE_EXPLORER_WINDOW_ID, opts.select);
     return MOBILE_EXPLORER_WINDOW_ID;
   }
 
@@ -31,5 +44,12 @@ export async function openExplorer(path?: string): Promise<string | null> {
       return null;
     }
   }
-  return useWindowStore.getState().open("explorer", { path: target });
+  const id = useWindowStore.getState().open("explorer", { path: target });
+  if (opts.select) {
+    // The window's body creates its slice on mount; creating it here first is the same call
+    // (`ensure` keeps an existing slice), so the selection is in place before the first listing.
+    useExplorerStore.getState().ensure(id, target);
+    selectInSlice(id, opts.select);
+  }
+  return id;
 }

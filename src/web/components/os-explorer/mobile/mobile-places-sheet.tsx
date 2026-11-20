@@ -10,6 +10,7 @@ import type { Drive, HostInfo } from "../../../../types/system";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { useExplorerPinsStore } from "../explorer-pins-store";
 import { FileTypeIcon } from "../icons/file-type-icon";
+import { placeLabelMap } from "../place-labels";
 import type { SkinVocab } from "../skins/skin-types";
 import { cn } from "@/lib/utils";
 
@@ -68,6 +69,8 @@ export interface MobilePlacesSheetProps {
 export function MobilePlacesSheet({ open, onClose, host, currentPath, vocab, onNavigate }: MobilePlacesSheetProps) {
   const pins = useExplorerPinsStore((s) => s.pins);
   const isActive = (path: string) => path === currentPath;
+  // Two pinned folders sharing a name each say where they are, as the chip strip does.
+  const labels = placeLabelMap(pins, host);
 
   return (
     <BottomSheet open={open} onClose={onClose} zIndex={65} className="p-1">
@@ -75,7 +78,7 @@ export function MobilePlacesSheet({ open, onClose, host, currentPath, vocab, onN
         {pins.length > 0 && (
           <Section title="Pinned">
             {pins.map((pin) => (
-              <Row key={pin.path} label={pin.name} path={pin.path} icon={<Pin className={ICON_CLASS} />} active={isActive(pin.path)} onNavigate={onNavigate} />
+              <Row key={pin.path} label={labels.get(pin.path) ?? pin.name} path={pin.path} icon={<Pin className={ICON_CLASS} />} active={isActive(pin.path)} onNavigate={onNavigate} />
             ))}
           </Section>
         )}
@@ -83,7 +86,7 @@ export function MobilePlacesSheet({ open, onClose, host, currentPath, vocab, onN
         {host && host.pinned.length > 0 && (
           <Section title={vocab.pinned}>
             {host.pinned.map((entry) => (
-              <Row key={entry.path} label={entry.name} path={entry.path} icon={folderIcon()} active={isActive(entry.path)} onNavigate={onNavigate} />
+              <Row key={entry.path} label={labels.get(entry.path) ?? entry.name} path={entry.path} icon={folderIcon()} active={isActive(entry.path)} onNavigate={onNavigate} />
             ))}
           </Section>
         )}

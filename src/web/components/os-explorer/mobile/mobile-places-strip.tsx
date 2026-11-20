@@ -16,6 +16,8 @@ import { useExplorerPinsStore } from "../explorer-pins-store";
 import { FileTypeIcon } from "../icons/file-type-icon";
 import type { SkinVocab } from "../skins/skin-types";
 import { MobilePlacesSheet } from "./mobile-places-sheet";
+import { labelPlaces } from "../place-labels";
+import { MOBILE_EXPLORER_CHIP } from "./mobile-explorer-chip";
 
 function FolderChipIcon({ className }: { className?: string }) {
   return <FileTypeIcon name="" kind="directory" className={className} />;
@@ -43,12 +45,12 @@ function Chip({ chip, active, onNavigate }: { chip: Chip; active: boolean; onNav
       onClick={() => onNavigate(chip.path)}
       title={chip.path}
       className={cn(
-        "flex h-11 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] active:bg-surface-elevated",
+        MOBILE_EXPLORER_CHIP,
         active ? "border-primary bg-accent-wash text-text" : "border-border text-text-2",
       )}
     >
-      <Icon className="size-4 shrink-0 text-text-subtle" />
-      <span className="max-w-[9rem] truncate">{chip.label}</span>
+      <Icon className="text-text-subtle" />
+      <span className="max-w-[10rem] truncate">{chip.label}</span>
     </button>
   );
 }
@@ -64,10 +66,19 @@ export function MobilePlacesStrip({ host, currentPath, onNavigate, vocab }: Mobi
   const pins = useExplorerPinsStore((s) => s.pins);
   const [placesOpen, setPlacesOpen] = useState(false);
 
+  // PPM pins and the OS's own pins in one list, so a folder pinned in both is one chip and two
+  // folders sharing a name ("Projects" on C: and on D:) say where each one is.
+  const pinned = labelPlaces(
+    [
+      ...pins.map((pin) => ({ name: pin.name, path: pin.path, ppm: true })),
+      ...(host?.pinned.map((p) => ({ name: p.name, path: p.path, ppm: false })) ?? []),
+    ],
+    host?.homedir ?? null,
+  );
   const chips: Chip[] = [
-    ...pins.map((pin): Chip => ({ key: `pin:${pin.path}`, label: pin.name, path: pin.path, icon: Pin })),
+    ...pinned.filter((p) => p.ppm).map((p): Chip => ({ key: `pin:${p.path}`, label: p.label, path: p.path, icon: Pin })),
     ...(host ? [{ key: "home", label: vocab.home, path: host.homedir, icon: FolderChipIcon }] : []),
-    ...(host?.pinned.map((p): Chip => ({ key: `os:${p.path}`, label: p.name, path: p.path, icon: FolderChipIcon })) ?? []),
+    ...pinned.filter((p) => !p.ppm).map((p): Chip => ({ key: `os:${p.path}`, label: p.label, path: p.path, icon: FolderChipIcon })),
     ...(host?.drives.map((d): Chip => ({
       key: `drive:${d.path}`,
       label: d.label ? `${d.label} (${d.name})` : d.name,
@@ -78,7 +89,7 @@ export function MobilePlacesStrip({ host, currentPath, onNavigate, vocab }: Mobi
 
   return (
     <>
-      <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto touch-pan-x border-b border-border px-2 py-1.5">
+      <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto touch-pan-x border-b border-border px-2 py-1.5" data-testid="explorer-places-strip">
         {chips.map((chip) => (
           <Chip key={chip.key} chip={chip} active={chip.path === currentPath} onNavigate={onNavigate} />
         ))}
@@ -87,9 +98,9 @@ export function MobilePlacesStrip({ host, currentPath, onNavigate, vocab }: Mobi
           aria-label="All places"
           title="All places"
           onClick={() => setPlacesOpen(true)}
-          className="flex h-11 shrink-0 items-center gap-1 rounded-full border border-border px-3 text-[13px] text-text-2 active:bg-surface-elevated"
+          className={cn(MOBILE_EXPLORER_CHIP, "border-border text-text-2")}
         >
-          <MoreHorizontal className="size-4" />
+          <MoreHorizontal />
         </button>
       </div>
 
