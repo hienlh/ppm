@@ -12,6 +12,7 @@ import { ReplyCard } from "./reply-card";
 import { TurnRefChipRow } from "./turn-ref-chip";
 import { TaskRefChipRow } from "./task-ref-chip";
 import { CopyTurnLinkButton } from "./copy-turn-link-button";
+import { BookmarkTurnButton } from "./bookmark-turn-button";
 import type { ChatMessage } from "../../../types/chat";
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -45,7 +46,7 @@ type UserBubbleProps = {
   /** False for a user message that is not a prompt the person sent: its turn chips are not drawn. */
   prompt?: boolean;
   /** What names this message's turn, for Copy turn link; without it there is no such action. */
-  turn?: Pick<ChatMessage, "turnId" | "clientId" | "sdkUuid">;
+  turn?: Pick<ChatMessage, "turnId" | "turnN" | "clientId" | "sdkUuid">;
   timestamp: string;
   projectName?: string;
   onFork?: () => void;
@@ -217,6 +218,9 @@ function OwnUserBubble({ content, messageId, parsed, prompt = true, turn, timest
         <MessageActionBar timestamp={timestamp} content={decodeMessageBlocks(content).content}>
           {turn && projectName && sessionId && (providerId === "claude" || providerId === "codex") && (
             <CopyTurnLinkButton message={turn} projectName={projectName} sessionId={sessionId} providerId={providerId} />
+          )}
+          {turn && projectName && sessionId && (providerId === "claude" || providerId === "codex") && (
+            <BookmarkTurnButton message={turn} text={typedText(parsed)} projectName={projectName} sessionId={sessionId} providerId={providerId} />
           )}
           {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} standardSize />}
           {onEdit && (

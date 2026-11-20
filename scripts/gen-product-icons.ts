@@ -324,6 +324,7 @@ const MAP: Record<string, string | null> = {
   EyeOff: "eye-off",
   Pin: "pin",
   PinOff: "pin-off",
+  Bookmark: "bookmark",
 };
 
 const collection = (

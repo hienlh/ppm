@@ -35,6 +35,9 @@ import { TeamActivityPanel } from "./team-activity-panel";
 import { ChatHistoryPanel } from "./chat-history-panel";
 import { ChatMoreMenu } from "./chat-more-menu";
 import { SwitchAccountView } from "./switch-account-view";
+import { BookmarksView } from "./bookmarks-view";
+import { useChatBookmarks } from "@/stores/session-bookmarks-store";
+import { exportChatMarkdown } from "@/lib/chat-export";
 import { requestAccountFocus } from "@/components/settings/accounts/account-focus";
 import { FooterPopover, FooterPopoverHeader } from "./footer-popover";
 import { FOOTER_CLUSTER, FOOTER_GHOST } from "./footer-chip";
@@ -96,7 +99,9 @@ export function ChatFooterTools({
   /** A figure the context popover read since the last turn ended; the turn's own figure replaces it. */
   const [freshContextPct, setFreshContextPct] = useState<number | null>(null);
   useEffect(() => { setFreshContextPct(null); }, [contextPct, sessionId]);
-  const [moreView, setMoreView] = useState<"main" | "accounts">("main");
+  const [moreView, setMoreView] = useState<"main" | "accounts" | "bookmarks">("main");
+  const bookmarkList = useChatBookmarks(sessionId ? projectName : undefined, sessionId);
+  const canExport = !!sessionId && (providerId === "claude" || providerId === "codex");
   /** Back from Switch account: the main view slides in from the left rather than just appearing. */
   const [returned, setReturned] = useState(false);
   const backToMain = () => { setReturned(true); setMoreView("main"); };
@@ -260,6 +265,8 @@ export function ChatFooterTools({
             onManage={() => { close(); openSettings("accounts"); }}
             onOpenResets={(a) => { close(); requestAccountFocus({ provider: isCodex ? "codex" : "claude", accountId: a.id }); openSettings("accounts"); }}
           />
+        ) : moreView === "bookmarks" && sessionId ? (
+          <BookmarksView projectName={projectName} sessionId={sessionId} onBack={backToMain} onJumped={close} />
         ) : (
           <div className={cn("flex min-h-0 flex-col", returned && "footer-from-left")} data-more-main="">
             <ChatMoreMenu
@@ -282,6 +289,15 @@ export function ChatFooterTools({
                 onOpenDebug: () => { close(); setDebugOpen(true); },
                 onShowLogs: () => { close(); openLogs({ chat: sessionId }); },
               } : null}
+              bookmarks={canExport ? { count: bookmarkList?.length ?? null, onOpen: () => setMoreView("bookmarks") } : null}
+              onExportMarkdown={canExport ? () => {
+                close();
+                const t = toast.loading("Exporting chat…");
+                exportChatMarkdown(projectName, sessionId!, providerId!).then(
+                  () => toast.success("Chat exported", { id: t }),
+                  (e: Error) => toast.error(e.message, { id: t }),
+                );
+              } : undefined}
             />
           </div>
         )}

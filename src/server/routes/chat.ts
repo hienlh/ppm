@@ -18,6 +18,7 @@ import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts
 import { chatPrepareRoutes } from "./chat-prepare.ts";
 import { chatFileChangesRoutes } from "./chat-file-changes.ts";
 import { chatSessionTurnsRoutes } from "./chat-session-turns.ts";
+import { chatSessionBookmarksRoutes } from "./chat-session-bookmarks.ts";
 import { chatTurnWindowRoutes } from "./chat-turn-window.ts";
 import { chatSessionCollabRoutes } from "./session-collab.ts";
 import { chatSessionDeleteRoutes } from "./chat-session-delete.ts";
@@ -69,6 +70,7 @@ chatRoutes.route("/prepare", chatPrepareRoutes);
 chatRoutes.route("/", chatSessionDeleteRoutes);
 chatRoutes.route("/", chatFileChangesRoutes);
 chatRoutes.route("/", chatSessionTurnsRoutes);
+chatRoutes.route("/", chatSessionBookmarksRoutes);
 chatRoutes.route("/", chatTurnWindowRoutes);
 chatRoutes.route("/", chatSessionCollabRoutes);
 chatRoutes.route("/", chatHeadlessRoutes);

@@ -762,6 +762,22 @@ stop first, since a shell's id is its task id, and falls back to asking the mode
 only when no live CLI holds it. PPM does not declare `perTaskStopAffordance`, so the chat's Stop
 still ends background tasks along with the turn.
 
+### Bookmarks and Markdown export
+
+A **bookmark** marks a turn, never a message: the turn id is the one name of a place in a chat that
+survives a reload, a compaction and the history window (a Codex message id is a position). *Bookmark*
+sits in the action bar under each prompt (`bookmark-turn-button.tsx`; a just-sent prompt waits for
+its turn id the way Copy turn link does) and is labelled with the prompt's first line. The list is
+the ··· menu → **Bookmarks** (`bookmarks-view.tsx`), whose rows jump through `chat-jump-store` —
+the history window opens when the turn is not loaded. Bookmarks are per session in `ppm.db`
+(`session_bookmarks`, created on first use, at most 200 a chat; `session-bookmarks.service.ts`),
+behind `GET/PUT/DELETE /chat/sessions/:id/bookmarks[/:turnId]`, and the browser keeps them in
+`session-bookmarks-store.ts`. **Export as Markdown** in the same menu downloads
+`GET /chat/sessions/:id/export.md` (Claude and Codex): every turn under a heading, prompts and answers
+in full, one line per tool call with its status — never thinking and never tool output or input
+bodies (`turn-markdown.ts` over `readAllSessionTurns`, the turn reader that also serves
+`read_session_turns`, 20 turns a read against one scan).
+
 ## Voice messages
 
 The chat mic records a voice message instead of dictating, once the install has said yes to the `voice-messages-2026-11` feature intro (config `voice_message.enabled`; Settings → Voice Input has the same switch). Off, the mic dictates exactly as before.

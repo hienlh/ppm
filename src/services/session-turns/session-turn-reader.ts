@@ -177,6 +177,28 @@ export async function readTurnsFromScan(scan: SessionTurnScan, turnIds: string[]
   return await fileUnchanged(path, scan) ? out : "stale";
 }
 
+/**
+ * Every turn of the session with its messages, in order — for an export. Read a few turns at a
+ * time against one scan; if the transcript moves under it, the scan is rebuilt and the read starts
+ * over, once.
+ */
+export async function readAllSessionTurns(ref: SessionRef): Promise<{ sessionId: string; turns: TurnMessages[] }> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const scan = await scanSessionTurns(ref);
+    const ids = summarizeTurns(scan).map((t) => t.turnId);
+    const turns: TurnMessages[] = [];
+    let stale = false;
+    for (let i = 0; i < ids.length && !stale; i += MAX_TURNS_PER_READ) {
+      const part = await readTurnsFromScan(scan, ids.slice(i, i + MAX_TURNS_PER_READ));
+      if (part === "stale") stale = true;
+      else turns.push(...part);
+    }
+    if (!stale) return { sessionId: scan.session.sessionId, turns };
+    invalidateSessionTurns(scan.session);
+  }
+  throw new SessionTurnError("stale", "The transcript changed while it was being read");
+}
+
 /** The messages of each turn asked for, in the order asked. */
 export async function readSessionTurnMessages(ref: SessionRef, turnIds: string[]): Promise<TurnMessages[]> {
   if (turnIds.length > MAX_TURNS_PER_READ) throw new SessionTurnError("invalid", `At most ${MAX_TURNS_PER_READ} turns per read`);

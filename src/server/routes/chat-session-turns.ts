@@ -4,6 +4,8 @@ import { getSessionTitle } from "../../services/db.service.ts";
 import { getSessionTurn, listSessionTurns, resolveTurnOf, type SessionRef } from "../../services/session-turns/session-turn-index.service.ts";
 import { SessionTurnError, TURN_ID_RE } from "../../services/session-turns/session-turn-types.ts";
 import { createLogger } from "../../services/logger.ts";
+import { readAllSessionTurns } from "../../services/session-turns/session-turn-reader.ts";
+import { exportFileName, sessionMarkdown } from "../../services/session-turns/turn-markdown.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
@@ -71,6 +73,31 @@ chatSessionTurnsRoutes.get("/sessions/:id/turns/:turnId", async (c) => {
     const title = getSessionTitle(turn.sessionId) ?? getSessionTitle(ref.sessionId)
       ?? (await listSessionTurns(ref)).turns[0]?.prompt ?? null;
     return c.json(ok({ ...turn, providerId: ref.providerId, sessionTitle: title }));
+  } catch (e) {
+    return fail(c, e);
+  }
+});
+
+/**
+ * GET /chat/sessions/:id/export.md?providerId=
+ * The whole chat as Markdown (`turn-markdown.ts`): every prompt and answer, one line per tool call,
+ * no thinking and no tool output. Sent as a download named after the chat.
+ */
+chatSessionTurnsRoutes.get("/sessions/:id/export.md", async (c) => {
+  try {
+    const ref = refOf(c);
+    const { sessionId, turns } = await readAllSessionTurns(ref);
+    const title = getSessionTitle(sessionId) ?? getSessionTitle(ref.sessionId) ?? turns[0]?.turn.prompt ?? "";
+    const body = sessionMarkdown({
+      title, providerId: ref.providerId, sessionId, projectName: c.get("projectName") ?? "", exportedAt: new Date().toISOString(),
+    }, turns);
+    const name = exportFileName(title, sessionId);
+    return new Response(body, {
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Content-Disposition": "attachment; filename=\"" + name.replace(/[^\x20-\x7e]/g, "_") + "\"; filename*=UTF-8''" + encodeURIComponent(name),
+      },
+    });
   } catch (e) {
     return fail(c, e);
   }
