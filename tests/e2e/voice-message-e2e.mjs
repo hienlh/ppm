@@ -28,6 +28,7 @@ import { pathToFileURL } from "node:url";
 import { current, makeMedia, run, startFixture, until } from "./fixtures/voice-message-helpers.mjs";
 import { runWebScenarios } from "./fixtures/voice-message-steps-web.mjs";
 import { runTelegramScenario } from "./fixtures/voice-message-steps-telegram.mjs";
+import { runIntroScenario } from "./fixtures/voice-message-steps-intro.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-voice-e2e-"));
 const shots = resolve(process.env.PPM_VOICE_SHOTS ?? join(sandbox, "shots"));
@@ -98,6 +99,16 @@ try {
     const install = await startFixture({ sandbox, artifacts: shots, webDir, name: "web", mode: "web", feature: "on", kit });
     try {
       await runWebScenarios({ kit, browser, install, shots, media });
+    } finally {
+      await install.stop();
+    }
+  });
+
+  // An install whose voice question is still open: the tour's step on a phone, then Turn on.
+  await kit.scenario("install intro", async () => {
+    const install = await startFixture({ sandbox, artifacts: shots, webDir, name: "intro", mode: "web", feature: "ask", kit });
+    try {
+      await runIntroScenario({ kit, browser, install, shots });
     } finally {
       await install.stop();
     }
