@@ -226,6 +226,14 @@ why. A revert is journalled like a revert answer, before any file is written, so
 puts it back. Answering one edit is per block: a block that
 holds two calls' lines goes back whole.
 
+**Rewind code.** Every prompt the person sent offers *Rewind code* (`rewind-code-button.tsx`), PPM's
+answer to Claude Code's checkpoint rewind: the same `revert-turn` with the calls of that turn and
+every turn after it (`rewindFrom` in `src/shared/session-turns.ts`, over the turns the open chat
+published), previewed, written only once confirmed, and undoable with the same journal. Built on
+PPM's own history rather than the SDK's `rewindFiles`, so it works for Codex sessions too, keeps
+lines changed outside the chat, and needs no checkpointing turned on before the turn ran. The chat
+itself is left alone; *Rewind and fork* also forks the conversation from that message.
+
 Not covered, and said in the list (`shellChangesHint`, which knows the provider): files a
 shell command changed that git ignores or that sit outside any repository, anything a
 background command writes after its call returns, and every Codex shell command — Codex

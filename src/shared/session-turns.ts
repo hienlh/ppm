@@ -103,6 +103,18 @@ export function sessionTurns(
   return turns;
 }
 
+/**
+ * What "Rewind code to here" puts back: every call of the turn `messageId` asked for and of each
+ * turn after it, with how many of those turns made a call; null when no loaded turn was asked by
+ * that message.
+ */
+export function rewindFrom(turns: readonly SessionTurn[], messageId: string): { calls: string[]; turns: number } | null {
+  const at = turns.findIndex((t) => t.messageId === messageId);
+  if (at < 0) return null;
+  const from = turns.slice(at);
+  return { calls: from.flatMap((t) => t.calls), turns: from.filter((t) => t.calls.length > 0).length };
+}
+
 /** Each call's turn. */
 export function turnsByCall(turns: readonly SessionTurn[]): Map<string, SessionTurn> {
   const out = new Map<string, SessionTurn>();

@@ -24,6 +24,7 @@ import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
 import { parseUserMessage, typedText, type ParsedUserMessage, type SystemTag } from "../../../shared/user-message-parse";
 import { FromSessionBubble } from "./from-session-bubble";
+import { RewindCodeButton } from "./rewind-code-button";
 import { ScheduleRunLine } from "./schedule-run-line";
 import type { VersionGroup } from "../../../types/api";
 import { useTabStore } from "@/stores/tab-store";
@@ -90,7 +91,7 @@ export function UserBubble(props: UserBubbleProps) {
 }
 
 /** User message bubble — full width, collapsible, with system tag badges */
-function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: UserBubbleProps & {
+function OwnUserBubble({ content, messageId, parsed, prompt = true, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: UserBubbleProps & {
   parsed: ParsedUserMessage;
 }) {
   const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo, turnRefs, taskRefs } = parsed;
@@ -234,6 +235,7 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
               onClick={onFork}
             />
           )}
+          {prompt && messageId && <RewindCodeButton messageId={messageId} onFork={onFork} />}
         </MessageActionBar>
       )}
     </div>
