@@ -576,6 +576,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     bashPartialOutput,
     backgroundShells,
     killBackgroundShell,
+    liveTasks,
+    stopBackgroundTask,
   } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt, replyTransportOptions);
 
   // The chat's stored mode replaces whatever this tab carries, so the chip shows the mode the
@@ -1565,6 +1567,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
               messages={messages}
               teamName={primaryTeam}
               teamMembers={teamMembers}
+              liveTasks={liveTasks}
+              onStopTask={stopBackgroundTask}
             />
             {!minimalMode && !assistant && <SessionChangesChip
               yieldNarrow={!!tasksSummary}

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo, startTransition } from "react";
+import type { LiveBackgroundTask } from "../../shared/background-tasks";
 import { ChatAttemptLifecycle, type ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useWebSocket } from "./use-websocket";
 import { api, projectUrl } from "@/lib/api-client";
@@ -203,6 +204,9 @@ interface UseChatReturn {
   /** Background commands (Bash run_in_background) tracked for this session */
   backgroundShells: BackgroundShell[];
   killBackgroundShell: (shellId: string) => void;
+  /** The CLI's background tasks right now (shells, agents, monitors, workflows), each stoppable. */
+  liveTasks: LiveBackgroundTask[];
+  stopBackgroundTask: (taskId: string) => void;
   findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
   sendMessage: (content: string, opts?: SendMessageOptions) => void;
   /**
@@ -302,6 +306,7 @@ export function useChat(
   const [boundPermissionMode, setBoundPermissionMode] = useState<string | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
+  const [liveTasks, setLiveTasks] = useState<LiveBackgroundTask[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -963,6 +968,11 @@ export function useChat(
         const shells = (ev.shells as BackgroundShell[]) ?? [];
         backgroundShellsRef.current = shells;
         setBackgroundShells(shells);
+        break;
+      }
+
+      case "background_tasks": {
+        setLiveTasks(Array.isArray(ev.tasks) ? ev.tasks as LiveBackgroundTask[] : []);
         break;
       }
 
@@ -1885,6 +1895,11 @@ export function useChat(
     send(JSON.stringify({ type: "kill_background_shell", shellId }));
   }, [send]);
 
+  const stopBackgroundTask = useCallback((taskId: string) => {
+    if (!taskId) return;
+    send(JSON.stringify({ type: "stop_background_task", taskId }));
+  }, [send]);
+
   /** Resolve a `.output` basename (e.g. "b7z9yvujn.output" or "b7z9yvujn") to a tracked shell. */
   const findBackgroundShellByOutput = useCallback((name: string): BackgroundShell | undefined => {
     if (!name) return undefined;
@@ -2105,6 +2120,8 @@ export function useChat(
     bashPartialOutput: bashOutputRef,
     backgroundShells,
     killBackgroundShell,
+    liveTasks,
+    stopBackgroundTask,
     findBackgroundShellByOutput,
     sendMessage,
     currentTurnIdRef,

@@ -37,6 +37,7 @@ import {
   noteTaskEvent,
   type BackgroundTaskState,
 } from "./chat-background-tasks.ts";
+import type { LiveBackgroundTask } from "../../shared/background-tasks.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
 import { connectedServerNames, needsAuthServerNames, serversThatLostSignIn } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
 import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
@@ -890,6 +891,11 @@ function broadcastBackgroundRegistry(sessionId: string): void {
     sessionId,
     shells: backgroundShellRegistry.list(sessionId),
   });
+}
+
+/** Push the CLI's live background tasks to a session's clients (the footer's Tasks tab). */
+function broadcastLiveTasks(sessionId: string, entry: SessionEntry): void {
+  broadcast(sessionId, { type: "background_tasks", sessionId, tasks: entry.liveTasks ?? [] });
 }
 
 /** Tracks active sessions — persists even when FE disconnects */
@@ -1912,6 +1918,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           entry.compactStatus = null;
           log.debug(`session=${sessionId} compact_status=done (via compact_boundary)`);
           broadcast(sessionId, { type: "compact_status", status: "done" });
+        } else if (sub === "background_tasks_changed") {
+          entry.liveTasks = ((ev as any).tasks as LiveBackgroundTask[] | undefined) ?? [];
+          broadcastLiveTasks(sessionId, entry);
         } else if (sub === "task_progress") {
           // One per step of a running task, still arriving after the turn that started it ended.
           // Not a timer: a task blocked on one long command sends none, which the task tracking covers.
@@ -2396,6 +2405,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     clearBackgroundTasks(entry);
     entry.backgroundToolUseIds?.clear();
     broadcastBackgroundRegistry(sessionId);
+    broadcastLiveTasks(sessionId, entry);
     // Cleanup team watchers
     for (const w of entry.teamWatchers.values()) w.cleanup();
     entry.teamWatchers.clear();
@@ -3777,6 +3787,9 @@ export const chatWebSocket = {
       if (shells.length > 0) {
         ws.send(JSON.stringify({ type: "background_registry", sessionId, shells }));
       }
+      if (entry.liveTasks?.length) {
+        ws.send(JSON.stringify({ type: "background_tasks", sessionId, tasks: entry.liveTasks }));
+      }
       return;
     }
 
@@ -3963,10 +3976,22 @@ export const chatWebSocket = {
     } else if (parsed.type === "cancel") {
       // Fully teardown streaming session — user must resume to continue
       cancelTurnCore(sessionId, entry, "ws", ws.data.origin);
+    } else if (parsed.type === "stop_background_task") {
+      const taskId = typeof parsed.taskId === "string" ? parsed.taskId : "";
+      if (!taskId || !entry) return;
+      const provider = providerRegistry.get(providerId) as { stopBackgroundTask?(sessionId: string, taskId: string): Promise<boolean> } | undefined;
+      try {
+        if (await provider?.stopBackgroundTask?.(sessionId, taskId)) {
+          log.info(`session=${sessionId} stop_background_task taskId=${taskId}`);
+          return; // The CLI reports the end itself, and the next background_tasks drops the row.
+        }
+      } catch (e) {
+        log.warn(`session=${sessionId} stop_background_task taskId=${taskId} failed: ${(e as Error).message}`);
+      }
+      // No live CLI holds the task (it restarted, or the task already ended): the row is stale.
+      entry.liveTasks = (entry.liveTasks ?? []).filter((t) => t.taskId !== taskId);
+      broadcastLiveTasks(sessionId, entry);
     } else if (parsed.type === "kill_background_shell") {
-      // Kill via the AI: enqueue an instruction so the model calls KillShell.
-      // Cross-platform and safe (no OS-PID guessing). Runs when the AI is idle
-      // between turns, so the UI shows a "stopping" state until then.
       const shellId = parsed.shellId;
       const shell = backgroundShellRegistry.get(sessionId, shellId);
       // Ignore if unknown or already stopping/stopped (avoids duplicate KillShell turns).
@@ -3974,6 +3999,18 @@ export const chatWebSocket = {
       backgroundShellRegistry.setStatus(sessionId, shellId, "stopping");
       broadcastBackgroundRegistry(sessionId);
       const provider = providerRegistry.get(providerId);
+      // A shell's id is its SDK task id, so a live CLI stops it at once with no model turn.
+      try {
+        if (await (provider as { stopBackgroundTask?(s: string, t: string): Promise<boolean> } | undefined)?.stopBackgroundTask?.(sessionId, shellId)) {
+          log.info(`session=${sessionId} kill_background_shell stopped directly shellId=${shellId}`);
+          return;
+        }
+      } catch (e) {
+        log.warn(`session=${sessionId} kill_background_shell direct stop failed shellId=${shellId}: ${(e as Error).message}`);
+      }
+      // Otherwise kill via the AI: enqueue an instruction so the model calls KillShell.
+      // Cross-platform and safe (no OS-PID guessing). Runs when the AI is idle
+      // between turns, so the UI shows a "stopping" state until then.
       const instruction = `Call the KillShell tool with task_id "${shellId}" to stop that background command, then reply with just "Stopped.".`;
       if (!entry.isStreamingActive || entry.phase === "idle") {
         entry.turnRequestedAt = { at: Date.now(), cold: !entry.isStreamingActive };

@@ -42,6 +42,8 @@ export type ChatWsClientMessage =
   | { type: "set_thinking"; enabled: boolean }
   | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown; remember?: boolean }
   | { type: "kill_background_shell"; shellId: string }
+  /** Stop one of the CLI's background tasks (`background_tasks`) directly, with no model turn. */
+  | { type: "stop_background_task"; taskId: string }
   | { type: "ready" }
   /** Replay an in-progress turn after a downstream WebSocket content gap. */
   | { type: "resync" }

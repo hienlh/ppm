@@ -9,10 +9,13 @@
  * no chip at all. It turns red-tinted only when something needs the person.
  *
  * The popover opens on the tab that needs attention: Sessions when a session waits on the person,
- * else Agents while one runs, else Sessions. The Agents tab exists only while an agent runs.
+ * else Agents while one runs, else Tasks while the CLI runs background work, else Sessions. The
+ * Agents tab exists only while an agent runs, the Tasks tab only while a background task does —
+ * each task (a shell, an agent, a monitor, a workflow) with its own Stop, sent straight to the CLI.
  */
 import { useEffect, useRef, useState } from "react";
-import { Bot, ChevronRight, Link } from "@/lib/icons";
+import { Bot, ChevronRight, Layers, Link, Loader2, Square } from "@/lib/icons";
+import { taskKindLabel, type LiveBackgroundTask } from "../../../shared/background-tasks";
 import { cn } from "@/lib/utils";
 import { useRunningAgents, type AgentView } from "@/hooks/use-running-agents";
 import { useLinkedSessionGroups } from "@/hooks/use-linked-sessions";
@@ -24,9 +27,9 @@ import { LinkedSessionsPanel } from "./linked-sessions-panel";
 import { FooterPopover } from "./footer-popover";
 import { FOOTER_CHIP, HIDE_NARROW } from "./footer-chip";
 
-type Tab = "agents" | "sessions";
+type Tab = "agents" | "tasks" | "sessions";
 
-export function ActivityChip({ projectName, agentProviderId, sessionId, messages, teamName, teamMembers, yieldNarrow = false }: {
+export function ActivityChip({ projectName, agentProviderId, sessionId, messages, teamName, teamMembers, liveTasks = [], onStopTask, yieldNarrow = false }: {
   projectName: string;
   /** The provider whose agent transcripts feed the Agents tab. */
   agentProviderId: AgentTranscriptProviderId;
@@ -35,6 +38,9 @@ export function ActivityChip({ projectName, agentProviderId, sessionId, messages
   /** The session's implicit team name, for a teammate row's source. */
   teamName: string;
   teamMembers: TeamMemberActivity[];
+  /** The CLI's background tasks right now, and how to stop one. */
+  liveTasks?: LiveBackgroundTask[];
+  onStopTask?: (taskId: string) => void;
   /**
    * Leave the row whole when the chat is narrow, so a chip that matters more (the manager chat's
    * Tasks chip) keeps its place: off by default, so other chats are unchanged. Never while a
@@ -54,21 +60,22 @@ export function ActivityChip({ projectName, agentProviderId, sessionId, messages
   const needsYou = linked.some((l) => l.status === "needs_approval");
   const sessionsRunning = linked.some((l) => l.status === "running");
   const hasAgents = agents.running > 0;
+  const hasTasks = liveTasks.length > 0;
   // Hidden sessions keep the chip, so they can still be found and relinked.
   const hasSessions = linked.length > 0 || groups.hidden.length > 0;
-  const visible = !!sessionId && (hasAgents || hasSessions);
+  const visible = !!sessionId && (hasAgents || hasTasks || hasSessions);
   // A chip that went away takes its popover with it: when the next agent starts the chip comes
   // back closed, rather than with a popover (or a sheet over the chat) nobody asked for.
   useEffect(() => { if (!visible) setOpen(false); }, [visible]);
   if (!sessionId || !visible) return null;
 
   const unread = linked.some((l) => l.status === "new_message");
-  const dot = needsYou ? "needs_approval" : hasAgents || sessionsRunning ? "running" : unread ? "new_message" : "idle";
-  const shown: Tab = hasAgents ? tab : "sessions";
+  const dot = needsYou ? "needs_approval" : hasAgents || hasTasks || sessionsRunning ? "running" : unread ? "new_message" : "idle";
+  const shown: Tab = (tab === "agents" && hasAgents) || (tab === "tasks" && hasTasks) ? tab : "sessions";
   const toggle = () => {
     if (open) { setOpen(false); return; }
     // Open where attention is: a session that needs you, else running agents, else sessions.
-    setTab(needsYou ? "sessions" : hasAgents ? "agents" : "sessions");
+    setTab(needsYou ? "sessions" : hasAgents ? "agents" : hasTasks ? "tasks" : "sessions");
     setSwitched(false);
     setOpen(true);
   };
@@ -76,6 +83,7 @@ export function ActivityChip({ projectName, agentProviderId, sessionId, messages
 
   const title = [
     hasAgents ? `${agents.running} ${agents.running === 1 ? "agent" : "agents"} running` : null,
+    hasTasks ? liveTasks.length + (liveTasks.length === 1 ? " background task" : " background tasks") : null,
     hasSessions ? `${linked.length} linked` : null,
     needsYou ? "one needs you" : null,
   ].filter(Boolean).join(" · ");
@@ -102,7 +110,15 @@ export function ActivityChip({ projectName, agentProviderId, sessionId, messages
             <span className={HIDE_NARROW}>{agents.running === 1 ? "agent" : "agents"}</span>
           </span>
         )}
-        {hasAgents && hasSessions && <span className="h-3 w-px shrink-0 bg-border" aria-hidden="true" />}
+        {hasAgents && hasTasks && <span className="h-3 w-px shrink-0 bg-border" aria-hidden="true" />}
+        {hasTasks && (
+          <span className="inline-flex items-center gap-1" data-activity-part="tasks">
+            <Layers className="text-text-3" />
+            <b className="font-medium tabular-nums text-text">{liveTasks.length}</b>
+            <span className={HIDE_NARROW}>{liveTasks.length === 1 ? "task" : "tasks"}</span>
+          </span>
+        )}
+        {(hasAgents || hasTasks) && hasSessions && <span className="h-3 w-px shrink-0 bg-border" aria-hidden="true" />}
         {hasSessions && (
           <span className="inline-flex items-center gap-1" data-activity-part="sessions">
             <Link className="text-text-3" />
@@ -113,16 +129,23 @@ export function ActivityChip({ projectName, agentProviderId, sessionId, messages
         )}
       </button>
 
-      <FooterPopover open={open} onClose={() => setOpen(false)} label="Agents and linked sessions" anchorRef={chipRef}>
+      <FooterPopover open={open} onClose={() => setOpen(false)} label="Agents, background tasks and linked sessions" anchorRef={chipRef}>
         <div role="tablist" aria-label="Activity" className="flex shrink-0 gap-0.5 border-b border-border-soft p-1.5">
           {hasAgents && (
             <TabButton active={shown === "agents"} onClick={() => pick("agents")} icon={<Bot />} label="Agents" count={agents.running} />
+          )}
+          {hasTasks && (
+            <TabButton active={shown === "tasks"} onClick={() => pick("tasks")} icon={<Layers />} label="Tasks" count={liveTasks.length} />
           )}
           <TabButton active={shown === "sessions"} onClick={() => pick("sessions")} icon={<Link />} label="Sessions" count={linked.length} alert={needsYou} />
         </div>
         {shown === "agents" ? (
           <div key="agents" role="tabpanel" aria-label="Agents" className={cn("flex min-h-0 flex-1 flex-col", switched && "footer-from-left")}>
             <AgentList agents={agents.views} onOpen={(v) => { setOpen(false); agents.openView(v); }} />
+          </div>
+        ) : shown === "tasks" ? (
+          <div key="tasks" role="tabpanel" aria-label="Tasks" className={cn("flex min-h-0 flex-1 flex-col", switched && "footer-from-right")}>
+            <TaskList tasks={liveTasks} onStop={onStopTask} />
           </div>
         ) : (
           <div key="sessions" role="tabpanel" aria-label="Sessions" className={cn("flex min-h-0 flex-1 flex-col", switched && "footer-from-right")}>
@@ -187,6 +210,40 @@ function AgentList({ agents, onOpen }: { agents: AgentView[]; onOpen: (v: AgentV
           </button>
         </li>
       ))}
+    </ul>
+  );
+}
+
+/** The CLI's background tasks; Stop asks the CLI to end one, and the row goes once it has. */
+function TaskList({ tasks, onStop }: { tasks: LiveBackgroundTask[]; onStop?: (taskId: string) => void }) {
+  const [stopping, setStopping] = useState<ReadonlySet<string>>(new Set());
+  return (
+    <ul className="max-h-[220px] min-h-0 list-none overflow-y-auto overscroll-contain p-1 max-md:max-h-none max-md:flex-1">
+      {tasks.map((t) => {
+        const busy = stopping.has(t.taskId);
+        return (
+          <li key={t.taskId} data-background-task={t.taskId} className="flex min-h-11 items-center gap-2.5 rounded-md px-2 py-1 text-text">
+            <LinkedStatusDot status="running" />
+            <span className="flex min-w-0 flex-1 flex-col gap-px">
+              <span className="truncate text-[13px] font-medium" title={t.description}>{t.description || t.taskId}</span>
+              <span className="truncate font-mono text-[11px] text-text-3">{busy ? "Stopping…" : taskKindLabel(t)}</span>
+            </span>
+            {onStop && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => { setStopping((prev) => new Set(prev).add(t.taskId)); onStop(t.taskId); }}
+                aria-label={"Stop " + (t.description || "task")}
+                title="Stop"
+                data-stop-task={t.taskId}
+                className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-text-2 transition-colors max-md:size-[26px] can-hover:hover:bg-surface-hover can-hover:hover:text-error disabled:opacity-50"
+              >
+                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Square className="size-3.5" />}
+              </button>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }

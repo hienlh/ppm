@@ -746,6 +746,22 @@ created on first use rather than by a numbered migration), set by
 `SessionInfo` as `archive`; the filter and the day count live in
 `src/web/stores/chat-history-filter-store.ts`. Archiving never deletes or stops anything.
 
+### Background tasks and their Stop
+
+The Claude CLI reports every background task it runs (a `run_in_background` shell, a backgrounded
+agent, a monitor, a workflow) as a level signal, `background_tasks_changed`, each payload replacing
+the last. The provider forwards it minus the `ambient` entries (`liveTasksFrom` in
+`src/shared/background-tasks.ts`), `ws/chat.ts` keeps it on the session entry as `liveTasks`,
+broadcasts `background_tasks` and replays it to a reconnecting client, and forgets it when the
+subprocess is torn down. The footer's activity chip counts them and lists them in a **Tasks** tab,
+each with a Stop that sends `stop_background_task`; the server calls the SDK's `stopTask` (the
+`stop_task` control request), which ends the task in milliseconds with no model turn, and the CLI's
+own `task_updated` / `background_tasks_changed` then remove the row. With no live CLI the row is
+dropped as stale. The background-command bar's Stop (`kill_background_shell`) tries the same direct
+stop first, since a shell's id is its task id, and falls back to asking the model to call KillShell
+only when no live CLI holds it. PPM does not declare `perTaskStopAffordance`, so the chat's Stop
+still ends background tasks along with the turn.
+
 ## Voice messages
 
 The chat mic records a voice message instead of dictating, once the install has said yes to the `voice-messages-2026-11` feature intro (config `voice_message.enabled`; Settings → Voice Input has the same switch). Off, the mic dictates exactly as before.

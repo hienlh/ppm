@@ -1,4 +1,5 @@
 import { decodeMessageBlocks } from "../shared/chat-message-blocks.ts";
+import { liveTasksFrom } from "../shared/background-tasks.ts";
 import { isMinimalMode } from "../services/runtime-mode.ts";
 import type { StripMode } from "../services/transcript-images.ts";
 import {
@@ -2105,6 +2106,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             continue;
           }
 
+          // Every live background task, replacing the last list (a level, not an edge).
+          if (subtype === "background_tasks_changed") {
+            yield { type: "system" as any, subtype, tasks: liveTasksFrom((msg as any).tasks) } as any;
+            continue;
+          }
+
           // Yield system events so streaming loop can transition phases
           // (e.g. connecting → thinking when hooks/init arrive)
           yield { type: "system" as any, subtype } as any;
@@ -3072,6 +3079,19 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
     }
+  }
+
+  /**
+   * Stop one background task (a shell, agent, monitor or workflow) of the session's live CLI with
+   * the SDK's `stop_task` control request — no model turn. False when no live CLI holds the session
+   * or this SDK cannot do it; the task then ends with the CLI's own `task_updated` / `task_notification`.
+   */
+  async stopBackgroundTask(sessionId: string, taskId: string): Promise<boolean> {
+    const ss = this.streamingSessions.get(sessionId);
+    const q = ss?.query as unknown as { stopTask?(taskId: string): Promise<void> } | undefined;
+    if (typeof q?.stopTask !== "function") return false;
+    await q.stopTask(taskId);
+    return true;
   }
 
   /** What the settings files say about effort for a chat in `projectPath` no CLI has answered for yet. */

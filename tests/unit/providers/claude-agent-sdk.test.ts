@@ -754,6 +754,36 @@ describe("ClaudeAgentSdkProvider", () => {
           streaming.delete("side-1");
         }
       });
+
+      it("stops a background task through the live CLI's stopTask, and says when there is none", async () => {
+        const stopped: string[] = [];
+        const streaming = (provider as any).streamingSessions as Map<string, unknown>;
+        streaming.set("bg-1", { query: { stopTask: async (id: string) => { stopped.push(id); } } });
+        try {
+          expect(await provider.stopBackgroundTask("bg-1", "bgljg8lcw")).toBe(true);
+          expect(stopped).toEqual(["bgljg8lcw"]);
+          expect(await provider.stopBackgroundTask("no-such-session", "x")).toBe(false);
+        } finally {
+          streaming.delete("bg-1");
+        }
+      });
+
+      it("forwards background_tasks_changed as the visible task list", async () => {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([
+          { type: "system", subtype: "background_tasks_changed", tasks: [
+            { task_id: "b1", task_type: "local_bash", description: "Run sleep 300" },
+            { task_id: "w1", task_type: "monitor", description: "watch", ambient: true },
+          ] } as any,
+          { type: "result" } as any,
+        ]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        const events: any[] = [];
+        for await (const ev of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) events.push(ev);
+        expect(events.filter((e) => e.subtype === "background_tasks_changed")).toEqual([{
+          type: "system", subtype: "background_tasks_changed",
+          tasks: [{ taskId: "b1", taskType: "local_bash", description: "Run sleep 300" }],
+        }]);
+      });
     });
 
     describe("design session", () => {

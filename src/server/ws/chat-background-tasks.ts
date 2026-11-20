@@ -13,6 +13,8 @@
  * state on each session entry.
  */
 
+import type { LiveBackgroundTask } from "../../shared/background-tasks.ts";
+
 /** Statuses after which a task is no longer running. */
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "stopped", "killed"]);
 
@@ -29,6 +31,8 @@ export interface BackgroundTaskState {
   runningTaskIds?: Set<string>;
   /** When the subprocess last emitted a subagent event or a task progress tick (ms epoch). */
   lastBackgroundEventAt?: number;
+  /** The CLI's last `background_tasks_changed` list: what the footer's Tasks tab shows. */
+  liveTasks?: LiveBackgroundTask[];
 }
 
 export function isTerminalTaskStatus(status: string | undefined): boolean {
@@ -80,4 +84,5 @@ export function backgroundEventRecent(
 export function clearBackgroundTasks(state: BackgroundTaskState): void {
   state.runningTaskIds?.clear();
   state.lastBackgroundEventAt = undefined;
+  state.liveTasks = [];
 }
