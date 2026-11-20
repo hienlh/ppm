@@ -10,7 +10,7 @@
  * over 4096 characters, `callback_data` over 64 bytes, a URL button Telegram cannot open (anything
  * but https on a public host: `BUTTON_URL_INVALID`), an edit that changes nothing, deleting a
  * message that is not there. A test plays the person on the other end with `pushText` (an old
- * `date` makes a backlog message, `forward_origin` a forwarded one), `pushPhoto` and
+ * `date` makes a backlog message, `forward_origin` a forwarded one), `pushPhoto`, `pushVoice` and
  * `pressButton` (`stale` presses a button the message showed once, as a phone still drawing an
  * old keyboard does).
  */
@@ -71,6 +71,8 @@ export interface FakeTelegram {
   pushText(chatId: number, userId: number, text: string, chatType?: TelegramMessage["chat"]["type"], extra?: Record<string, unknown>): TelegramUpdate;
   /** `extra` is merged into the message, as for `pushText` (`reply_to_message`, `media_group_id`, `date`). */
   pushPhoto(chatId: number, userId: number, options?: { bytes?: Uint8Array; caption?: string; chatType?: TelegramMessage["chat"]["type"]; extra?: Record<string, unknown> }): TelegramUpdate;
+  /** A voice note; its bytes can be fetched with `getFile` + the file URL, as a photo's can. `extra` as for `pushText`. */
+  pushVoice(chatId: number, userId: number, options?: { bytes?: Uint8Array; duration?: number; mime?: string; chatType?: TelegramMessage["chat"]["type"]; extra?: Record<string, unknown> }): TelegramUpdate;
   /**
    * Press a button the bot put under one of its messages; throws if there is no such button.
    * With `stale`, a button the message showed at any point counts, taken away since or not.
@@ -479,6 +481,20 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
         date: Math.floor(Date.now() / 1000),
         photo: sizes,
         ...(caption ? { caption } : {}),
+        ...extra,
+      } as TelegramMessage;
+      return enqueue({ message });
+    },
+    pushVoice(chatId, userId, { bytes = new Uint8Array([0x4f, 0x67, 0x67, 0x53]), duration = 3, mime = "audio/ogg", chatType = "private", extra = {} } = {}) {
+      const n = nextFile++;
+      const fileId = `voice-${n}`;
+      files.set(fileId, { path: `voice/file_${n}.oga`, bytes });
+      const message: TelegramMessage = {
+        message_id: messageId(chatId),
+        from: userOf(userId),
+        chat: chatOf(chatId, chatType),
+        date: Math.floor(Date.now() / 1000),
+        voice: { duration, file_id: fileId, file_unique_id: `u-${fileId}`, mime_type: mime, file_size: bytes.byteLength },
         ...extra,
       } as TelegramMessage;
       return enqueue({ message });

@@ -1,0 +1,92 @@
+import { describe, expect, it } from "bun:test";
+import {
+  encodeVoicePart, formatVoiceDuration, splitVoiceMessage, voiceMarkerLine, voicePlainText, whisperVocabularyPrompt,
+} from "../../../src/shared/voice-message.ts";
+
+const PATH = "C:\\Users\\me\\.ppm\\uploads\\voice-1.wav";
+
+describe("formatVoiceDuration", () => {
+  it("writes minutes and two-digit seconds", () => {
+    expect(formatVoiceDuration(42)).toBe("0:42");
+    expect(formatVoiceDuration(125)).toBe("2:05");
+    expect(formatVoiceDuration(0)).toBe("0:00");
+  });
+
+  it("rounds fractions and keeps nonsense in range", () => {
+    expect(formatVoiceDuration(41.6)).toBe("0:42");
+    expect(formatVoiceDuration(-3)).toBe("0:00");
+    expect(formatVoiceDuration(Number.NaN)).toBe("0:00");
+  });
+});
+
+describe("encodeVoicePart / splitVoiceMessage", () => {
+  it("writes the marker the plan specifies, then the transcript", () => {
+    expect(encodeVoicePart({ path: PATH, durationSec: 42, transcript: "  sửa route Hono  " })).toBe(
+      `[Voice message (0:42), transcribed below; the audio needs no opening: ${PATH}]\nsửa route Hono`,
+    );
+  });
+
+  it("round-trips typed text above a multi-line transcript", () => {
+    const content = `Look at this screenshot\n\n${encodeVoicePart({ path: PATH, durationSec: 75, transcript: "dòng một\ndòng hai" })}`;
+    expect(splitVoiceMessage(content)).toEqual({
+      before: "Look at this screenshot",
+      voice: { path: PATH, durationSec: 75, transcript: "dòng một\ndòng hai" },
+    });
+  });
+
+  it("answers the whole text as `before` when there is no marker", () => {
+    expect(splitVoiceMessage("  just typed  ")).toEqual({ before: "  just typed  ", voice: null });
+  });
+
+  it("ignores a marker that does not start its line", () => {
+    const quoted = `he wrote > ${voiceMarkerLine(PATH, 3)}\nnot a transcript`;
+    expect(splitVoiceMessage(quoted).voice).toBeNull();
+  });
+
+  it("takes the last marker when the text quotes an earlier one", () => {
+    const text = `${encodeVoicePart({ path: "/old.wav", durationSec: 5, transcript: "cũ" })}\nmore\n${encodeVoicePart({ path: "/new.wav", durationSec: 9, transcript: "mới" })}`;
+    const { before, voice } = splitVoiceMessage(text);
+    expect(voice).toEqual({ path: "/new.wav", durationSec: 9, transcript: "mới" });
+    expect(before).toContain("/old.wav");
+  });
+
+  it("keeps a path with spaces and brackets, and cannot be split by a newline in it", () => {
+    const path = "/home/a b/[x]/v.ogg";
+    expect(splitVoiceMessage(encodeVoicePart({ path, durationSec: 1, transcript: "t" })).voice?.path).toBe(path);
+    const broken = encodeVoicePart({ path: "/a\n/b.wav", durationSec: 1, transcript: "t" });
+    expect(broken.split("\n")).toHaveLength(2);
+  });
+
+  it("reads a CRLF marker line", () => {
+    const text = `${voiceMarkerLine(PATH, 10)}\r\nhello`;
+    expect(splitVoiceMessage(text).voice?.transcript).toBe("hello");
+  });
+});
+
+describe("whisperVocabularyPrompt", () => {
+  it("dedupes without case, keeps the first spelling and the order", () => {
+    expect(whisperVocabularyPrompt(["Hono", "bun", "hono", " Bun ", "Zustand"])).toBe("Hono, bun, Zustand");
+  });
+
+  it("skips empty words and collapses inner whitespace", () => {
+    expect(whisperVocabularyPrompt(["", "  ", "use  stick   to bottom"])).toBe("use stick to bottom");
+  });
+
+  it("stops at a whole word under the cap", () => {
+    const prompt = whisperVocabularyPrompt(["aaaa", "bbbb", "cccc"], 11);
+    expect(prompt).toBe("aaaa, bbbb");
+    expect(whisperVocabularyPrompt(Array.from({ length: 500 }, (_, i) => `word${i}`)).length).toBeLessThanOrEqual(600);
+  });
+});
+
+describe("voicePlainText", () => {
+  it("drops the marker and keeps the typed words then the transcript", () => {
+    const content = `Look at this:\n\n${encodeVoicePart({ path: PATH, durationSec: 42, transcript: "Fix the Hono middleware." })}`;
+    expect(voicePlainText(content)).toBe("Look at this:\n\nFix the Hono middleware.");
+  });
+
+  it("is the transcript alone for a voice-only message, and the text unchanged without a voice", () => {
+    expect(voicePlainText(encodeVoicePart({ path: PATH, durationSec: 3, transcript: "Hello" }))).toBe("Hello");
+    expect(voicePlainText("just text")).toBe("just text");
+  });
+});

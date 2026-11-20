@@ -7,6 +7,7 @@ import { api, projectUrl } from "@/lib/api-client";
 import type { ReplyReference } from "../../../shared/chat-reply";
 import type { TurnReference } from "../../../shared/chat-turn-ref";
 import { decodeMessageBlocks, encodeMessageBlocks } from "../../../shared/chat-message-blocks";
+import { voicePlainText } from "../../../shared/voice-message";
 import { buildTurnLink } from "@/lib/turn-link";
 import { readChatPreparationSettings } from "@/lib/chat-preference-local-cache";
 import { useComposerTurnRefs } from "@/hooks/use-composer-turn-refs";
@@ -1133,7 +1134,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           // session behind, which the retry does not reuse.
           const session = await api.post<Session>(`${projectUrl(pName)}/chat/sessions`, {
             providerId: selectedProvider,
-            title: content.slice(0, 50),
+            title: voicePlainText(content).slice(0, 50),
             // Set by /clear — the session only exists now, so persist the lineage here.
             clearedFrom: metadata?.clearedFrom as string | undefined,
             // The account this tab claimed on open and has been displaying since. Redeeming
@@ -1256,7 +1257,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     () =>
       messagesRef.current
         .filter((m) => m.role === "user" && m.content.trim())
-        .map((m) => m.content),
+        // A recalled voice message comes back as its words: the recording cannot be re-sent.
+        .map((m) => voicePlainText(m.content)),
     [],
   );
 

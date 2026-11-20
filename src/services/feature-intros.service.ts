@@ -2,13 +2,14 @@
  * The install-wide record of which new features the tour has asked about (config key
  * `feature_intros`, see `src/shared/feature-intros.ts`). Answered on one device, no other device
  * asks. The answer itself lives in `ai.ppm_tools` as explicit switches, or for a feature that is
- * one setting in that setting (the Assistant's permission mode); this record only says whether,
+ * one setting in that setting (the Assistant's permission mode, `voice_message.enabled`); this record only says whether,
  * how and when the question ended, and how many times it was put off.
  */
 import { configService } from "./config.service.ts";
 import { getDb } from "./db.service.ts";
 import { createLogger } from "./logger.ts";
 import { getAssistantSettings, writeAssistantPermissionMode } from "./assistant/assistant-settings.service.ts";
+import { readVoiceSettings, updateVoiceSettings } from "./voice-message/voice-settings.ts";
 import {
   answerFromSwitches, FEATURE_INTRO_SKIP_WINDOW_MS, FEATURE_INTROS, featureIntroById, MAX_FEATURE_INTRO_SKIPS, switchesForAnswer,
   type FeatureIntroAnswer, type FeatureIntroSetting, type FeatureIntroState, type FeatureIntroStates, type FeatureIntrosView,
@@ -72,6 +73,10 @@ function answerFromSetting(setting: FeatureIntroSetting): FeatureIntroAnswer | n
       const mode = getAssistantSettings().permission_mode;
       return mode === "full" ? "on" : mode === "ask" ? "off" : null;
     }
+    case "voice_messages": {
+      const enabled = readVoiceSettings().enabled;
+      return enabled === true ? "on" : enabled === false ? "off" : null;
+    }
   }
 }
 
@@ -80,6 +85,9 @@ function writeSettingAnswer(setting: FeatureIntroSetting, answer: FeatureIntroAn
   switch (setting) {
     case "assistant_permission_mode":
       writeAssistantPermissionMode(answer === "on" ? "full" : "ask");
+      return;
+    case "voice_messages":
+      updateVoiceSettings({ enabled: answer === "on" });
       return;
   }
 }

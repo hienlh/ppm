@@ -32,6 +32,10 @@ import { forwardedFrom, wrapForwarded, backlogQuestion, viaInlineBot } from "./a
 import { quoteTelegramMessage, toReplyReference, type BotSource, type QuotedCard, type TelegramQuote } from "./assistant-telegram-reply-quote.ts";
 import type { AnswerTurn } from "./assistant-telegram-own-answers.ts";
 import type { TaskWordsAim, TaskWordsMessage } from "./assistant-telegram-task-message.ts";
+import { TelegramVoiceMessages } from "./assistant-telegram-voice.ts";
+import type { TelegramVoiceDeps } from "./assistant-telegram-voice-deps.ts";
+import type { VoiceBundle } from "./assistant-telegram-voice-pending.ts";
+import { VOICE_OLD_TEXT, voiceRefusal } from "./assistant-telegram-voice-card.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -51,8 +55,11 @@ export const BACKLOG_PHOTO_ONLY_NOTE = "A photo sent while PPM was off cannot an
 export const BACKLOG_PHOTO_DROPPED_NOTE = "The photo sent with it while PPM was off is not kept; only the words can be sent. Send the photo again as a reply to the card if it matters.";
 
 type Image = { data: string; mediaType: string };
-/** `quote`: what the user replied to, said once for the whole burst (see `message`). */
-interface Gathered { updateIds: number[]; parts: string[]; images: Image[]; quote: TelegramQuote | null }
+/**
+ * `quote`: what the user replied to, said once for the whole burst (see `message`). `voice`: a voice
+ * message being read owns the burst, which then stays open until its transcript is ready.
+ */
+type Gathered = VoiceBundle;
 /** An album replying to a card, gathered until its last photo has arrived. */
 interface CardAlbum { groupId: string; replyTo: number; updateIds: number[]; messages: TelegramMessage[]; timer: ReturnType<typeof setTimeout> | null }
 
@@ -99,6 +106,8 @@ export interface InboundDeps {
   now?: () => number;
   /** How long an album replying to a card waits for its next photo; {@link CARD_ALBUM_DEBOUNCE_MS} by default. */
   albumDebounceMs?: () => number;
+  /** Voice messages (Whisper + clean-up); without it a voice message is refused as before. */
+  voice?: TelegramVoiceDeps;
 }
 
 interface ChatLane { chain: Promise<void>; gathered: Gathered | null; timer: ReturnType<typeof setTimeout> | null; album: CardAlbum | null }
@@ -108,10 +117,25 @@ export class AssistantTelegramInbound {
   private readonly refused = new Set<string>();
   private readonly backlog = new Map<string, { chatId: string; text: string; images: Image[]; card?: CardReplyMessage; quote?: TelegramQuote }>();
   private readonly now: () => number;
+  private readonly voice: TelegramVoiceMessages | null;
+  /** When each chat last sent the Assistant a photo, so a voice arriving after it says it follows it. */
+  private readonly photoSentAt = new Map<string, number>();
   private stopped = false;
 
   constructor(private readonly deps: InboundDeps) {
     this.now = deps.now ?? Date.now;
+    this.voice = deps.voice ? new TelegramVoiceMessages({
+      client: deps.client, queue: deps.queue, codes: deps.codes, deps: deps.voice, now: this.now,
+      reply: (chatId, html) => this.reply(chatId, html),
+      onLane: (chatId, work) => this.onLane(chatId, work),
+      release: (chatId, bundle) => this.release(chatId, bundle),
+      deliverBundle: (chatId, bundle, voicePart) => this.deliverBundle(chatId, bundle, voicePart),
+      confirm: (bundle) => { for (const id of bundle.updateIds.splice(0)) this.deps.delivered(id); },
+      recentPhotoAt: (chatId) => {
+        const at = this.photoSentAt.get(chatId);
+        return at !== undefined && this.now() - at < BACKLOG_AGE_MS ? new Date(at).toTimeString().slice(0, 5) : null;
+      },
+    }) : null;
   }
 
   dispatch(update: TelegramUpdate): void {
@@ -133,6 +157,7 @@ export class AssistantTelegramInbound {
   stop(): void {
     this.stopped = true;
     for (const chatId of [...this.lanes.keys()]) this.forgetChat(chatId);
+    this.voice?.stop();
   }
 
   /** Drops what a chat had gathered; its updates are confirmed so they are not read again. */
@@ -144,6 +169,8 @@ export class AssistantTelegramInbound {
     if (lane) { lane.gathered = null; lane.timer = null; lane.album = null; }
     for (const [id, b] of this.backlog) if (b.chatId === chatId) this.backlog.delete(id);
     this.forgetRefusals(chatId);
+    this.photoSentAt.delete(chatId);
+    this.voice?.forgetChat(chatId);
   }
 
   private forgetRefusals(chatId: string): void {
@@ -234,6 +261,10 @@ export class AssistantTelegramInbound {
       return false;
     }
 
+    // A reply to a voice message's review card replaces its transcript.
+    if (this.voice?.replace(chatId, message)) return false;
+    if (message.voice && !from && this.voice && this.deps.voice?.enabled()) return this.voiceMessage(chatId, message, updateId);
+
     // An answer in the user's own words to a chat's question card: a reply to it, or the message
     // after its ✏️ Other. One sent while PPM was off is not: it goes on and is asked about below.
     const repliedTo = message.reply_to_message?.message_id;
@@ -316,6 +347,9 @@ export class AssistantTelegramInbound {
     if (image) gathered.images.push(image);
     gathered.quote ??= quote;
     if (lane.timer) clearTimeout(lane.timer);
+    lane.timer = null;
+    // A voice being read holds the burst open: it is sent when the transcript is ready.
+    if (gathered.voice) return true;
     lane.timer = setTimeout(() => {
       lane.timer = null;
       this.onLane(chatId, () => this.flush(chatId));
@@ -416,11 +450,52 @@ export class AssistantTelegramInbound {
     if (!lane || !gathered) return;
     lane.gathered = null;
     if (lane.timer) { clearTimeout(lane.timer); lane.timer = null; }
+    // A burst a voice is still being read for is the voice's to send: it only stops gathering, and
+    // whatever comes next is a message of its own.
+    if (gathered.voice) return;
+    await this.deliverBundle(chatId, gathered, null);
+  }
+
+  /** Sends a bundle as one message, the voice part (if any) last, and confirms its updates. */
+  private async deliverBundle(chatId: string, bundle: Gathered, voicePart: string | null): Promise<void> {
     try {
-      await this.deliver(chatId, gathered.parts.join("\n\n"), gathered.images, gathered.quote);
+      const parts = voicePart ? [...bundle.parts, voicePart] : bundle.parts;
+      if (bundle.images.length) this.photoSentAt.set(chatId, this.now());
+      if (parts.length || bundle.images.length) await this.deliver(chatId, parts.join("\n\n"), bundle.images, bundle.quote);
     } finally {
-      for (const id of gathered.updateIds) this.deps.delivered(id);
+      for (const id of bundle.updateIds.splice(0)) this.deps.delivered(id);
     }
+  }
+
+  /** The bundle stops gathering: what arrives next starts a new one. */
+  private release(chatId: string, bundle: Gathered): void {
+    const lane = this.lanes.get(chatId);
+    if (!lane || lane.gathered !== bundle) return;
+    lane.gathered = null;
+    if (lane.timer) { clearTimeout(lane.timer); lane.timer = null; }
+  }
+
+  /**
+   * A voice message: refused when too long, too large or sent while PPM was off; otherwise it joins
+   * (or starts) the chat's burst and is read off the lane. True: its update is confirmed later.
+   */
+  private async voiceMessage(chatId: string, message: TelegramMessage, updateId: number): Promise<boolean> {
+    const refusal = this.now() - message.date * 1000 > BACKLOG_AGE_MS ? VOICE_OLD_TEXT : voiceRefusal(message.voice!);
+    if (refusal) {
+      this.reply(chatId, escapeTelegramHtml(refusal));
+      return false;
+    }
+    const quote = this.quoteOf(chatId, message);
+    const held = this.lanes.get(chatId)?.gathered;
+    // One voice per message, and a burst answers at most one message: either sends what was gathered.
+    if (held && (held.voice || (quote && held.quote && held.quote.sourceId !== quote.sourceId))) await this.flush(chatId);
+    const lane = this.lanes.get(chatId)!;
+    const gathered = lane.gathered ??= { updateIds: [], parts: [], images: [], quote: null };
+    gathered.updateIds.push(updateId);
+    gathered.quote ??= quote;
+    if (lane.timer) { clearTimeout(lane.timer); lane.timer = null; }
+    this.voice!.start(chatId, message, gathered);
+    return true;
   }
 
   private async deliver(chatId: string, text: string, images: Image[], quote: TelegramQuote | null = null): Promise<void> {
@@ -468,6 +543,11 @@ export class AssistantTelegramInbound {
       return;
     }
     const action = found.action;
+    if (action.kind === "voice") {
+      const toast = this.voice ? await this.voice.press(chatId, action, found.group) : "This button is no longer valid.";
+      await this.deps.client.answerCallbackQuery(cq.id, toast);
+      return;
+    }
     if (action.kind === "card") {
       // Answered first and quickly: the toast says what happened, and the spinner stops.
       await this.deps.client.answerCallbackQuery(cq.id, this.deps.pressCard(chatId, action, found.group, cq));

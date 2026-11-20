@@ -82,4 +82,16 @@ describe("whisperArgs", () => {
     expect(args).toContain("-nt");
     expect(args).toContain("-np");
   });
+
+  it("passes no prompt unless given one", () => {
+    expect(args).not.toContain("--prompt");
+    expect(whisperArgs("/w", "/a.wav", "/m.bin", "vi", "   ")).not.toContain("--prompt");
+  });
+
+  it("passes a vocabulary hint as one argument, on one line", () => {
+    const withPrompt = whisperArgs("/w", "/a.wav", "/m.bin", "vi", "Hono,\n  Bun, \"quoted\" `x`");
+    expect(withPrompt[withPrompt.indexOf("--prompt") + 1]).toBe('Hono, Bun, "quoted" `x`');
+    const long = whisperArgs("/w", "/a.wav", "/m.bin", "vi", "x".repeat(5000));
+    expect(long[long.indexOf("--prompt") + 1]!.length).toBe(1000);
+  });
 });

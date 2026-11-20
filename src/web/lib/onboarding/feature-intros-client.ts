@@ -4,10 +4,24 @@
  */
 import { api } from "@/lib/api-client";
 import { isPpmTool } from "../../../shared/ppm-tools";
-import type { FeatureIntro, FeatureIntroAnswer, FeatureIntrosView } from "../../../shared/feature-intros";
+import type { FeatureIntro, FeatureIntroAnswer, FeatureIntroSetting, FeatureIntrosView } from "../../../shared/feature-intros";
 import type { OnboardingStatus } from "./onboarding-types";
 
 const base = (id: string) => `/api/feature-intros/${encodeURIComponent(id)}`;
+
+const KNOWN_SETTINGS: readonly FeatureIntroSetting[] = ["assistant_permission_mode", "voice_messages"];
+const isKnownSetting = (value: unknown): value is FeatureIntroSetting =>
+  typeof value === "string" && (KNOWN_SETTINGS as readonly string[]).includes(value);
+
+/**
+ * Where a feature's own switch lives in Settings, for the step's "decide there instead" link. A
+ * feature made of tool switches is decided in Tools; a feature that is one setting, on its pane.
+ */
+export function featureIntroSettingsLink(intro: Pick<FeatureIntro, "setting">): { category: "tools" | "assistant" | "voice"; label: string } {
+  if (intro.setting === "voice_messages") return { category: "voice", label: "Choose in Settings → Voice Input instead" };
+  if (intro.setting === "assistant_permission_mode") return { category: "assistant", label: "Choose in Settings → PPM Assistant instead" };
+  return { category: "tools", label: "Change single tools in Settings → Tools" };
+}
 
 function parseIntro(raw: unknown): FeatureIntro | null {
   if (!raw || typeof raw !== "object") return null;
@@ -15,7 +29,7 @@ function parseIntro(raw: unknown): FeatureIntro | null {
   if (typeof value.id !== "string" || typeof value.title !== "string" || typeof value.body !== "string") return null;
   if (!Array.isArray(value.tools) || !value.tools.every(isPpmTool)) return null;
   // A feature that is one setting keeps it: the step links to where that setting lives.
-  const setting = value.setting === "assistant_permission_mode" ? { setting: value.setting } as const : {};
+  const setting = isKnownSetting(value.setting) ? { setting: value.setting } : {};
   return { id: value.id, title: value.title, body: value.body, tools: value.tools, ...setting, since: typeof value.since === "string" ? value.since : "" };
 }
 

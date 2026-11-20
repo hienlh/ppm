@@ -32,6 +32,8 @@ import { api } from "@/lib/api-client";
 import { MarkdownContent } from "./message-markdown";
 import { AuthImageThumbnail, isImagePath } from "./message-media";
 import { isAssistantProject } from "../../../shared/assistant-project";
+import { splitVoiceMessage } from "../../../shared/voice-message";
+import { MessageVoicePart } from "./message-voice-part";
 
 /** Detect if tags contain system-injected content (not real user input) */
 const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details", "local-command-caveat"]);
@@ -94,6 +96,8 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
   const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo, turnRefs, taskRefs } = parsed;
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
+  // A voice message rides at the end of the text as a marker plus its transcript: drawn as a player.
+  const { before: typedPart, voice } = useMemo(() => splitVoiceMessage(text), [text]);
 
   return (
     <div className={cn("flex flex-col gap-1", !isSystemContext && "items-end")}>
@@ -180,14 +184,17 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
       )}
 
       {/* Text content — 2-line clamp by default, expandable */}
-      {text && (
+      {typedPart && (
         <CollapsibleMessageBody
-          watch={text}
+          watch={typedPart}
           className="whitespace-pre-wrap break-words select-text"
           toggleClassName={isSystemContext ? "text-text-subtle hover:text-text-secondary" : "text-primary/70 hover:text-primary"}
         >
-          {isSystemContext ? <TextWithFilePaths text={text} projectName={projectName} /> : <TextWithLinks text={text} />}
+          {isSystemContext ? <TextWithFilePaths text={typedPart} projectName={projectName} /> : <TextWithLinks text={typedPart} />}
         </CollapsibleMessageBody>
+      )}
+      {voice && (
+        <MessageVoicePart voice={voice} projectName={projectName} divider={!!typedPart || files.length > 0 || terminalBlocks.length > 0} />
       )}
       {/* Version switcher — only when this message has edited siblings */}
       {!isSystemContext && onNavigateVersion && (

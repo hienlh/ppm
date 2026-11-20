@@ -23,6 +23,8 @@ beforeEach(() => {
   savedProjects = configService.get("projects");
   configService.set("projects", []);
   configService.set("feature_intros", otherIntrosAnswered());
+  // A switch another test file left set would settle the voice question before it is asked.
+  configService.set("voice_message", { review_before_send: true, words: [], projects: {} });
   const { ppm_tools: _drop, ...rest } = ai();
   configService.set("ai", { ...rest, session_collab: { askBeforeCreate: false } });
   getDb().run("DELETE FROM session_metadata");
@@ -135,14 +137,14 @@ describe("scheduled prompts in a chat", () => {
 
   it("is a question of its own: turning the session tools on leaves the schedule tools off and still asked", () => {
     configService.set("feature_intros", {});
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11"]);
     answerFeatureIntro(INTRO.id, "on");
     for (const tool of THREE) expect(onTools()).not.toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11"]);
 
     answerFeatureIntro(SCHEDULES.id, "on");
     for (const tool of THREE) expect(onTools()).toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id, "assistant-full-mode-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11"]);
   });
 
   it("asks apart about script proposals: prompts turned on never agreed to code that runs on this machine", () => {
@@ -188,5 +190,35 @@ describe("Full mode for the PPM Assistant", () => {
     const { permission_mode: _drop, ...rest } = (configService.get("assistant") ?? {}) as Record<string, unknown>;
     configService.set("assistant", rest as never);
     expect(featureIntrosView().pending.map((i) => i.id)).toContain(FULL.id);
+  });
+});
+
+describe("Voice messages", () => {
+  const VOICE = FEATURE_INTROS.find((i) => i.id === "voice-messages-2026-11")!;
+  const enabled = () => (configService.get("voice_message") as { enabled?: boolean } | undefined)?.enabled;
+  beforeEach(() => {
+    configService.set("feature_intros", {});
+    configService.set("voice_message", { review_before_send: true, words: [], projects: {} });
+  });
+  afterEach(() => configService.set("voice_message", { review_before_send: true, words: [], projects: {} }));
+
+  it("is a setting: Turn on writes voice_message.enabled and touches no tool or other voice setting", () => {
+    expect(VOICE.setting).toBe("voice_messages");
+    expect(VOICE.tools).toEqual([]);
+    configService.set("voice_message", { review_before_send: false, words: ["Hono"], projects: {} });
+    expect(featureIntrosView().pending.map((i) => i.id)).toContain(VOICE.id);
+    expect(answerFeatureIntro(VOICE.id, "on")).toMatchObject({ ok: true, changed: true });
+    expect(configService.get("voice_message")).toEqual({ enabled: true, review_before_send: false, words: ["Hono"], projects: {} });
+    answerFeatureIntro(VOICE.id, "off");
+    expect(enabled()).toBe(true);
+  });
+
+  it("Turn off writes false, and a switch already set in Settings settles the question", () => {
+    answerFeatureIntro(VOICE.id, "off");
+    expect(enabled()).toBe(false);
+    configService.set("feature_intros", {});
+    configService.set("voice_message", { enabled: true, review_before_send: true, words: [], projects: {} });
+    expect(settleFeaturesDecidedInSettings()).toBe(true);
+    expect(readFeatureIntroStates()[VOICE.id]).toMatchObject({ answer: "on", via: "settings" });
   });
 });

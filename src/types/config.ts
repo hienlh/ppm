@@ -4,6 +4,7 @@ import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
 import { DEFAULT_ASSISTANT_SETTINGS, type AssistantSettings } from "../shared/assistant-settings.ts";
 import type { PpmToolSwitches } from "../shared/ppm-tools.ts";
 import type { FeatureIntroStates } from "../shared/feature-intros.ts";
+import type { VoiceMessageConfig } from "../shared/voice-message.ts";
 import type { SessionCollabSettings } from "../shared/session-collab-settings.ts";
 import { isValidLeftoverIdleMinutes } from "../shared/leftover-processes.ts";
 
@@ -91,6 +92,11 @@ export interface PpmConfig {
    * `readFeatureIntroStates` (`services/feature-intros.service.ts`), which drops malformed entries.
    */
   feature_intros?: FeatureIntroStates;
+  /**
+   * Voice messages: on/off, review before send, and the word lists. Read through
+   * `readVoiceSettings` (`services/voice-message/voice-settings.ts`), which validates the shape.
+   */
+  voice_message?: VoiceMessageConfig;
 }
 
 /**
@@ -289,6 +295,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   },
   log_level: DEFAULT_LOG_LEVEL,
   feature_intros: {},
+  voice_message: { review_before_send: true, words: [], projects: {} },
 };
 
 const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;

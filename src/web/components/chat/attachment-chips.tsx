@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { X, FileText, Image as ImageIcon, Loader2, TerminalSquare, ChevronDown } from "@/lib/icons";
 import { useImageOverlay } from "@/stores/image-overlay-store";
 import { collectGallery, GALLERY_ITEM_ATTR, GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
@@ -9,6 +9,8 @@ import type { ChatAttachment } from "./message-input";
 interface AttachmentChipsProps {
   attachments: ChatAttachment[];
   onRemove: (id: string) => void;
+  /** Drawn at the end of the same row: the voice message's chip sits beside the images. */
+  extra?: ReactNode;
 }
 
 /**
@@ -28,7 +30,7 @@ export function chipBodyAction(att: ChatAttachment): "expand" | "preview" | "non
   return "none";
 }
 
-export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps) {
+export function AttachmentChips({ attachments, onRemove, extra }: AttachmentChipsProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const coarse = usePrefersCoarsePointer();
 
@@ -64,7 +66,7 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
     }
   }, [attachments, overlaySrc, openOverlay, closeOverlay]);
 
-  if (attachments.length === 0) return null;
+  if (attachments.length === 0 && !extra) return null;
 
   const expanded = expandedId ? attachments.find((a) => a.id === expandedId) : null;
 
@@ -207,6 +209,7 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
             </button>
           </div>
         ))}
+        {extra}
       </div>
 
       {/* Expanded preview for text attachment */}

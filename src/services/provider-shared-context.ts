@@ -10,6 +10,14 @@ const MAX_FILES = 48;
 const MAX_FILE_BYTES = 4_000;
 const MAX_CONTEXT_CHARS = 12_000;
 
+/**
+ * Claude Code's per-project memory folder: the project's real path with every character that is
+ * not a letter or digit turned into "-", under `<claude home>/projects/`.
+ */
+export function claudeProjectMemoryDir(claudeHome: string, canonicalProject: string): string {
+  return join(claudeHome, "projects", canonicalProject.replace(/[^a-zA-Z0-9]/g, "-"), "memory");
+}
+
 /** Explicit instruction sources only: never scan provider settings, auth or transcripts. */
 export async function buildSharedProviderContext(
   projectPath: string,
@@ -20,7 +28,7 @@ export async function buildSharedProviderContext(
   const canonicalProject = (await realpath(project).catch(() => project)).normalize("NFC");
   const home = options.userHome ?? homedir();
   const claudeHome = options.userHome ? join(home, ".claude") : process.env.CLAUDE_CONFIG_DIR || join(home, ".claude");
-  const claudeMemory = join(claudeHome, "projects", canonicalProject.replace(/[^a-zA-Z0-9]/g, "-"), "memory");
+  const claudeMemory = claudeProjectMemoryDir(claudeHome, canonicalProject);
   const recipient = options.recipientProviderId;
   const sources: Source[] = [
     // Native indexes come first so rules cannot crowd out existing memories.
