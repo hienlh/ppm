@@ -63,7 +63,8 @@ export interface TelegramMessage {
   video?: { file_name?: string };
   animation?: { file_name?: string };
   audio?: { title?: string; file_name?: string };
-  voice?: { duration?: number };
+  /** A voice note (OGG/Opus). Fetched only when voice messages are on, through `getFile`. */
+  voice?: { duration?: number; file_id?: string; file_unique_id?: string; mime_type?: string; file_size?: number };
   video_note?: { duration?: number };
   sticker?: { emoji?: string };
   reply_to_message?: TelegramMessage;

@@ -1074,10 +1074,13 @@ chatRoutes.put("/drafts/:sessionId", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const sessionId = c.req.param("sessionId");
-    const body = await c.req.json<{ content?: string; attachments?: string }>();
+    const body = await c.req.json<{ content?: string; attachments?: string; voice?: unknown }>();
     const content = typeof body.content === "string" ? body.content : "";
     const attachments = typeof body.attachments === "string" ? body.attachments : undefined;
-    draftService.upsert(projectPath, sessionId, content, attachments);
+    // Checked inside `upsert` (`parseStoredVoiceDraft`): a voice that is not a stored recording is
+    // dropped, never written. No `voice` key keeps the stored one (a bundle from before voice drafts).
+    const voice = body && typeof body === "object" && "voice" in body ? (body.voice ?? null) : undefined;
+    draftService.upsert(projectPath, sessionId, content, attachments, voice);
     return c.json(ok({ saved: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

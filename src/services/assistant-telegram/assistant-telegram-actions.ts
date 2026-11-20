@@ -77,6 +77,8 @@ export type BridgeAction =
   | { kind: "backlog"; pendingId: string; run: boolean }
   /** `/quiet`: turn "quiet while I'm at PPM" on or off. */
   | { kind: "quiet"; on: boolean }
+  /** A voice message's review card: send it (with the transcript as it stands now), or drop it. */
+  | { kind: "voice"; id: string; send: boolean }
   | CardPress
   | ManagerCardPress
   | TaskPress;

@@ -16,6 +16,7 @@ import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useSettingsStore, type VoiceEngine } from "@/stores/settings-store";
 import { RunInTerminalButton } from "./run-in-terminal-button";
+import { VoiceMessageSettings } from "./voice-message-settings";
 
 interface StatusModel {
   id: string;
@@ -58,6 +59,8 @@ export function VoiceSettingsSection() {
   const setVoiceEngine = useSettingsStore((s) => s.setVoiceEngine);
 
   const [status, setStatus] = useState<SpeechStatus | null>(null);
+  // With voice messages on, the mic records messages and the dictation engine choice does nothing.
+  const [voiceMessagesOn, setVoiceMessagesOn] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -136,6 +139,9 @@ export function VoiceSettingsSection() {
 
   return (
     <div className="space-y-6">
+      <VoiceMessageSettings onEnabledChange={setVoiceMessagesOn} />
+
+      {!voiceMessagesOn && (
       <section className="space-y-3">
         <div>
           <h3 className="text-sm font-medium">Speech to text</h3>
@@ -168,6 +174,7 @@ export function VoiceSettingsSection() {
           </p>
         )}
       </section>
+      )}
 
       <Separator />
 

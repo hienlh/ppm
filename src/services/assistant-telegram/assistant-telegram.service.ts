@@ -66,6 +66,7 @@ import { AssistantTelegramTaskMessages, type TaskMessageDeps } from "./assistant
 import { AssistantTelegramTaskFollowups } from "./assistant-telegram-task-followups.ts";
 import { attachTaskFollowupSink, detachTaskFollowupSink } from "../assistant-cards/task-words-followup.ts";
 import { pressTaskCardUndo } from "./assistant-telegram-task-card-extras.ts";
+import { defaultTelegramVoiceDeps, type TelegramVoiceDeps } from "./assistant-telegram-voice-deps.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -128,6 +129,8 @@ export interface BridgeStartOptions {
   /** `/tasks` and the created-task cards: their clock, the manager wake, the task link (tests). */
   tasks?: Partial<Pick<TaskTelegramDeps, "clock" | "wake" | "hasManager">> & Partial<Pick<TaskCreatedDeps, "taskLink" | "chatsOf">>
     & Partial<Pick<TaskMessageDeps, "forward">>;
+  /** Voice messages: Whisper, the clean-up and the feature switch; tests stand in for all three. */
+  voice?: TelegramVoiceDeps;
 }
 
 function bridgeConfig(): Pick<PPMBotConfig, "enabled" | "show_tool_calls" | "debounce_ms"> & { quiet_while_in_ppm: boolean } {
@@ -247,6 +250,7 @@ export class AssistantTelegramBridge {
       },
       answerOf: (chatId, messageId) => answerMessage(chatId, messageId),
       boundSessionOf: (chatId) => boundSession(chatId)?.sessionId ?? null,
+      voice: opts.voice ?? defaultTelegramVoiceDeps,
     });
     poller = new AssistantTelegramPoller(client, state, (update) => inbound.dispatch(update));
     const offs = [

@@ -1,6 +1,7 @@
 import type { ChatMessage } from "../../../types/chat";
 import { MAX_REPLY_QUOTE_LENGTH, type ReplyReference } from "../../../shared/chat-reply";
 import { parseUserMessage } from "../../../shared/user-message-parse";
+import { voicePlainText } from "../../../shared/voice-message";
 
 /** Only text visible in the transcript: never thinking, tools or injected context. */
 export function replyMessageText(message: ChatMessage): string {
@@ -12,7 +13,7 @@ export function replyMessageText(message: ChatMessage): string {
   if (message.role !== "user") return "";
   const parsed = parseUserMessage(message.content);
   if (parsed.tags.some((tag) => ["task-notification", "environment_details", "local-command-caveat"].includes(tag.name))) return "";
-  const parts = [parsed.command?.name, parsed.text].filter(Boolean);
+  const parts = [parsed.command?.name, voicePlainText(parsed.text)].filter(Boolean);
   if (parsed.files.length) parts.push(`Attached files: ${parsed.files.map((path) => path.split(/[\\/]/).pop()).join(", ")}`);
   return parts.join("\n").trim();
 }

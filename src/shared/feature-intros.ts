@@ -35,8 +35,11 @@ export interface FeatureIntro {
   since: string;
 }
 
-/** Settings a feature introduction can stand for. `assistant_permission_mode`: on = Full, off = Ask. */
-export type FeatureIntroSetting = "assistant_permission_mode";
+/**
+ * Settings a feature introduction can stand for. `assistant_permission_mode`: on = Full, off = Ask.
+ * `voice_messages`: `voice_message.enabled`.
+ */
+export type FeatureIntroSetting = "assistant_permission_mode" | "voice_messages";
 
 export const FEATURE_INTROS: readonly FeatureIntro[] = [
   {
@@ -77,6 +80,15 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
       + "Assistant window. It keeps asking until you choose.",
     tools: [],
     setting: "assistant_permission_mode",
+    since: "2026-11",
+  },
+  {
+    id: "voice-messages-2026-11",
+    title: "Voice messages",
+    body: "Record a message instead of typing it: PPM transcribes it on this machine with Whisper and tidies it with "
+      + "Claude Haiku using the chat's context, and you read the transcript before it is sent.",
+    tools: [],
+    setting: "voice_messages",
     since: "2026-11",
   },
 ];

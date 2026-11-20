@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseFeatureIntrosView } from "../../../src/web/lib/onboarding/feature-intros-client";
+import { featureIntroSettingsLink, parseFeatureIntrosView } from "../../../src/web/lib/onboarding/feature-intros-client";
 
 const view = (intro: Record<string, unknown>) => ({ pending: [intro], isExistingUser: true, newInSettings: [] });
 
@@ -16,5 +16,18 @@ describe("parseFeatureIntrosView", () => {
     expect(odd?.pending[0]?.setting).toBeUndefined();
     const tools = parseFeatureIntrosView(view({ id: "y", title: "t", body: "b", tools: ["create_session"] }));
     expect(tools?.pending[0]).toEqual({ id: "y", title: "t", body: "b", tools: ["create_session"], since: "" });
+  });
+
+  it("keeps the voice messages setting", () => {
+    const parsed = parseFeatureIntrosView(view({ id: "voice", title: "t", body: "b", tools: [], setting: "voice_messages" }));
+    expect(parsed?.pending[0]?.setting).toBe("voice_messages");
+  });
+});
+
+describe("featureIntroSettingsLink", () => {
+  it("sends each kind of feature to the pane where it is decided", () => {
+    expect(featureIntroSettingsLink({ setting: "voice_messages" }).category).toBe("voice");
+    expect(featureIntroSettingsLink({ setting: "assistant_permission_mode" }).category).toBe("assistant");
+    expect(featureIntroSettingsLink({}).category).toBe("tools");
   });
 });

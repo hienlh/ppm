@@ -4,6 +4,9 @@ import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, typ
 import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock, Bot, X } from "@/lib/icons";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useWhisperVoiceInput } from "@/hooks/use-whisper-voice-input";
+import { useVoiceMessageComposer } from "@/hooks/use-voice-message-composer";
+import { autoSendStep, composeVoiceContent } from "@/lib/voice-message-compose";
+import { toast } from "sonner";
 import { useSettingsStore } from "@/stores/settings-store";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { downscaleImage } from "@/lib/image-resize";
@@ -13,6 +16,10 @@ import { ownsGlobalShortcut } from "@/lib/owns-global-shortcut";
 import { SEND_TO_CHAT_EVENT, SEND_TO_CHAT_ACK_EVENT, type SendToChatAck, type SendToChatDetail } from "@/lib/send-to-chat";
 import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
+import { VoiceMessageChip } from "./voice-message-chip";
+import { VoiceTranscriptBlock } from "./voice-transcript-block";
+import { VoiceRecordingBar } from "./voice-recording-bar";
+import { VoiceWhisperMissingDialog } from "./voice-whisper-missing-dialog";
 import { stepHistory } from "./message-history-recall";
 import { toComposerDraft } from "../../../shared/user-message-parse";
 import { ModeSelector, getModeLabel, getModeIcon, getModeShortLabel, composerModeFor } from "./mode-selector";
@@ -31,6 +38,8 @@ import type { ComposerTurnChip } from "@/hooks/use-composer-turn-refs";
 import type { ParsedTurnLink } from "@/lib/turn-link";
 import type { TurnReference } from "../../../shared/chat-turn-ref";
 import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
+import type { StoredVoiceDraft } from "../../../shared/voice-draft";
+import { uploadPreviewUrl } from "./message-media";
 import { insertLikeTyping, pasteWithoutTurnLinks } from "./composer-turn-link-paste";
 import { PromptCacheChip } from "./prompt-cache-chip";
 import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
@@ -135,6 +144,10 @@ interface MessageInputProps {
   /** Pre-fill input value (e.g. from command palette "Ask AI") */
   initialValue?: string;
   initialAttachments?: Array<{ name: string; path: string }>;
+  /** The voice message the chat's draft kept: applied once, when the draft has loaded. */
+  initialVoice?: StoredVoiceDraft | null;
+  /** The voice message changed in a way the draft keeps (null: removed). Not called for a send. */
+  onVoiceDraftChange?: (voice: StoredVoiceDraft | null) => void;
   /** Bumping this counter clears the textarea (e.g. parent cancels an edit). */
   clearSignal?: number;
   /**
@@ -224,6 +237,8 @@ export const MessageInput = memo(function MessageInput({
   onExternalPathsConsumed,
   initialValue,
   initialAttachments,
+  initialVoice,
+  onVoiceDraftChange,
   clearSignal,
   restore,
   onContentChange,
@@ -265,6 +280,7 @@ export const MessageInput = memo(function MessageInput({
   // put that label on chats the server runs in "Ask before edits".
   const chipMode = permissionLocked ? null : boundAwareMode;
   const [pendingSend, setPendingSend] = useState(false);
+  // Whether the queued send was pressed before the voice transcript was in the box (see decideVoiceSend).
   const [priority, setPriority] = useState<MessagePriority>('next');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mobileTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -332,6 +348,54 @@ export const MessageInput = memo(function MessageInput({
     [getUserHistory, writeTextareas, getVisibleTextarea, replyTo, onCancelReply, onRecallTurnRefs, onContentChange, attachments],
   );
 
+  /** Delete an upload the user removed before sending. Best effort — nothing depends on it. */
+  const discardUpload = useCallback(
+    async (serverPath: string) => {
+      if (!projectName) return;
+      const filename = serverPath.split(/[\\/]/).pop();
+      if (!filename) return;
+      try {
+        const headers: HeadersInit = {};
+        const token = getAuthToken();
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        await fetch(`${projectUrl(projectName)}/chat/uploads/${encodeURIComponent(filename)}`, {
+          method: "DELETE",
+          headers,
+        });
+      } catch {
+        // An orphaned file is not worth surfacing to the user.
+      }
+    },
+    [projectName],
+  );
+
+  /** Upload a single file to the server, return server path */
+  const uploadFile = useCallback(
+    async (file: File): Promise<string | null> => {
+      if (!projectName) return null;
+      try {
+        const form = new FormData();
+        form.append("files", file);
+        const headers: HeadersInit = {};
+        const token = getAuthToken();
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`${projectUrl(projectName)}/chat/upload`, {
+          method: "POST",
+          headers,
+          body: form,
+        });
+        const json = await res.json();
+        if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
+          return json.data[0].path as string;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    },
+    [projectName],
+  );
+
   // Voice input. Two engines behind the same button: the browser's own
   // recogniser (text appears as you speak, but Chrome/Edge/Safari only) and
   // Whisper running on the PPM host (any browser, answers once at the end).
@@ -342,6 +406,12 @@ export const MessageInput = memo(function MessageInput({
   const useWhisper = voiceEngine === "whisper" && whisperVoice.supported;
   const voice = useWhisper ? whisperVoice : browserVoice;
   const isTranscribing = useWhisper && whisperVoice.isTranscribing;
+  // Voice messages: when the feature is on, the same button records a message PPM transcribes
+  // and tidies on the host instead of dictating into the box. Off, nothing below changes.
+  const voiceMsg = useVoiceMessageComposer({
+    project: projectName, sessionId, providerId, getTyped: () => valueRef.current, uploadFile, discardUpload,
+    onPersist: onVoiceDraftChange,
+  });
   // Store pre-voice text so voice appends to existing input
   const preVoiceTextRef = useRef("");
   const voiceResultCb = useCallback((text: string) => {
@@ -362,6 +432,7 @@ export const MessageInput = memo(function MessageInput({
   const handleVoiceToggle = useCallback(() => {
     // The shortcut reaches this while Whisper is still working on the last
     // recording, where the button is already disabled.
+    if (voiceMsg.enabled) { void voiceMsg.toggle(); return; }
     if (isTranscribing) return;
     if (voice.isListening) {
       voice.stop();
@@ -369,7 +440,7 @@ export const MessageInput = memo(function MessageInput({
       preVoiceTextRef.current = valueRef.current.trim();
       voice.start(voiceResultCb);
     }
-  }, [voice.isListening, voice.start, voice.stop, voiceResultCb, isTranscribing]);
+  }, [voice.isListening, voice.start, voice.stop, voiceResultCb, isTranscribing, voiceMsg.enabled, voiceMsg.toggle]);
 
   const micLabel = isTranscribing
     ? "Transcribing"
@@ -380,13 +451,13 @@ export const MessageInput = memo(function MessageInput({
   // mounted, so an unguarded listener toggles the mic in all of them at once.
   useEffect(() => {
     const handler = () => {
-      if (!voice.supported) return;
+      if (!voice.supported && !voiceMsg.enabled) return;
       if (!ownsGlobalShortcut(getVisibleTextarea())) return;
       handleVoiceToggle();
     };
     window.addEventListener("toggle-voice-input", handler);
     return () => window.removeEventListener("toggle-voice-input", handler);
-  }, [voice.supported, handleVoiceToggle, getVisibleTextarea]);
+  }, [voice.supported, voiceMsg.enabled, handleVoiceToggle, getVisibleTextarea]);
 
   // "Send to Chat" (terminal output, other tabs) — add as an attachment chip.
   // Every chat tab stays mounted, so the event is addressed: only the tab it names
@@ -398,7 +469,7 @@ export const MessageInput = memo(function MessageInput({
       if (targetTabId ? targetTabId !== tabId : !ownsGlobalShortcut(getVisibleTextarea())) return;
       // Sent as-is only into an idle, empty composer: anything the user has typed or
       // attached is theirs, and the text joins it as a chip for them to send instead.
-      const send = !!autoSend && !!targetTabId && !disabled && !isStreaming && !replyTo && !turnChips?.length && !valueRef.current.trim() && attachments.length === 0;
+      const send = !!autoSend && !!targetTabId && !disabled && !isStreaming && !replyTo && !turnChips?.length && !valueRef.current.trim() && attachments.length === 0 && !voiceMsg.draft && !voiceMsg.recording;
       window.dispatchEvent(new CustomEvent<SendToChatAck>(SEND_TO_CHAT_ACK_EVENT, { detail: { sent: send } }));
       if (send) {
         onSend(text, []);
@@ -417,7 +488,7 @@ export const MessageInput = memo(function MessageInput({
     };
     window.addEventListener(SEND_TO_CHAT_EVENT, handler);
     return () => window.removeEventListener(SEND_TO_CHAT_EVENT, handler);
-  }, [getVisibleTextarea, tabId, disabled, isStreaming, attachments.length, onSend, replyTo, turnChips]);
+  }, [getVisibleTextarea, tabId, disabled, isStreaming, attachments.length, onSend, replyTo, turnChips, voiceMsg.draft, voiceMsg.recording]);
 
   const consumedContextsRef = useRef<MessageInputProps["pendingContexts"]>(undefined);
   useEffect(() => {
@@ -444,6 +515,15 @@ export const MessageInput = memo(function MessageInput({
     // draft does, and a draft skipped here is saved back without its attachments.
     setAttachments((previous) => [...restored, ...previous]);
   }, [draftReady, initialAttachments]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The draft's voice comes back once, like its attachments. This browser holds no recording of
+  // it, so the chip plays (and "Transcribe again" reads) the uploaded copy.
+  const draftVoiceApplied = useRef(false);
+  useEffect(() => {
+    if (!draftReady || draftVoiceApplied.current || initialVoice === undefined) return;
+    draftVoiceApplied.current = true;
+    if (initialVoice) voiceMsg.restore(initialVoice, uploadPreviewUrl(initialVoice.path, projectName));
+  }, [draftReady, initialVoice]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Apply initialValue when it changes (e.g. "Ask AI" from command palette).
   // A restored draft can land after the input is already on screen, so never
@@ -484,9 +564,13 @@ export const MessageInput = memo(function MessageInput({
     if (clearSignal) {
       writeTextareas("");
       draftAttachmentsApplied.current = false;
+      draftVoiceApplied.current = false;
       for (const attachment of attachments) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       setAttachments([]);
       setAgentTag(null);
+      // Let go of the voice without deleting it: the chat it belongs to may be the one left, and its
+      // draft still names the upload. One no draft holds yet is deleted, as before.
+      voiceMsg.detach();
     }
   }, [clearSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -691,54 +775,6 @@ export const MessageInput = memo(function MessageInput({
     onExternalPathsConsumed?.();
   }, [externalPaths]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** Delete an upload the user removed before sending. Best effort — nothing depends on it. */
-  const discardUpload = useCallback(
-    async (serverPath: string) => {
-      if (!projectName) return;
-      const filename = serverPath.split(/[\\/]/).pop();
-      if (!filename) return;
-      try {
-        const headers: HeadersInit = {};
-        const token = getAuthToken();
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-        await fetch(`${projectUrl(projectName)}/chat/uploads/${encodeURIComponent(filename)}`, {
-          method: "DELETE",
-          headers,
-        });
-      } catch {
-        // An orphaned file is not worth surfacing to the user.
-      }
-    },
-    [projectName],
-  );
-
-  /** Upload a single file to the server, return server path */
-  const uploadFile = useCallback(
-    async (file: File): Promise<string | null> => {
-      if (!projectName) return null;
-      try {
-        const form = new FormData();
-        form.append("files", file);
-        const headers: HeadersInit = {};
-        const token = getAuthToken();
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-        const res = await fetch(`${projectUrl(projectName)}/chat/upload`, {
-          method: "POST",
-          headers,
-          body: form,
-        });
-        const json = await res.json();
-        if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
-          return json.data[0].path as string;
-        }
-        return null;
-      } catch {
-        return null;
-      }
-    },
-    [projectName],
-  );
-
   /** Process files — always uploads to server. Path resolution only happens via @ picker. */
   const processFiles = useCallback(
     async (files: File[]) => {
@@ -824,14 +860,16 @@ export const MessageInput = memo(function MessageInput({
   const executeSend = useCallback(() => {
     const trimmed = valueRef.current.trim();
     const readyAttachments = attachments.filter((a) => a.status === "ready");
-    if (!trimmed && readyAttachments.length === 0 && !agentTag) {
+    // Only a voice whose upload landed and whose transcript is in the box; the send gate waits for that.
+    const voicePart = voiceMsg.voicePart();
+    if (!trimmed && readyAttachments.length === 0 && !agentTag && !voicePart) {
       setPendingSend(false);
       return;
     }
 
     // Prepend the agent-delegation prompt; UserBubble re-parses this prefix back
-    // into a chip for display.
-    const content = agentTag ? `Use the ${agentTag} agent to ${trimmed}`.trimEnd() : trimmed;
+    // into a chip for display. The voice part goes last, after everything typed.
+    const content = composeVoiceContent(agentTag ? `Use the ${agentTag} agent to ${trimmed}`.trimEnd() : trimmed, voicePart);
 
     onSlashStateChange?.(false, "");
     slashPickerOpenRef.current = false;
@@ -845,6 +883,7 @@ export const MessageInput = memo(function MessageInput({
       else voice.stop();
     }
     if (onSend(content, readyAttachments, isStreaming ? priority : undefined) === false) return;
+    if (voicePart) voiceMsg.sent();
     writeTextareas("");
     // Revoke preview URLs
     for (const att of attachments) {
@@ -860,13 +899,23 @@ export const MessageInput = memo(function MessageInput({
       if (mobileTextareaRef.current) mobileTextareaRef.current.style.height = "auto";
     }
   }, [attachments, agentTag, onSend, onSlashStateChange, onFileStateChange, isStreaming, priority, writeTextareas,
-      voice.isListening, voice.stop, whisperVoice.cancel, useWhisper]);
+      voice.isListening, voice.stop, whisperVoice.cancel, useWhisper, voiceMsg.voicePart, voiceMsg.sent]);
 
   const handleSend = useCallback(() => {
     if (disabled) return;
     // A turn chip still loading, or one whose turn is gone, would send a message that names
     // something it cannot carry; the reason is shown under the chips.
     if (turnChipsBlockedReason) return;
+    // A recording in progress is finished with Stop (or dropped with Esc) before anything is sent.
+    if (voiceMsg.recording) return;
+    const voiceDecision = voiceMsg.decide();
+    if (voiceDecision === "refuse") { toastVoiceNotSendable(); return; }
+    if (voiceDecision === "hold") return;
+    if (voiceDecision === "queue") {
+      // Sends as soon as the transcript is there; pressing the button again cancels.
+      setPendingSend(true);
+      return;
+    }
 
     // If files are still uploading, queue the send for when they finish
     if (attachments.some((a) => a.status === "uploading")) {
@@ -878,15 +927,41 @@ export const MessageInput = memo(function MessageInput({
     }
 
     executeSend();
-  }, [attachments, disabled, executeSend, turnChipsBlockedReason]);
+  }, [attachments, disabled, executeSend, turnChipsBlockedReason, voiceMsg.recording, voiceMsg.decide]);
 
-  // Auto-send when queued and all uploads complete
+  // Auto-send when queued and all uploads complete — and the voice message, if any, is ready.
   useEffect(() => {
     if (!pendingSend) return;
     if (attachments.some((a) => a.status === "uploading")) return;
     if (turnChipsBlockedReason) { setPendingSend(false); return; }
+    const voiceDecision = voiceMsg.decide();
+    if (voiceDecision === "queue") return;
+    if (voiceDecision !== "send") {
+      // An emptied transcript waits for the user; a failed voice is never sent.
+      setPendingSend(false);
+      if (voiceDecision === "refuse") toastVoiceNotSendable();
+      return;
+    }
     executeSend();
-  }, [pendingSend, attachments, executeSend, turnChipsBlockedReason]);
+  }, [pendingSend, attachments, executeSend, turnChipsBlockedReason, voiceMsg.decide]);
+
+  // With review off, a voice message that is transcribed, tidied and uploaded sends the whole
+  // message by itself (with whatever was typed meanwhile): once per recording, and not on top of a
+  // send already queued. While the composer cannot send (disabled, a turn chip loading) it waits
+  // and tries again once it can; an attempt that did not send leaves the draft for the user, and
+  // the block then says to press Send rather than "sending when ready".
+  const [autoSentVoiceId, setAutoSentVoiceId] = useState<string | null>(null);
+  const autoSendBlocked = !!disabled || !!turnChipsBlockedReason || voiceMsg.recording;
+  useEffect(() => {
+    const id = voiceMsg.draft?.id ?? null;
+    const step = autoSendStep({
+      ready: voiceMsg.autoSendReady, draftId: id, attemptedId: autoSentVoiceId, queued: pendingSend, blocked: autoSendBlocked,
+    });
+    if (step !== "send") return;
+    setAutoSentVoiceId(id);
+    handleSend();
+  }, [voiceMsg.autoSendReady, voiceMsg.draft?.id, autoSentVoiceId, pendingSend, autoSendBlocked, handleSend]);
+  const autoSendStalled = !!voiceMsg.draft && autoSentVoiceId === voiceMsg.draft.id && !pendingSend;
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1057,7 +1132,9 @@ export const MessageInput = memo(function MessageInput({
     [processFiles],
   );
 
-  const hasContent = hasText || attachments.some((a) => a.status !== "error") || !!agentTag;
+  const hasContent = hasText || attachments.some((a) => a.status !== "error") || !!agentTag || !!voiceMsg.draft;
+  // Review on and the transcript not there yet: nothing to read, so nothing to send.
+  const voiceHolds = voiceMsg.decide() === "hold";
   const showCancel = isStreaming && !hasContent;
   const placeholder = offline ? "Will send when reconnected..." : isStreaming ? "Follow-up or Stop..." : "Ask anything...";
 
@@ -1098,7 +1175,11 @@ export const MessageInput = memo(function MessageInput({
           </div>
         )}
         {/* Attachment chips (inside container, aligned with input) */}
-        <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
+        <AttachmentChips
+          attachments={attachments}
+          onRemove={removeAttachment}
+          extra={voiceMsg.draft ? <VoiceMessageChip draft={voiceMsg.draft} onRemove={voiceMsg.remove} /> : null}
+        />
         {/* The textarea on top — one per layout, since a phone keeps it shorter — and one bar below. */}
         <textarea
           ref={mobileTextareaRef}
@@ -1126,9 +1207,25 @@ export const MessageInput = memo(function MessageInput({
           aria-label="Message"
           className="hidden w-full resize-none bg-transparent px-3.5 pb-1 pt-3 text-sm leading-relaxed text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-[160px] min-h-12 [field-sizing:content] md:block"
         />
+        {/* The voice message's transcript: its own block under what was typed, never merged into it. */}
+        {voiceMsg.draft && (
+          <VoiceTranscriptBlock
+            draft={voiceMsg.draft}
+            reviewBeforeSend={voiceMsg.reviewBeforeSend || autoSendStalled}
+            onTextChange={voiceMsg.setText}
+            onRetry={voiceMsg.retry}
+            onRemove={voiceMsg.remove}
+            onSubmit={handleSend}
+            disabled={disabled}
+            queued={pendingSend}
+          />
+        )}
 
         {/* Attach, mode, model, Queue … cache, mic, send. Icons are 16px here (the ▾ is 12px);
             only the model chip shrinks, so a long model name ends in an ellipsis. */}
+        {voiceMsg.recording && voiceMsg.session ? (
+          <VoiceRecordingBar session={voiceMsg.session} onStop={voiceMsg.stopRecording} onCancel={voiceMsg.cancelRecording} />
+        ) : (
         <div className="flex min-w-0 items-center gap-1 px-2 pb-2 pt-1 @max-[420px]/chat:gap-0.5 @max-[420px]/chat:px-1.5 max-md:gap-0.5 max-md:px-1.5 max-md:pb-1 max-md:pt-0 [&>*]:shrink-0 [&>[data-model-slot]]:shrink">
           <button
             type="button"
@@ -1175,7 +1272,19 @@ export const MessageInput = memo(function MessageInput({
           {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
           <span className="min-w-1 flex-1 !shrink" />
           <PromptCacheChip promptCache={promptCache ?? null} />
-          {voice.supported && (
+          {voiceMsg.enabled ? (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); if (!voiceMsg.micBlockedReason) handleVoiceToggle(); }}
+              disabled={disabled}
+              aria-disabled={!!voiceMsg.micBlockedReason || undefined}
+              className={voiceMsg.micBlockedReason ? `${SQUARE_BUTTON} cursor-not-allowed opacity-50` : SQUARE_BUTTON}
+              aria-label={voiceMsg.micBlockedReason ?? "Record a voice message"}
+              title={voiceMsg.micBlockedReason ?? "Record a voice message"}
+            >
+              <Mic className="size-4" />
+            </button>
+          ) : voice.supported && (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
@@ -1201,7 +1310,7 @@ export const MessageInput = memo(function MessageInput({
           ) : (
             <button
               onClick={(e) => { e.stopPropagation(); pendingSend ? setPendingSend(false) : handleSend(); }}
-              disabled={disabled || !hasContent || !!turnChipsBlockedReason}
+              disabled={disabled || !hasContent || !!turnChipsBlockedReason || voiceHolds}
               className="flex size-9 items-center justify-center rounded-[11px] max-md:size-8 max-md:rounded-[10px] bg-primary text-primary-foreground shadow-[var(--shadow-float)] transition-[background-color,transform] duration-150 motion-safe:active:scale-[0.97] hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-30 disabled:shadow-none disabled:active:scale-100"
               aria-label={pendingSend ? "Cancel queued send" : "Send message"}
               title="Send"
@@ -1210,12 +1319,19 @@ export const MessageInput = memo(function MessageInput({
             </button>
           )}
         </div>
+        )}
       </div>
 
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileInputChange} />
+      <VoiceWhisperMissingDialog open={voiceMsg.whisperDialogOpen} onClose={voiceMsg.closeWhisperDialog} />
     </div>
   );
 });
+
+/** A voice message that failed (its upload or its transcript) is never sent; the block says why. */
+function toastVoiceNotSendable(): void {
+  toast.error("The voice message cannot be sent yet", { description: "Retry it or remove it in the box below the message." });
+}
 
 /** The composer bar's square icon buttons: Attach and the mic. */
 const SQUARE_BUTTON =

@@ -76,7 +76,8 @@ const defuseCommand = (text: string): string => (text.trimStart().startsWith("/"
  */
 const defuseAttachmentMarkers = (text: string): string =>
   // Any whitespace but a line break before the bracket: the display's trim removes all of it.
-  text.replace(/^([^\S\r\n]*)\[Attached (image|file)/gm, `$1${String.fromCharCode(0x200b)}[Attached $2`);
+  // A voice-message marker is defused the same way, or the user's words would draw an audio player.
+  text.replace(/^([^\S\r\n]*)\[(Attached (?:image|file)|Voice message)/gm, `$1${String.fromCharCode(0x200b)}[$2`);
 
 /** The marker the composer writes for an image whose payload rides along with the message. */
 const inlineImageMarker = (path: string): string => `[Attached image (contents included in this message): ${path}]`;

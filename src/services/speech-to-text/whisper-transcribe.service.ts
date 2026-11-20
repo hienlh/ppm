@@ -55,7 +55,16 @@ export function parseWhisperText(stdout: string): string {
     .trim();
 }
 
-export function whisperArgs(binary: string, wavPath: string, modelPath: string, language: string): string[] {
+/** Longest vocabulary hint passed on: whisper keeps at most half its text context for it anyway. */
+const MAX_PROMPT_CHARS = 1_000;
+
+/**
+ * `prompt` is whisper.cpp's `--prompt`, the "previous text" it conditions on: a list of the
+ * project's words makes it spell an English identifier inside Vietnamese speech the way the
+ * project does. Passed as its own argv element, so nothing in it can reach a shell.
+ */
+export function whisperArgs(binary: string, wavPath: string, modelPath: string, language: string, prompt?: string): string[] {
+  const hint = prompt?.replace(/\s+/g, " ").trim().slice(0, MAX_PROMPT_CHARS) ?? "";
   return [
     binary,
     "-m", modelPath,
@@ -67,6 +76,7 @@ export function whisperArgs(binary: string, wavPath: string, modelPath: string, 
     // Without VAD, silence is transcribed as an invented sentence — see whisper-catalog.ts.
     "--vad",
     "--vad-model", vadModelPath(),
+    ...(hint ? ["--prompt", hint] : []),
   ];
 }
 
@@ -79,14 +89,14 @@ export interface TranscribeResult {
 }
 
 /** Throws when Whisper is not installed, the run fails, or it outruns the timeout. */
-export async function transcribeWav(wav: Uint8Array, language = "vi"): Promise<TranscribeResult> {
-  const run = queue.then(() => runOnce(wav, language));
+export async function transcribeWav(wav: Uint8Array, language = "vi", prompt?: string): Promise<TranscribeResult> {
+  const run = queue.then(() => runOnce(wav, language, prompt));
   // Keep the chain alive after a failure, and never leak the rejection through it.
   queue = run.catch(() => {});
   return run;
 }
 
-async function runOnce(wav: Uint8Array, language: string): Promise<TranscribeResult> {
+async function runOnce(wav: Uint8Array, language: string, prompt: string | undefined): Promise<TranscribeResult> {
   const binary = findWhisperBinary();
   const model = installedModel();
   if (!binary || !model) throw new Error("Whisper is not installed on this host");
@@ -97,7 +107,7 @@ async function runOnce(wav: Uint8Array, language: string): Promise<TranscribeRes
 
   const started = Date.now();
   try {
-    const cmd = whisperArgs(binary.path, wavPath, resolve(whisperModelDir(), model.file), language);
+    const cmd = whisperArgs(binary.path, wavPath, resolve(whisperModelDir(), model.file), language, prompt);
     const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe", stdin: "ignore", windowsHide: true });
     const timer = setTimeout(() => proc.kill(), TIMEOUT_MS);
     const [stdout, stderr, code] = await Promise.all([

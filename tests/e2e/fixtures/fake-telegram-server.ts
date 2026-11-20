@@ -7,6 +7,7 @@
  *   POST /push   { chatId, userId, text, chatType?, extra? }  → the update (`extra.date` backdates it)
  *   POST /photo  { chatId, userId, caption?, extra?, bytesBase64? } → the update (`extra.reply_to_message`
  *                answers a card; `extra.media_group_id` makes one photo of an album)
+ *   POST /voice  { chatId, userId, duration?, mime?, extra?, bytesBase64? } → the update (a voice note)
  *   POST /press  { chatId, userId, messageId, data, stale? }  → the update, or 400 when no such button
  *   POST /fail   { method, failure: { code, retryAfter?, description? } }
  *   GET  /chat?id=<chat>   → { sent, deleted } for that chat
@@ -47,6 +48,15 @@ const control = Bun.serve({
           const b = await body(req);
           return json(fake.pushPhoto(Number(b.chatId), Number(b.userId), {
             ...(typeof b.caption === "string" ? { caption: b.caption } : {}),
+            ...(b.extra && typeof b.extra === "object" ? { extra: b.extra as Record<string, unknown> } : {}),
+            ...(typeof b.bytesBase64 === "string" ? { bytes: new Uint8Array(Buffer.from(b.bytesBase64, "base64")) } : {}),
+          }));
+        }
+        case "POST /voice": {
+          const b = await body(req);
+          return json(fake.pushVoice(Number(b.chatId), Number(b.userId), {
+            ...(typeof b.duration === "number" ? { duration: b.duration } : {}),
+            ...(typeof b.mime === "string" ? { mime: b.mime } : {}),
             ...(b.extra && typeof b.extra === "object" ? { extra: b.extra as Record<string, unknown> } : {}),
             ...(typeof b.bytesBase64 === "string" ? { bytes: new Uint8Array(Buffer.from(b.bytesBase64, "base64")) } : {}),
           }));

@@ -7,6 +7,7 @@ import { api, projectUrl } from "@/lib/api-client";
 import type { ReplyReference } from "../../../shared/chat-reply";
 import type { TurnReference } from "../../../shared/chat-turn-ref";
 import { decodeMessageBlocks, encodeMessageBlocks } from "../../../shared/chat-message-blocks";
+import { splitVoiceMessage, voicePlainText } from "../../../shared/voice-message";
 import { buildTurnLink } from "@/lib/turn-link";
 import { readChatPreparationSettings } from "@/lib/chat-preference-local-cache";
 import { useComposerTurnRefs } from "@/hooks/use-composer-turn-refs";
@@ -53,6 +54,7 @@ import { buildMessageWithAttachments } from "./build-message-with-attachments";
 import { NewChatProviderGate, useNewChatPreparation } from "./new-chat-provider-gate";
 import { UserBubble } from "./message-user-bubble";
 import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
+import type { StoredVoiceDraft } from "../../../shared/voice-draft";
 import { currentTabMetadata, patchTabMetadata } from "@/lib/patch-tab-metadata";
 import { readTaskChips, setTaskChips, TASK_CHIP_META_KEY, taskChipsFromRefs, withTaskChip, type ComposerTaskChip } from "@/lib/ppm-tasks/composer-task-chip";
 import { useSessionListStore } from "@/stores/session-list-store";
@@ -359,8 +361,14 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
   const removeTaskChip = useCallback((taskId: string) => {
     if (tabId) setTaskChips(tabId, taskChipsRef.current.filter((c) => c.taskId !== taskId));
   }, [tabId]);
+  // The composer's voice message as the draft keeps it. Seeded from the loaded draft, so a typed
+  // change saved before the composer reports anything does not drop a voice it is restoring.
+  const voiceDraftRef = useRef<StoredVoiceDraft | null>(null);
+  useEffect(() => { voiceDraftRef.current = draft?.voice ?? null; }, [draft]);
+  const loadedDraftRef = useRef(draft);
+  loadedDraftRef.current = draft;
   /** Everything the draft keeps besides the text, as it stands now. */
-  const draftBlocks = useCallback(() => ({ replyTo: replyToRef.current, turnRefs: turnRefsRef.current }), [turnRefsRef]);
+  const draftBlocks = useCallback(() => ({ replyTo: replyToRef.current, turnRefs: turnRefsRef.current, voice: voiceDraftRef.current }), [turnRefsRef]);
   const composerDraftRef = useRef<{ owner: string; text: string; observed?: boolean; attachments?: DraftAttachment[] }>({ owner: replyOwner, text: "" });
   const rejectedSendRef = useRef<(event: { content: string; replyTo?: ReplyReference | null; turnRefs?: TurnReference[] | null; message: string }) => void>(() => {});
   const replyTransportOptions = useMemo(() => ({
@@ -380,8 +388,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     const nextOwner = JSON.stringify([projectName, newSessionId, providerId]);
     const current = composerDraftRef.current;
     const refs = turnRefsRef.current;
-    if (current.owner === replyOwner && (current.text || current.attachments?.length || migrated || refs.length)) {
-      saveDraft(current.observed ? current.text : draft?.content ?? current.text, current.attachments ?? draft?.attachments, { replyTo: migrated, turnRefs: refs });
+    if (current.owner === replyOwner && (current.text || current.attachments?.length || migrated || refs.length || voiceDraftRef.current)) {
+      saveDraft(current.observed ? current.text : draft?.content ?? current.text, current.attachments ?? draft?.attachments, { replyTo: migrated, turnRefs: refs, voice: voiceDraftRef.current });
       cancelPendingSave();
     }
     moveDraft(newSessionId);
@@ -777,10 +785,15 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     replyToRef.current = decoded.replyTo;
     setReplySelection({ owner: replyOwner, reply: decoded.replyTo });
     const overflow = mergeTurnChips(decoded.turnRefs);
-    const text = [decoded.content, ...overflow.map((ref) => buildTurnLink(window.location.origin, ref))].filter(Boolean).join("\n");
-    saveDraft(text, undefined, { replyTo: decoded.replyTo, turnRefs: turnRefsRef.current });
+    // A voice message comes back as its words: the marker and its file path in the box would be
+    // sent as typed text, outside the transcript block. The recording itself cannot come back.
+    const hadVoice = !!splitVoiceMessage(decoded.content).voice;
+    const text = [voicePlainText(decoded.content), ...overflow.map((ref) => buildTurnLink(window.location.origin, ref))].filter(Boolean).join("\n");
+    saveDraft(text, undefined, { replyTo: decoded.replyTo, turnRefs: turnRefsRef.current, voice: voiceDraftRef.current });
     setRestore({ text, nonce: Date.now() });
-    toast.error("Message not sent", { description: `${reason} Your text is back in the input.` });
+    toast.error("Message not sent", {
+      description: `${reason} Your text is back in the input${hadVoice ? "; the voice message came back as its transcript, without the recording" : ""}.`,
+    });
   }, [replyOwner, saveDraft, mergeTurnChips, turnRefsRef]);
 
   rejectedSendRef.current = (event) => {
@@ -991,8 +1004,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     // The edited message is in this conversation, and so is what it quotes — including a
     // message copied in when this conversation was forked, whose quote names the one it came from.
     const reply = decoded.replyTo && sessionId ? { ...decoded.replyTo, sessionId } : decoded.replyTo;
-    setForkDraft(decoded.content);
-    setRestore({ text: decoded.content, nonce: Date.now(), replace: true });
+    // A voice message is edited as its words; the recording is not sent again (as ArrowUp recall).
+    const text = voicePlainText(decoded.content);
+    setForkDraft(text);
+    setRestore({ text, nonce: Date.now(), replace: true });
     replyToRef.current = reply;
     setReplySelection({ owner: replyOwner, reply });
     replaceTurnChips(decoded.turnRefs);
@@ -1133,7 +1148,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           // session behind, which the retry does not reuse.
           const session = await api.post<Session>(`${projectUrl(pName)}/chat/sessions`, {
             providerId: selectedProvider,
-            title: content.slice(0, 50),
+            title: voicePlainText(content).slice(0, 50),
             // Set by /clear — the session only exists now, so persist the lineage here.
             clearedFrom: metadata?.clearedFrom as string | undefined,
             // The account this tab claimed on open and has been displaying since. Redeeming
@@ -1217,6 +1232,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           return false;
         }
         if (slash[1] === "clear" || item?.name === "clear") {
+          voiceDraftRef.current = null;
           clearDraft();
           handleNewSession(slash[2]?.trim(), sessionId ?? undefined);
           return;
@@ -1226,7 +1242,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
       setForkDraft(undefined);
       // Save synchronously in this browser tab before the composer clears. A
       // recovery reload can happen before either the POST or draft debounce ends.
-      saveDraft(content, attachments.filter((a) => a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })), { replyTo: selectedReply, turnRefs: selectedRefs });
+      // The voice is in `content` now (its marker and transcript), so the draft keeps none apart.
+      voiceDraftRef.current = null;
+      saveDraft(content, attachments.filter((a) => a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })), { replyTo: selectedReply, turnRefs: selectedRefs, voice: null });
       cancelPendingSave();
       replyToRef.current = null;
       setReplySelection({ owner: replyOwner, reply: null });
@@ -1256,7 +1274,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     () =>
       messagesRef.current
         .filter((m) => m.role === "user" && m.content.trim())
-        .map((m) => m.content),
+        // A recalled voice message comes back as its words: the recording cannot be re-sent.
+        .map((m) => voicePlainText(m.content)),
     [],
   );
 
@@ -1269,6 +1288,19 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     },
     [saveDraft, touchPrewarm, replyOwner, draftBlocks],
   );
+
+  /**
+   * The composer's voice message changed (its upload landed, the transcript came, an edit, ×).
+   * Saved with the composer's text as it stands, through the same debounced save as typing.
+   */
+  const handleVoiceDraftChange = useCallback((voice: StoredVoiceDraft | null) => {
+    voiceDraftRef.current = voice;
+    const current = composerDraftRef.current;
+    const live = current.owner === replyOwner;
+    const text = live && current.observed ? current.text : loadedDraftRef.current?.content ?? (live ? current.text : "");
+    const attachments = live && current.attachments ? current.attachments : loadedDraftRef.current?.attachments;
+    saveDraft(text, attachments, draftBlocks());
+  }, [saveDraft, replyOwner, draftBlocks]);
 
   /** Stable callback for slash items loaded — prevents MessageInput memo break */
   const handleSlashItemsLoaded = useCallback(
@@ -1613,6 +1645,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
             autoFocus={!(metadata?.sessionId) || !!forkDraft}
             initialValue={forkDraft ?? (!firstSendPending && !editForking ? draft?.content : undefined)}
             initialAttachments={!firstSendPending && !editForking ? draft?.attachments : undefined}
+            initialVoice={!firstSendPending && !editForking ? draft?.voice ?? null : undefined}
+            onVoiceDraftChange={handleVoiceDraftChange}
             clearSignal={clearInputSignal}
             restore={restore}
             projectName={projectName}

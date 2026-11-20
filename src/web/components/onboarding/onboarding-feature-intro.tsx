@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { openSettings } from "@/components/settings/open-settings";
 import { featureIntroSteps, useFeatureIntrosStore } from "@/stores/feature-intros-store";
-import { featurePartAllowed } from "@/lib/onboarding/feature-intros-client";
+import { featureIntroSettingsLink, featurePartAllowed } from "@/lib/onboarding/feature-intros-client";
 import type { OnboardingStatus } from "@/lib/onboarding/onboarding-types";
 import { FEATURE_INTROS_CHANGED_EVENT, type FeatureIntro, type FeatureIntrosChangedEvent } from "../../../shared/feature-intros";
 import { OnboardingHint } from "./onboarding-hint";
@@ -59,6 +59,7 @@ function FeatureIntroStep({ intro, position, total }: { intro: FeatureIntro; pos
   const panel = useRef<HTMLDivElement>(null);
   useEffect(() => { panel.current?.focus(); }, [intro.id]);
   const headingId = `feature-intro-${intro.id}`;
+  const settingsLink = featureIntroSettingsLink(intro);
   return <div ref={panel} role="dialog" aria-labelledby={headingId} tabIndex={-1} className="p-4 outline-none"
     onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); void close(); } }}>
     <div className="flex items-center gap-2">
@@ -77,8 +78,8 @@ function FeatureIntroStep({ intro, position, total }: { intro: FeatureIntro; pos
     <Button variant="ghost" className="w-full min-h-11 mt-1" disabled={busy} onClick={() => void later(intro.id)}>Later</Button>
     {/* Deciding there is answering, so this hides the part without counting a skip. A feature that
         is one setting is changed where that setting lives, not among the tools. */}
-    <Button variant="link" className="w-full min-h-11 text-xs" onClick={() => { hide(); openSettings(intro.setting ? "assistant" : "tools"); }}>
-      {intro.setting ? "Choose in Settings → PPM Assistant instead" : "Change single tools in Settings → Tools"}
+    <Button variant="link" className="w-full min-h-11 text-xs" onClick={() => { hide(); openSettings(settingsLink.category); }}>
+      {settingsLink.label}
     </Button>
   </div>;
 }
