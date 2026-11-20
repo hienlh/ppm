@@ -800,6 +800,24 @@ describe("ClaudeAgentSdkProvider", () => {
         }]);
       });
 
+      it("reports the context the last call held, not the tokens summed over every call of the turn", async () => {
+        const call = (cacheRead: number) => ({
+          type: "assistant",
+          message: { model: "claude-opus-5-5", content: [{ type: "text", text: "." }], usage: { input_tokens: 10, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: 0, output_tokens: 5 } },
+        });
+        mockQueryFn.mockReturnValue(createMockQueryIterator([
+          call(269_990), call(269_990), call(269_990), call(279_990),
+          { type: "result", subtype: "success", num_turns: 4, modelUsage: {
+            "claude-opus-5-5": { inputTokens: 40, cacheReadInputTokens: 1_089_960, cacheCreationInputTokens: 0, outputTokens: 20, contextWindow: 500_000 },
+            "claude-haiku-5-5": { inputTokens: 900, outputTokens: 10, contextWindow: 200_000 },
+          } } as any,
+        ] as any));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        const events: any[] = [];
+        for await (const ev of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) events.push(ev);
+        expect(events.find((e) => e.type === "done")?.contextWindowPct).toBe(56);
+      });
+
       it("refuses a worktree name that is not one PPM makes", async () => {
         mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" } as any]));
         const session = await provider.createSession({ projectPath: "/tmp/my-project" });

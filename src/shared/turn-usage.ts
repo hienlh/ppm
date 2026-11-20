@@ -312,3 +312,16 @@ export function formatTurnUsageLog(u: TurnUsage): string {
     `verdict=${verdict.level}`,
   ].join(" ");
 }
+
+/**
+ * The context window of the model a call ran on, from a result's `modelUsage` (keyed by model id,
+ * possibly with a suffix such as `[1m]`). A turn can list several models — a subagent or a title
+ * on Haiku — so the window is the one of `model` when it is listed, else the largest listed.
+ */
+export function contextWindowOf(modelUsage: Record<string, { contextWindow?: number }> | undefined, model?: string): number {
+  if (!modelUsage) return 0;
+  const entries = Object.entries(modelUsage).filter(([, u]) => (u?.contextWindow ?? 0) > 0);
+  const mine = model ? entries.find(([id]) => id === model) ?? entries.find(([id]) => id.startsWith(model)) : undefined;
+  if (mine) return mine[1].contextWindow!;
+  return entries.reduce((max, [, u]) => Math.max(max, u.contextWindow!), 0);
+}

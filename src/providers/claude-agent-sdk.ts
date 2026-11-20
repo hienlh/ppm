@@ -66,7 +66,7 @@ import { listInheritedClaudeMcpServers } from "../services/claude-code-mcp.servi
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
 import { getSessionProjectPath, setSessionMetadata, getSessionTitle, setSessionTitle, getSessionTitles, insertTurnUsage, getSessionAccount } from "../services/db.service.ts";
 import { SUBSCRIPTION_PROMPT_CACHE_TTL_MS, API_KEY_PROMPT_CACHE_TTL_MS } from "../services/subprocess-retention.ts";
-import { buildTurnUsage, formatTurnUsageLog, messageContextTokens, messageCacheTtl } from "../shared/turn-usage.ts";
+import { buildTurnUsage, formatTurnUsageLog, messageContextTokens, messageCacheTtl, contextWindowOf } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
 import { parseSessionMessage, mergeToolResultMessages, nestChildEventsAcrossMessages, parseJsonlTranscript, fullParseWindow } from "../services/jsonl-transcript-parser.ts";
@@ -1577,6 +1577,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
      * tools grew between its calls and the next message replays the grown transcript.
      */
     let lastContextTokens: number | undefined;
+    /** The model of the last top-level API call, to pick its window out of `modelUsage`. */
+    let lastContextModel: string | undefined;
     /**
      * Cache window the API reported, rather than the one `promptCacheTtlMs` infers from the
      * credential. Sticky across turns for the same reason as `lastContextTokens`: a turn that
@@ -2255,6 +2257,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const usage = (msg as any).message?.usage;
             const ctx = messageContextTokens(usage);
             if (ctx != null) lastContextTokens = ctx;
+            const callModel = (msg as any).message?.model;
+            if (ctx != null && typeof callModel === "string") lastContextModel = callModel;
             const ttl = messageCacheTtl(usage);
             if (ttl) lastCacheTtlMs = ttl === "1h" ? SUBSCRIPTION_PROMPT_CACHE_TTL_MS : API_KEY_PROMPT_CACHE_TTL_MS;
             // This call ran against the post-compaction prefix and cached it, so the
@@ -2761,24 +2765,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             : subtype;
           resultNumTurns = result.num_turns as number | undefined;
 
-          // Extract context window usage from modelUsage.
-          // Cached prefix tokens occupy the context window exactly like fresh ones — they are
-          // only cheaper, not absent. Leaving them out made a warm session, where most of the
-          // prefix arrives as a cache read, report a fraction of the context it truly holds,
-          // so the meter stayed low while the session grew past the point of being affordable.
+          // How full the context is: the last top-level API call's own input side (cache reads
+          // included — a cached prefix occupies the window like a fresh one) over that model's
+          // window. Never `modelUsage`'s token counts: they are summed over every API call of
+          // the turn, so a turn of ten tool calls on a 270k context read as 2.7M, i.e. 100%.
           const modelUsage = (result.modelUsage ?? result.model_usage) as Record<string, any> | undefined;
-          if (modelUsage) {
-            for (const usage of Object.values(modelUsage)) {
-              const cw = usage.contextWindow ?? 0;
-              if (cw > 0) {
-                const total = (usage.inputTokens ?? 0)
-                  + (usage.cacheReadInputTokens ?? 0)
-                  + (usage.cacheCreationInputTokens ?? 0)
-                  + (usage.outputTokens ?? 0);
-                resultContextWindowPct = Math.min(Math.round((total / cw) * 100), 100);
-                break;
-              }
-            }
+          const contextWindow = contextWindowOf(modelUsage, lastContextModel);
+          if (lastContextTokens != null && contextWindow > 0) {
+            resultContextWindowPct = Math.min(Math.round((lastContextTokens / contextWindow) * 100), 100);
           }
 
           // Token split for this turn. The transcript is replayed on every turn, so whether
