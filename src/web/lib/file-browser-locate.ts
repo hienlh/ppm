@@ -59,7 +59,9 @@ async function flush(): Promise<void> {
       const results = await locatePaths(paths, project);
       const at = Date.now();
       useLocateVerdicts.setState((s) => {
-        const verdicts = { ...s.verdicts };
+        // Answers past their time are dropped here, so a long session does not keep every path
+        // it ever rendered; a link still on screen asks again on its next render.
+        const verdicts = Object.fromEntries(Object.entries(s.verdicts).filter(([, v]) => at - v.at < VERDICT_TTL_MS));
         for (const entry of results) verdicts[keyOf(project, entry.input)] = { entry, at };
         return { verdicts };
       });

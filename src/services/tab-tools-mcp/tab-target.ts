@@ -2,6 +2,10 @@ import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { isAllowedPath, resolvePath } from "../fs-path-guard.service.ts";
 import { assertReadPermitted } from "../fs-ops/fs-ops-read-write.service.ts";
+import { projectService } from "../project.service.ts";
+import {
+  assistantPrivateScope, isAssistantPrivatePath, type AssistantPrivateScope,
+} from "../assistant/assistant-private-paths.ts";
 
 /**
  * Turns the `path` an agent passed to `open_file` / `open_preview` into the file a PPM tab
@@ -54,7 +58,12 @@ export function tabReadRefusal(absolute: string, real: string): string | null {
 export interface TabTargetOptions {
   /** A folder is a target too (`open_file` opens it in the file browser); otherwise it is refused. */
   folder?: boolean;
+  /** The private-store rule a folder is held to (tests); built from the registered projects otherwise. */
+  privateScope?: () => AssistantPrivateScope;
 }
+
+const defaultPrivateScope = (): AssistantPrivateScope =>
+  assistantPrivateScope({ projectRoots: projectService.list().map((p) => p.path) });
 
 export async function resolveTabTarget(input: unknown, binding: TabToolsBinding, opts: TabTargetOptions = {}): Promise<TabTargetOutcome> {
   if (typeof input !== "string" || !input.trim()) return { ok: false, error: "`path` is required: the file to open." };
@@ -90,6 +99,12 @@ export async function resolveTabTarget(input: unknown, binding: TabToolsBinding,
   const late = tabReadRefusal(absolute, real);
   if (late) return { ok: false, error: late };
   if (folder) {
+    // A folder's listing is shown under the file browser's own rule, the same as the Assistant's
+    // `ui_open_file_browser` and a `/files` link: no store of logins or keys.
+    const scope = (opts.privateScope ?? defaultPrivateScope)();
+    if (isAssistantPrivatePath(absolute, scope) || isAssistantPrivatePath(real, scope)) {
+      return { ok: false, error: `${absolute} is where logins or keys are kept; PPM does not open it from here. Open it yourself if you need it.` };
+    }
     // The file browser names folders absolutely, inside a project or not.
     const root = binding.projectPath ? resolve(binding.projectPath) : null;
     const displayPath = root && isInside(root, absolute) && absolute !== root

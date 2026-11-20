@@ -46,8 +46,25 @@ async function linkBase(): Promise<string | null> {
   return home ? new URL(home).origin : null;
 }
 
-/** Check every absolute path in `md` and remember which ones may be links. Never throws. */
+/** How long a sender waits for the checks; past it the message goes out with what is known. */
+const PRIME_BUDGET_MS = 2_000;
+
+/**
+ * Check every absolute path in `md` and remember which ones may be links. Never throws, and never
+ * keeps a sender waiting past `PRIME_BUDGET_MS`: a path still being checked then is simply not a
+ * link in this message (the check finishes in the background and serves the next one).
+ */
 export async function primeTelegramPathLinks(md: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<void>((done) => { timer = setTimeout(done, PRIME_BUDGET_MS); });
+  try {
+    await Promise.race([checkPaths(md), budget]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function checkPaths(md: string): Promise<void> {
   try {
     const now = Date.now();
     const fresh = (p: string) => { const c = pathLinkCache.get(p); return c && now - c.at < PATH_LINK_TTL_MS; };

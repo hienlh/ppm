@@ -40,6 +40,13 @@ const LINE_PROP = "dataPpmLocalLine";
 /** Text inside these is already a link, code, or not prose. */
 const SKIP_TAGS = new Set(["a", "code", "pre", "kbd", "samp", "script", "style", "svg", "math", "button", "textarea"]);
 
+/** KaTeX's own markup: `a/b` in a formula is a fraction, never a path. */
+function isMath(node: HastNode): boolean {
+  const className = node.properties?.className;
+  const classes = Array.isArray(className) ? className : typeof className === "string" ? className.split(/\s+/) : [];
+  return classes.some((c) => typeof c === "string" && (c === "katex" || c === "katex-display" || c.startsWith("math")));
+}
+
 function splitText(node: HastNode): HastNode[] | null {
   const text = node.value ?? "";
   const found = findPathsInText(text);
@@ -72,7 +79,7 @@ function walk(node: HastNode): void {
       next.push(...(splitText(child) ?? [child]));
       continue;
     }
-    if (child.type === "element" && SKIP_TAGS.has(child.tagName ?? "")) {
+    if (child.type === "element" && (SKIP_TAGS.has(child.tagName ?? "") || isMath(child))) {
       next.push(child);
       continue;
     }

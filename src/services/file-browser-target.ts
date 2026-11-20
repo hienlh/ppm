@@ -1,5 +1,5 @@
-import { readdir, realpath, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { readdir, readlink, realpath, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { isAllowedPath, resolvePath } from "./fs-path-guard.service.ts";
 import { tabReadRefusal } from "./tab-tools-mcp/tab-target.ts";
 import {
@@ -18,6 +18,9 @@ import {
  * private (`~/.ssh`, `~/.aws`, the database snapshots…). A refusal that can be decided from the
  * path as written is decided before the disk is touched, and a refusal after following links never
  * names where the link leads, so the answer never says which keys exist.
+ *
+ * Every disk call has a deadline: a finished AI answer has each path it names checked before anyone
+ * clicks, and a dead network drive or a sleeping disk would otherwise hold the request for minutes.
  */
 
 export interface FileBrowserTarget {
@@ -43,10 +46,6 @@ export const MAX_FILE_BROWSER_PATH_CHARS = 4096;
 
 const foldCase = process.platform === "win32" || process.platform === "darwin";
 const fold = (p: string) => (foldCase ? p.toLowerCase() : p);
-const isInside = (root: string, path: string): boolean => {
-  const r = fold(root), p = fold(path);
-  return p === r || p.startsWith(r.endsWith(sep) ? r : r + sep);
-};
 
 const PRIVATE = "is where logins or keys are kept; PPM does not open it from here. Open it yourself if you need it.";
 
@@ -55,10 +54,35 @@ export function fileBrowserScope(projectRoots: string[]): AssistantPrivateScope 
   return assistantPrivateScope({ projectRoots });
 }
 
-/** The nearest folder above `path` that exists, followed through links; null at the root. */
-async function nearestRealFolder(path: string): Promise<string | null> {
-  for (let dir = dirname(path); ; dir = dirname(dir)) {
-    const real = await realpath(dir).catch(() => null);
+/** How long one disk call may take before the path is answered "could not be read". */
+const DISK_DEADLINE_MS = 1_500;
+const TIMED_OUT = Symbol("timed out");
+type Late = typeof TIMED_OUT;
+
+async function bounded<T>(work: Promise<T>): Promise<T | Late> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<Late>((done) => { timer = setTimeout(() => done(TIMED_OUT), DISK_DEADLINE_MS); });
+  try {
+    return await Promise.race([work, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+const realOrNull = (p: string): Promise<string | null | Late> => bounded(realpath(p).catch(() => null));
+
+/**
+ * Folders that mount another machine when merely looked at (autofs `/net` on Linux and macOS,
+ * macOS's `/Network`): resolving a path under them — which an answer naming one would do before
+ * anyone clicked — opens a connection to a host the text chose. UNC paths are already refused.
+ */
+const NETWORK_ROOTS = ["/net", "/Network"];
+const underNetworkRoot = (p: string) => process.platform !== "win32"
+  && NETWORK_ROOTS.some((root) => p === root || p.startsWith(`${root}/`));
+
+/** The nearest folder at or above `path` that exists, followed through links; null at the root. */
+async function nearestRealFolder(path: string): Promise<string | null | Late> {
+  for (let dir = path; ; dir = dirname(dir)) {
+    const real = await realOrNull(dir);
     if (real) return real;
     if (dirname(dir) === dir) return null;
   }
@@ -76,54 +100,53 @@ export async function resolveFileBrowserTarget(input: unknown, opts: FileBrowser
   else return { ok: false, error: `${raw} is relative; give an absolute path ("~" for the home folder).` };
 
   if (!isAllowedPath(absolute)) return { ok: false, error: `${absolute} is not on one of this machine's drives.` };
+  if (underNetworkRoot(absolute)) return { ok: false, error: `${absolute} is on a network mount; PPM does not open it from here.` };
   const early = tabReadRefusal(absolute, absolute);
   if (early) return { ok: false, error: early };
   const scope = opts.scope ?? fileBrowserScope(opts.projectRoots?.() ?? []);
   if (isAssistantPrivatePath(absolute, scope)) return { ok: false, error: `${absolute} ${PRIVATE}` };
+  const unreadable: FileBrowserOutcome = { ok: false, error: `${absolute} could not be read.` };
 
   /** Why a real location may not be opened, or null. Never names where a link leads. */
   const refuseReal = (where: string): string | null => {
-    if (!isAllowedPath(where)) return `${absolute} leads off this machine's drives through a link.`;
+    if (!isAllowedPath(where) || underNetworkRoot(where)) return `${absolute} leads off this machine's drives through a link.`;
     const late = tabReadRefusal(absolute, where);
     if (late) return late;
     if (isAssistantPrivatePath(where, scope)) return `${absolute} ${PRIVATE}`;
     return null;
   };
 
-  let real: string;
-  try {
-    real = await realpath(absolute);
-  } catch {
-    // Judged by where the nearest existing folder really is: behind a link into `~/.ssh`,
-    // "nothing at id_rsa" beside a refusal for id_ed25519 would say which keys exist.
-    const nearest = await nearestRealFolder(absolute);
+  const real = await realOrNull(absolute);
+  if (real === TIMED_OUT) return unreadable;
+  if (!real) {
+    // Judged by where the nearest existing folder really is — following a dangling link at the end
+    // too: behind a link into `~/.ssh`, "nothing at id_rsa" beside a refusal for id_ed25519 would
+    // say which keys exist.
+    const link = await bounded(readlink(absolute).catch(() => null));
+    if (link === TIMED_OUT) return unreadable;
+    const nearest = await nearestRealFolder(link ? resolve(dirname(absolute), link) : dirname(absolute));
+    if (nearest === TIMED_OUT) return unreadable;
     return { ok: false, error: (nearest ? refuseReal(nearest) : null) ?? `There is nothing at ${absolute}.` };
   }
   const refused = refuseReal(real);
   if (refused) return { ok: false, error: refused };
 
-  let folder: boolean;
-  try {
-    folder = (await stat(real)).isDirectory();
-  } catch {
-    return { ok: false, error: `${absolute} could not be read.` };
-  }
-  if (folder) return { ok: true, value: { dir: absolute, select: null, kind: "folder" } };
+  const st = await bounded(stat(real).catch(() => null));
+  if (!st || st === TIMED_OUT) return unreadable;
+  if (st.isDirectory()) return { ok: true, value: { dir: absolute, select: null, kind: "folder" } };
 
-  // The folder lists the file under the name the disk stores, so a path typed in the wrong case
-  // still selects its row.
   const parent = dirname(absolute);
-  const realParent = await realpath(parent).catch(() => null);
-  if (!realParent) return { ok: false, error: `${absolute} could not be read.` };
+  const realParent = await realOrNull(parent);
+  if (!realParent || realParent === TIMED_OUT) return unreadable;
   const parentRefused = refuseReal(realParent);
   if (parentRefused) return { ok: false, error: parentRefused };
+  // Where the disk ignores case, the folder lists the file under the name it stores, so a path
+  // typed in the wrong case still selects its row. Elsewhere the name as given is the stored one.
   const want = basename(absolute);
-  const names = await readdir(parent).catch(() => [] as string[]);
-  const stored = names.includes(want) ? want : names.find((n) => fold(n) === fold(want)) ?? want;
+  let stored = want;
+  if (foldCase) {
+    const names = await bounded(readdir(parent).catch(() => [] as string[]));
+    if (names !== TIMED_OUT && !names.includes(want)) stored = names.find((n) => fold(n) === fold(want)) ?? want;
+  }
   return { ok: true, value: { dir: parent, select: join(parent, stored), kind: "file" } };
-}
-
-/** Whether `path` lies inside `root` (case-folded where the disk ignores case). */
-export function isInsideFolder(root: string, path: string): boolean {
-  return isInside(resolve(root), resolve(path));
 }

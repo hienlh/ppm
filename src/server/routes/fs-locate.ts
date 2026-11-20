@@ -15,6 +15,9 @@ import { ok, err } from "../../types/api.ts";
  */
 export const fsLocateRoutes = new Hono();
 
+/** Paths checked at once in one batch. */
+const LOCATE_CONCURRENCY = 6;
+
 fsLocateRoutes.post("/locate", async (c) => {
   let body: { paths?: unknown; project?: unknown };
   try {
@@ -32,11 +35,20 @@ fsLocateRoutes.post("/locate", async (c) => {
   const project = typeof body.project === "string" ? projects.find((p) => p.name === body.project) : undefined;
   // One scope for the whole batch: it lists the registered projects and the private roots.
   const scope = fileBrowserScope(projects.map((p) => p.path));
-  const results: FileBrowserLocateEntry[] = [];
-  for (const input of body.paths as string[]) {
-    const outcome = await resolveFileBrowserTarget(input, { baseDir: project?.path ?? null, scope });
-    results.push(outcome.ok ? { input, ok: true, ...outcome.value } : { input, ok: false, error: outcome.error });
-  }
+  const inputs = body.paths as string[];
+  const results: FileBrowserLocateEntry[] = new Array(inputs.length);
+  // A few at a time: each disk call has its own deadline, so a slow drive costs a batch seconds,
+  // not minutes, without a hundred paths all hitting the disk at once.
+  let next = 0;
+  const worker = async () => {
+    while (next < inputs.length) {
+      const index = next++;
+      const input = inputs[index]!;
+      const outcome = await resolveFileBrowserTarget(input, { baseDir: project?.path ?? null, scope });
+      results[index] = outcome.ok ? { input, ok: true, ...outcome.value } : { input, ok: false, error: outcome.error };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(LOCATE_CONCURRENCY, inputs.length) }, worker));
   const response: FileBrowserLocateResponse = { results };
   return c.json(ok(response));
 });

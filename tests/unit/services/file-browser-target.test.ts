@@ -7,7 +7,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
@@ -67,6 +67,27 @@ describe("resolveFileBrowserTarget", () => {
       expect(outcome.ok).toBe(false);
       expect(!outcome.ok && outcome.error).toContain("logins or keys");
     }
+  });
+
+  it("answers a dangling link into a store of keys as the store, whether its target exists or not", async () => {
+    const links = join(root, "links");
+    mkdirSync(links, { recursive: true });
+    try {
+      symlinkSync(join(home, ".ssh", "id_ed25519"), join(links, "a"));
+      symlinkSync(join(home, ".ssh", "id_rsa"), join(links, "b"));
+    } catch {
+      return; // Creating a file link needs a privilege this Windows account may not have.
+    }
+    const there = await resolveFileBrowserTarget(join(links, "a"), { scope: scope() });
+    const absent = await resolveFileBrowserTarget(join(links, "b"), { scope: scope() });
+    expect(!there.ok && there.error).toContain("logins or keys");
+    expect(!absent.ok && absent.error).toContain("logins or keys");
+  });
+
+  it.if(process.platform !== "win32")("refuses an automount root before asking the disk", async () => {
+    const outcome = await resolveFileBrowserTarget("/net/attacker.example/share", { scope: scope() });
+    expect(outcome.ok).toBe(false);
+    expect(!outcome.ok && outcome.error).toContain("network mount");
   });
 
   it("refuses PPM's own folder", async () => {

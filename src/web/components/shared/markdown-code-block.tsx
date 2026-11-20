@@ -130,10 +130,6 @@ export function MdCode({ className, children, node, ...rest }: any) {
 
   // Inline code — resolve a clickable file target: `path`, `path:line`, or `path:start-end`
   const text = String(children ?? "").trim();
-  // A path with a folder in it (`D:\tiktok\story`, `~/Projects`, `src/web/`): clickable once the
-  // server has checked it exists and may be shown — a folder opens the file browser.
-  const quoted = inlineCodePath(text);
-  if (quoted) return <LocalPathCode path={quoted.path} line={quoted.line} {...rest}>{children}</LocalPathCode>;
   let clickPath: string | null = null;
   let line: { start: number; end?: number } | undefined;
 
@@ -144,6 +140,13 @@ export function MdCode({ className, children, node, ...rest }: any) {
   } else if (isClickableFilePath(text)) {
     clickPath = text;
   }
+
+  // A path that is not a code file by its name (`D:\tiktok\story`, `~/Projects`, `src/web/`,
+  // `clips/cut.mp4`): clickable once the server has checked it exists and may be shown — a folder
+  // opens the file browser. A code file's name keeps the older rule above: clickable at once,
+  // with the palette as the fallback, so a reference streaming in is never a dead span.
+  const quoted = clickPath ? null : inlineCodePath(text);
+  if (quoted) return <LocalPathCode path={quoted.path} line={quoted.line} {...rest}>{children}</LocalPathCode>;
 
   if (clickPath) {
     const target = clickPath;
