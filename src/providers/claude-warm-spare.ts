@@ -29,6 +29,8 @@ export interface SpareHandlers {
   fileWrite: (...args: any[]) => Promise<any>;
   /** Brackets a shell command with `git status` for the same purpose. */
   shellCommand: (...args: any[]) => Promise<any>;
+  /** Holds a heavy shell command back while memory is low or another heavy job runs. */
+  heavyGate?: (...args: any[]) => Promise<any>;
   /** Names each turn the CLI starts to the message that asked for it (`turn_started`). */
   userPromptSubmit: (...args: any[]) => Promise<any>;
   stderr: (chunk: string) => void;
@@ -96,6 +98,7 @@ export class WarmSpares<Q extends { close(): void; initializationResult?(): Prom
       preToolUse: (...args) => spare.handlers ? spare.handlers.preToolUse(...args) : Promise.resolve({}),
       fileWrite: (...args) => spare.handlers ? spare.handlers.fileWrite(...args) : Promise.resolve({}),
       shellCommand: (...args) => spare.handlers ? spare.handlers.shellCommand(...args) : Promise.resolve({}),
+      heavyGate: (...args) => spare.handlers?.heavyGate ? spare.handlers.heavyGate(...args) : Promise.resolve({}),
       userPromptSubmit: (...args) => spare.handlers ? spare.handlers.userPromptSubmit(...args) : Promise.resolve({}),
       stderr: (chunk) => {
         if (spare.handlers) spare.handlers.stderr(chunk);

@@ -246,12 +246,32 @@ type ToolHook = (...args: any[]) => Promise<any>;
  */
 export const PERMISSION_HOOK_TIMEOUT_SECONDS = Math.floor(2_147_483_647 / 1000);
 
+/**
+ * Seconds the CLI waits for a shell call's PreToolUse hook in bypass mode. The heavy-command gate
+ * (`memory-guard/heavy-command-gate.ts`) can hold a command up to five minutes while another heavy
+ * job finishes; the CLI's own default would cut that short.
+ */
+export const SHELL_GATE_HOOK_TIMEOUT_SECONDS = 600;
+
+/** The heavy-command gate, then — for a call it let through — the shell hook. */
+function gateThenShell(heavyGate: ToolHook | undefined, shellCommand: ToolHook): ToolHook {
+  if (!heavyGate) return shellCommand;
+  return async (...args) => {
+    const gate = await heavyGate(...args);
+    if (gate?.hookSpecificOutput?.permissionDecision === "deny") return gate;
+    return shellCommand(...args);
+  };
+}
+
 /** The permission hook, then — for a call it let through — the shell or file-write hook. */
-function thenCapture(preToolUse: ToolHook, shellCommand: ToolHook, fileWrite: ToolHook): ToolHook {
+function thenCapture(preToolUse: ToolHook, shellCommand: ToolHook, fileWrite: ToolHook, heavyGate?: ToolHook): ToolHook {
   return async (...args) => {
     const verdict = await preToolUse(...args);
     if (verdict?.hookSpecificOutput?.permissionDecision === "deny") return verdict;
-    if (shellHookCall(args[0])) await shellCommand(...args);
+    if (shellHookCall(args[0])) {
+      const gated = await gateThenShell(heavyGate, shellCommand)(...args);
+      if (gated?.hookSpecificOutput?.permissionDecision === "deny") return gated;
+    }
     else if (fileWriteTarget(args[0]?.tool_name, args[0]?.tool_input, args[0]?.cwd)) await fileWrite(...args);
     return verdict;
   };
@@ -274,13 +294,24 @@ function thenCapture(preToolUse: ToolHook, shellCommand: ToolHook, fileWrite: To
  * `userPromptSubmit` names each turn the CLI starts to the browser message that asked for it
  * (`claude-prompt-turn-binder.ts`); it decides nothing either.
  */
-export function buildToolHooks(p: { isBypass: boolean; preToolUse: ToolHook; fileWrite: ToolHook; shellCommand: ToolHook; userPromptSubmit?: ToolHook }) {
+export function buildToolHooks(p: {
+  isBypass: boolean;
+  preToolUse: ToolHook;
+  fileWrite: ToolHook;
+  shellCommand: ToolHook;
+  userPromptSubmit?: ToolHook;
+  /** Refuses or holds a heavy shell command while memory is low or another heavy job runs. */
+  heavyGate?: ToolHook;
+}) {
   const shell = { matcher: SHELL_TOOLS_MATCHER, hooks: [p.shellCommand] };
+  const gatedShell = p.heavyGate
+    ? { matcher: SHELL_TOOLS_MATCHER, hooks: [gateThenShell(p.heavyGate, p.shellCommand)], timeout: SHELL_GATE_HOOK_TIMEOUT_SECONDS }
+    : shell;
   const fileWrite = { matcher: FILE_WRITE_TOOLS_MATCHER, hooks: [p.fileWrite] };
   return {
     PreToolUse: p.isBypass
-      ? [fileWrite, shell]
-      : [{ matcher: ".*", hooks: [thenCapture(p.preToolUse, p.shellCommand, p.fileWrite)], timeout: PERMISSION_HOOK_TIMEOUT_SECONDS }],
+      ? [fileWrite, gatedShell]
+      : [{ matcher: ".*", hooks: [thenCapture(p.preToolUse, p.shellCommand, p.fileWrite, p.heavyGate)], timeout: PERMISSION_HOOK_TIMEOUT_SECONDS }],
     PostToolUse: [shell, fileWrite],
     PostToolUseFailure: [shell, fileWrite],
     ...(p.userPromptSubmit ? { UserPromptSubmit: [{ hooks: [p.userPromptSubmit] }] } : {}),
