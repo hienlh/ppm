@@ -88,10 +88,19 @@ export function formatApprovalCard(card: LiveApprovalCard, headline: string): Fo
   return { html: lines.join("\n"), allow: d.complete && fits && !hiddenBlocksAllow };
 }
 
-/** A question that cannot be answered with buttons in a chat: a secret, or one with no choices. */
+/**
+ * A question that cannot be answered from a chat: a secret (never typed where the bot keeps it), or
+ * one with no choices that takes no typed answer either.
+ */
 export function needsPpm(q: NormalizedQuestion): boolean {
-  return q.secret === true || q.options.length === 0;
+  return q.secret === true || (q.options.length === 0 && !q.allowsFreeText);
 }
+
+/** The button for an answer in the user's own words. */
+export const OTHER_LABEL = "✏️ Other (type it)";
+/** The same button on a question with no choices, where typing is the only answer. */
+export const TYPE_ANSWER_LABEL = "✏️ Type your answer";
+export const otherButtonLabel = (q: NormalizedQuestion): string => (q.options.length ? OTHER_LABEL : TYPE_ANSWER_LABEL);
 
 /** User text inside a card: secrets hidden, then escaped. */
 export const redactedHtml = (s: string): string => esc(redactSecretsForTelegram(s).text);
@@ -101,6 +110,11 @@ export function questionBlock(q: NormalizedQuestion): string[] {
   const lines = [`${q.header ? `<b>${redactedHtml(q.header)}</b> — ` : ""}${redactedHtml(q.question)}${q.multiSelect ? " <i>(choose any)</i>" : ""}`];
   for (const o of q.options) lines.push(`• ${redactedHtml(o.label)}${o.description ? ` — <i>${redactedHtml(o.description)}</i>` : ""}`);
   if (needsPpm(q)) lines.push(`<i>${q.secret ? "This answer is private: give it in PPM." : "This needs a typed answer: give it in PPM."}</i>`);
+  else if (q.allowsFreeText) {
+    lines.push(q.options.length
+      ? "<i>Or answer in your own words: press ✏️ Other, or reply to this card.</i>"
+      : "<i>Reply to this card with your answer, or press ✏️ Type your answer.</i>");
+  }
   return lines;
 }
 

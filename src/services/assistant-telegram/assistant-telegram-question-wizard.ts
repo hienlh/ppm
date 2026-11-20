@@ -9,6 +9,9 @@
  * single choice moves on; a question that takes several ticks choices (✓) and moves on with Next;
  * Back returns to the question before. After the last question comes a summary of every answer
  * with Send and Back, and only Send answers the card — all questions at once, never part of them.
+ * A question that takes typed text also has "✏️ Other": the user's next message (or a reply to the
+ * card) becomes the answer to the question on screen, in place of any choice, and moves on like a
+ * pick does (`applyTypedAnswer`).
  *
  * Moving between steps edits the same message (text and buttons), so the chat does not fill up
  * with one message per question. Every button's code is made once, when the card is shown: the
@@ -20,7 +23,7 @@ import type { NormalizedQuestion } from "../../shared/approval-questions.ts";
 import type { InlineKeyboardButton } from "../telegram/telegram-types.ts";
 import { redactForTelegram } from "../telegram/telegram-html-format.ts";
 import { escapeTelegramHtml } from "../notification-format.ts";
-import { questionBlock } from "./assistant-telegram-card-format.ts";
+import { otherButtonLabel, questionBlock } from "./assistant-telegram-card-format.ts";
 import type { CardPress } from "./assistant-telegram-actions.ts";
 
 const LABEL_MAX = 60;
@@ -62,6 +65,8 @@ export interface WizardCodes {
   choices: string[][];
   /** [question]: Next, made only for questions that take several choices. */
   next: (string | null)[];
+  /** [question]: Other, made only for questions that take a typed answer. */
+  other: (string | null)[];
   /** [step]: Back, made for every step after the first (the summary is step `questions.length`). */
   back: (string | null)[];
   send: string;
@@ -120,10 +125,41 @@ export function applyWizardPress(
   return { toast: on ? "Ticked." : "Unticked.", redraw: true };
 }
 
+/**
+ * The user's own words as the answer to the question on screen: they replace any choice (one
+ * answer, as the chat's form sends it) and the card moves on, as a pick does. Words meant for a
+ * question no longer on screen change nothing: the user is told, and the message is redrawn.
+ */
+export function applyTypedAnswer(
+  questions: readonly NormalizedQuestion[],
+  wizard: WizardState,
+  selection: Selection,
+  questionId: string | null,
+  text: string,
+): { toast: string; redraw: boolean; taken: boolean } {
+  const q = questions[wizard.step];
+  if (!q) return { toast: "Every question has an answer: press Send, or Back to change one.", redraw: true, taken: false };
+  if (questionId !== null && questionId !== q.id) {
+    return { toast: "That answer was for another question. Press ✏️ Other on this one again.", redraw: true, taken: false };
+  }
+  if (!q.allowsFreeText) return { toast: "This question takes one of its choices only.", redraw: false, taken: false };
+  selection.set(q.id, [text]);
+  wizard.step++;
+  return { toast: wizard.step < questions.length ? "Got it. Next question." : "Got it. Check your answers, then Send.", redraw: true, taken: true };
+}
+
+/** A typed answer: what was chosen is not one of the question's choices. */
+export function typedAnswerOf(q: NormalizedQuestion, chosen: readonly string[] | undefined): string | null {
+  if (!chosen?.length) return null;
+  const labels = new Set(q.options.map((o) => o.label));
+  return chosen.some((c) => !labels.has(c)) ? chosen.join(", ") : null;
+}
+
 export function mintWizardCodes(questions: readonly NormalizedQuestion[], mint: Mint): WizardCodes {
   return {
     choices: questions.map((q) => q.options.map((o) => mint({ op: q.multiSelect ? "toggle" : "pick", questionId: q.id, option: o.label }))),
     next: questions.map((q) => (q.multiSelect ? mint({ op: "next", questionId: q.id }) : null)),
+    other: questions.map((q) => (q.allowsFreeText ? mint({ op: "other", questionId: q.id }) : null)),
     back: Array.from({ length: questions.length + 1 }, (_, step) => (step > 0 ? mint({ op: "back", step }) : null)),
     send: mint({ op: "send" }),
   };
@@ -138,6 +174,8 @@ export function wizardStepHtml(questions: readonly NormalizedQuestion[], step: n
   const q = questions[step];
   if (q) {
     lines.push(`<b>Question ${step + 1}/${questions.length}</b>`, "", ...questionBlock(q));
+    const typed = typedAnswerOf(q, selection.get(q.id));
+    if (typed) lines.push("", `→ Your answer: <b>${shortHtml(typed, SUMMARY_ANSWER_MAX)}</b>`);
     return lines.join("\n");
   }
   lines.push("<b>Your answers</b> — check them, then Send.");
@@ -158,6 +196,7 @@ export function wizardStepRows(questions: readonly NormalizedQuestion[], step: n
     text: `${chosen.includes(o.label) ? "✓ " : ""}${buttonLabel(o.label)}`,
     callback_data: codes.choices[step]![i]!,
   }]);
+  if (codes.other[step]) rows.push([{ text: otherButtonLabel(q), callback_data: codes.other[step]! }]);
   const next = codes.next[step] ? [{ text: "Next »", callback_data: codes.next[step]! }] : [];
   if (back.length || next.length) rows.push([...back, ...next]);
   return rows;
@@ -180,6 +219,12 @@ export function questionListHtml(questions: readonly NormalizedQuestion[], headl
  * question as it is, and the summary with every choice of every question picked.
  */
 export function wizardWorstCaseSteps(questions: readonly NormalizedQuestion[], headline: string): string[] {
-  const all: Selection = new Map(questions.map((q) => [q.id, q.options.map((o) => o.label)]));
+  // A typed answer is shown cut to SUMMARY_ANSWER_MAX, so it can be longer than every choice joined.
+  const longest = (q: NormalizedQuestion): string[] => {
+    const picked = q.options.map((o) => o.label);
+    const typed = "x".repeat(SUMMARY_ANSWER_MAX + 1);
+    return q.allowsFreeText && typed.length > picked.join(", ").length ? [typed] : picked;
+  };
+  const all: Selection = new Map(questions.map((q) => [q.id, longest(q)]));
   return Array.from({ length: questions.length + 1 }, (_, step) => wizardStepHtml(questions, step, all, headline));
 }
