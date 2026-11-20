@@ -6,6 +6,8 @@ import { LocalPathCode } from "./markdown-local-paths";
 import { highlightToHtml, highlightSync, getActiveShikiTheme } from "@/theme/adapters/shiki-adapter";
 import { copyToClipboard } from "@/lib/clipboard";
 import { runInTerminal } from "@/lib/run-in-terminal";
+import { isShellCodeBlock } from "@/lib/shell-block-detect";
+import { CodeBlockRunOutput, useCodeBlockRun } from "./code-block-run-output";
 
 /**
  * Shiki-highlighted HTML for a code block. Returns null while streaming or
@@ -82,11 +84,13 @@ export function MdPre({ children, node, ...rest }: any) {
     return <MermaidDiagram source={text.trim()} />;
   }
 
-  const isBash = /^(bash|sh|shell|zsh)$/.test(lang || "") || (!lang && text.startsWith("$"));
+  const isBash = isShellCodeBlock(lang, text);
+  const canRun = !minimalMode && isBash && !!projectName && !assistantContent && !isStreaming;
 
   // Highlight once the block is done streaming; render raw code until then to
   // avoid re-highlighting on every token (and Shiki being async).
   const shikiHtml = useShikiHtml(text, lang, !isStreaming);
+  const blockRun = useCodeBlockRun(projectName);
   // Stable object: React 19 re-sets innerHTML whenever this prop's identity changes, which
   // would rebuild the highlighted subtree on every re-render of the surrounding message.
   const shikiProp = useMemo(() => (shikiHtml ? { __html: shikiHtml } : null), [shikiHtml]);
@@ -99,15 +103,15 @@ export function MdPre({ children, node, ...rest }: any) {
       {codeActions && (
         <div className="code-actions absolute top-1 right-1 flex gap-1">
           <ActionBtn title="Copy" icon={<CopyIcon />} activeIcon={<CheckIcon />} onClick={() => void copyToClipboard(text)} />
-          {!minimalMode && isBash && projectName && !assistantContent && (
-            <ActionBtn
-              title="Send to terminal"
-              icon={<PlayIcon />}
-              onClick={() => runInTerminal(text, projectName)}
-            />
+          {canRun && (
+            <>
+              <ActionBtn title="Run (output below)" icon={<PlayIcon />} onClick={() => void blockRun.run(text)} />
+              <ActionBtn title="Run in terminal" icon={<TerminalIcon />} onClick={() => runInTerminal(text, projectName, { execute: true })} />
+            </>
           )}
         </div>
       )}
+      <CodeBlockRunOutput state={blockRun.state} onStop={blockRun.stop} onClose={blockRun.close} />
     </div>
   );
 }
@@ -235,6 +239,12 @@ const CheckIcon = () => (
 );
 
 const PlayIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="6 4 20 12 6 20 6 4" />
+  </svg>
+);
+
+const TerminalIcon = () => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
   </svg>

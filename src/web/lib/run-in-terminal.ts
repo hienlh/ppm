@@ -30,9 +30,14 @@ export function normalizeTerminalCommand(text: string): string {
   return text.replace(/^[ \t]*\$[ \t]+/gm, "").replace(/\s+$/, "");
 }
 
-export function runInTerminal(rawCommand: string, projectName?: string | null): void {
-  const command = normalizeTerminalCommand(rawCommand);
-  if (!command) return;
+/**
+ * `execute`: press Enter after the command too (the code block's Run in terminal button), instead
+ * of leaving the last line waiting for the user's Enter.
+ */
+export function runInTerminal(rawCommand: string, projectName?: string | null, opts: { execute?: boolean } = {}): void {
+  const typed = normalizeTerminalCommand(rawCommand);
+  if (!typed) return;
+  const command = opts.execute ? typed + "\r" : typed;
 
   // Offer it to a live terminal first (dispatch is synchronous, so the ack lands
   // before this returns).

@@ -92,6 +92,21 @@ describe("runInTerminal", () => {
     expect(opened[0].metadata).toMatchObject({ projectName: "ppm", pendingCommand: "bun test" });
   });
 
+  it("with execute, presses Enter after the command, in a live terminal and in a new one", () => {
+    const received: string[] = [];
+    const listener = (e: any) => {
+      received.push(e.detail.command);
+      window.dispatchEvent(new Event(RUN_IN_TERMINAL_ACK_EVENT));
+    };
+    window.addEventListener(RUN_IN_TERMINAL_EVENT, listener);
+    runInTerminal("$ bun test\n", "ppm", { execute: true });
+    window.removeEventListener(RUN_IN_TERMINAL_EVENT, listener);
+    expect(received).toEqual(["bun test\r"]);
+
+    runInTerminal("grep x .env\n", "ppm", { execute: true });
+    expect(opened[0].metadata).toMatchObject({ pendingCommand: "grep x .env\r" });
+  });
+
   it("ignores an empty command", () => {
     runInTerminal("   \n", "ppm");
     expect(opened).toHaveLength(0);
