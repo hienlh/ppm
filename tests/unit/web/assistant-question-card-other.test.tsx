@@ -1,9 +1,11 @@
 /**
- * A chat's question shown as a PPM Assistant card ("Needs your answer") offers "Other" — the user's
- * own words — wherever the chat's own form does: under the tiles of a single- and a multi-choice
- * question, and alone on a question with no options. The words go out in place of the tiles, the
- * same answer the chat's form sends; picking a tile again clears them. A question that takes no
- * typed text (a Codex choice without "other") gets no field, and a secret is still answered in the chat.
+ * A chat's question shown as a PPM Assistant card ("Needs your answer") is answered with the very
+ * form the chat shows (`chat/question-card.tsx`): the same options, the same "Other" field (also on
+ * several-choice questions, and alone on a question with no options), the same Submit and Skip. The
+ * card sends what that form produces — answers by question id, typed words alone in place of the
+ * options — and Skip declines the question as Skip in the chat does. Only the frame is the card's:
+ * who asked, and Open chat. A secret is still answered in the chat, and a card no longer waiting
+ * shows what was asked as text.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { act } from "react";
@@ -13,7 +15,8 @@ installDom();
 afterAll(uninstallDom);
 
 const { AssistantCard } = await import("../../../src/web/components/assistant/cards/assistant-card");
-const { answerableOnCard, cardAnswers } = await import("../../../src/web/components/assistant/cards/approval-mirror-card");
+const { QuestionCard } = await import("../../../src/web/components/chat/question-card");
+const { answerableOnCard } = await import("../../../src/web/components/assistant/cards/approval-mirror-card");
 const { api } = await import("../../../src/web/lib/api-client");
 type Card = import("../../../src/shared/assistant-cards").AssistantCard;
 type Questions = NonNullable<Card["payload"]["questions"]>;
@@ -40,96 +43,88 @@ afterEach(async () => {
 async function typeInto(el: Element | null, value: string): Promise<void> {
   if (!el) throw new Error("no such field");
   await act(async () => {
-    Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!.call(el, value);
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, value);
     el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
 
-const send = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Send answer"))!;
-const other = (q: string) => view!.container.querySelector(`[data-card-question="${q}"] [data-card-other-input]`);
-const tile = (q: string, letter: string) => view!.container.querySelector(`[data-card-question="${q}"] [data-card-option="${letter}"]`)!;
+const q = (sel: string) => view!.container.querySelector(sel);
+const button = (text: string) => [...view!.container.querySelectorAll("button")].find((b) => b.textContent?.trim().startsWith(text))!;
+const option = (i: number) => q(`[data-question-option="${i}"]`)!;
+const other = () => q("[data-question-other] input");
 
-describe("question card: Other", () => {
-  it("sends typed words in place of the tiles on a single-choice question", async () => {
+describe("question card: the chat's own form", () => {
+  it("draws the chat's form inside the card, between the card's own header and footer", async () => {
+    const questions = [{ id: "q1", question: "Which approach?", multiSelect: false, allowsFreeText: true, options: [{ label: "A" }, { label: "B" }, { label: "C" }] }];
+    view = await mount(<AssistantCard card={card(questions)} />);
+    const form = q("[data-card-question-form] [data-question-card]");
+    expect(form).not.toBeNull();
+    expect(view.container.textContent).toContain("Asked by Chat “Fix login” in api.");
+    expect(button("Open chat")).toBeDefined();
+    // The same markup the chat draws for the same question.
+    const inCard = form!.outerHTML;
+    await view.unmount();
+    view = await mount(<QuestionCard questions={[{ ...questions[0]!, multiSelect: false, allowsFreeText: true }]} onSubmit={() => {}} onSkip={() => {}} autoFocus={false} />);
+    expect(q("[data-question-card]")!.outerHTML).toBe(inCard);
+  });
+
+  it("sends typed words in place of the option picked, as the chat does", async () => {
     view = await mount(<AssistantCard card={card([
       { id: "q1", question: "Which approach?", multiSelect: false, allowsFreeText: true, options: [{ label: "A" }, { label: "B" }, { label: "C" }] },
     ])} />);
-    expect(other("q1")).not.toBeNull();
-    expect((other("q1") as HTMLTextAreaElement).placeholder).toBe("Other: type your own answer…");
-    // The row is a 44 px target like every tile, and 16 px text on a phone so focusing does not zoom.
-    expect(view.container.querySelector("[data-card-other]")!.className).toContain("min-h-11");
-    expect(other("q1")!.className).toContain("text-base");
-    await click(tile("q1", "C"));
-    expect(tile("q1", "C").getAttribute("aria-checked")).toBe("true");
-    await typeInto(other("q1"), "  Neither: split it in two PRs  ");
-    expect(tile("q1", "C").getAttribute("aria-checked")).toBe("false");
-    expect(send().disabled).toBe(false);
-    await click(send());
-    expect(posts[0]!.body).toEqual({ answersById: { q1: ["Neither: split it in two PRs"] } });
+    await click(option(2));
+    expect(option(2).getAttribute("aria-pressed")).toBe("true");
+    await typeInto(other(), "  Neither: split it in two PRs  ");
+    expect(option(2).getAttribute("aria-pressed")).toBe("false");
+    await click(button("Submit"));
+    expect(posts).toEqual([{ url: "/api/assistant/cards/22222222-2222-2222-2222-222222222222/answer", body: { answersById: { q1: ["Neither: split it in two PRs"] } } }]);
   });
 
-  it("offers Other on a multi-choice question too, and a tile picked after clears the words", async () => {
+  it("several questions: tabs, several choices, Other on a several-choice question, and a question with no options", async () => {
     view = await mount(<AssistantCard card={card([
-      { id: "q1", question: "Which PRs?", multiSelect: true, allowsFreeText: true, options: [{ label: "#88" }, { label: "#89" }] },
-      { id: "q2", question: "Ship?", multiSelect: false, allowsFreeText: true, options: [{ label: "Yes" }, { label: "No" }] },
+      { id: "q1", question: "Which checks?", multiSelect: true, allowsFreeText: true, options: [{ label: "unit" }, { label: "e2e" }] },
+      { id: "q2", question: "Release note?", multiSelect: false, allowsFreeText: true, options: [] },
     ])} />);
-    await typeInto(other("q1"), "Only the docs one");
-    expect(send().textContent).toBe("Send answers (1/2)");
-    await click(tile("q2", "A"));
-    expect(send().textContent).toBe("Send answers (2/2)");
-    await click(send());
-    expect(posts[0]!.body).toEqual({ answersById: { q1: ["Only the docs one"], q2: ["Yes"] } });
-
-    posts = [];
-    await click(tile("q1", "B"));
-    expect((other("q1") as HTMLTextAreaElement).value).toBe("");
-    await click(send());
-    expect(posts[0]!.body).toEqual({ answersById: { q1: ["#89"], q2: ["Yes"] } });
+    await click(option(0));
+    await click(option(1));
+    expect(button("Submit").textContent).toContain("(1/2)");
+    await click(q('[data-question-tab="1"]'));
+    expect(view.container.textContent).toContain("Release note?");
+    await typeInto(other(), "Fixes the login loop.");
+    await click(button("Submit"));
+    expect(posts[0]!.body).toEqual({ answersById: { q1: ["unit", "e2e"], q2: ["Fixes the login loop."] } });
   });
 
-  it("answers a question with no options by the field alone", async () => {
+  it("Skip declines the question, as Skip in the chat does", async () => {
     view = await mount(<AssistantCard card={card([
-      { id: "q1", question: "What should the release be called?", multiSelect: false, allowsFreeText: true, options: [] },
+      { id: "q1", question: "Ship?", multiSelect: false, allowsFreeText: true, options: [{ label: "Yes" }] },
     ])} />);
-    expect(view.container.textContent).not.toContain("Answer it in the chat");
-    expect((other("q1") as HTMLTextAreaElement).placeholder).toBe("Type your answer…");
-    expect(send().disabled).toBe(true);
-    await typeInto(other("q1"), "   ");
-    expect(send().disabled).toBe(true);
-    await typeInto(other("q1"), "Bluebird");
-    await click(send());
-    expect(posts[0]!.body).toEqual({ answersById: { q1: ["Bluebird"] } });
+    await click(button("Skip"));
+    expect(posts[0]!.body).toEqual({ decision: "deny" });
   });
 
-  it("gives no field to a question that takes no typed text, and leaves a secret to the chat", async () => {
+  it("gives no Other to a question that takes no typed text, and leaves a secret to the chat", async () => {
     view = await mount(<AssistantCard card={card([
       { id: "target", question: "Where to?", multiSelect: false, allowsFreeText: false, options: [{ label: "staging" }, { label: "prod" }] },
     ])} />);
-    expect(other("target")).toBeNull();
+    expect(q("[data-question-card]")).not.toBeNull();
+    expect(other()).toBeNull();
     await view.unmount();
     const secret = [{ id: "token", question: "API token?", multiSelect: false, allowsFreeText: true, secret: true, options: [] }] as unknown as Questions;
     view = await mount(<AssistantCard card={card(secret)} />);
-    expect(other("token")).toBeNull();
+    expect(q("[data-question-card]")).toBeNull();
     expect(view.container.textContent).toContain("Answer it in the chat.");
   });
 
-  it("shows no field once the card was answered", async () => {
+  it("shows what was asked as text once the card no longer waits", async () => {
     view = await mount(<AssistantCard card={{ ...card([
-      { id: "q1", question: "Which?", multiSelect: false, allowsFreeText: true, options: [{ label: "A" }] },
+      { id: "q1", question: "Which?", multiSelect: false, allowsFreeText: true, options: [{ label: "A" }, { label: "B" }] },
     ]), status: "answered", answer: { by: "user", channel: "telegram", at: Date.now(), approved: true } } as Card} />);
-    expect(other("q1")).toBeNull();
+    expect(q("[data-question-card]")).toBeNull();
+    expect(q('[data-card-question="q1"]')!.textContent).toBe("Which?AB");
+    expect([...view.container.querySelectorAll("button")].map((b) => b.textContent?.trim())).not.toContain("Skip");
   });
-});
 
-describe("cardAnswers / answerableOnCard", () => {
-  const qs = [
-    { id: "a", question: "?", multiSelect: false, allowsFreeText: true, options: [{ label: "x" }] },
-    { id: "b", question: "?", multiSelect: true, allowsFreeText: false, options: [{ label: "y" }, { label: "z" }] },
-  ];
-  it("prefers the typed words, ignores words where none are taken, leaves unanswered questions out", () => {
-    expect(cardAnswers(qs, { a: ["x"], b: ["y", "z"] }, { a: " mine ", b: "ignored" })).toEqual({ a: ["mine"], b: ["y", "z"] });
-    expect(cardAnswers(qs, {}, { a: "  " })).toEqual({});
-  });
   it("counts a no-option question answerable only when it takes typed text", () => {
     expect(answerableOnCard([{ id: "a", question: "?", allowsFreeText: true, options: [] }])).toBe(true);
     expect(answerableOnCard([{ id: "a", question: "?", allowsFreeText: false, options: [] }])).toBe(false);

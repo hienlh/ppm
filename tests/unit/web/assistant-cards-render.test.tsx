@@ -107,21 +107,18 @@ describe("assistant cards", () => {
     expect(view.container.querySelector("[data-card-status-line]")?.textContent).toMatch(/^Answered on Telegram · \d\d:\d\d$/);
   });
 
-  it("answers a single-choice question: a tap picks, Send answers", async () => {
+  it("answers a single-choice question with the chat's own form: a tap picks, Submit answers", async () => {
     view = await mount(<AssistantCard card={base({
       kind: "question", payload: { requestId: "q", questions: [{ id: "q1", question: "Ship now?", multiSelect: false, allowsFreeText: false, options: [{ label: "Yes (Recommended)", description: "Publish 0.25.6 tonight." }, { label: "No" }] }] },
     })} />);
-    const tiles = [...view.container.querySelectorAll("[data-card-option]")];
-    expect(tiles.map((t) => t.getAttribute("data-card-option"))).toEqual(["A", "B"]);
-    // The marker is a tag, the description is shown whole, and every tile is a 44 px target.
-    expect(tiles[0]!.textContent).toBe("AYesRecommendedPublish 0.25.6 tonight.");
-    for (const t of tiles) expect(t.className).toContain("min-h-11");
-    const send = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent === "Send answer")!;
-    expect(send().disabled).toBe(true);
+    expect(view.container.querySelector("[data-question-card]")).not.toBeNull();
+    const tiles = [...view.container.querySelectorAll("[data-question-option]")];
+    expect(tiles.map((t) => t.textContent)).toEqual(["1Yes (Recommended)Publish 0.25.6 tonight.", "2No"]);
+    const submit = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Submit"))!;
+    expect(submit().disabled).toBe(true);
     await click(tiles[1]!);
     expect(posts).toEqual([]);
-    expect(tiles[1]!.getAttribute("aria-checked")).toBe("true");
-    await click(send());
+    await click(submit());
     expect(posts[0]!.body).toEqual({ answersById: { q1: ["No"] } });
   });
 
@@ -133,15 +130,14 @@ describe("assistant cards", () => {
       ] },
     })} />);
     expect(view.container.querySelector("[data-card-kind-label]")?.textContent).toBe("2 questions");
-    const send = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Send answers"))!;
-    expect(send().textContent).toBe("Send answers (0/2)");
-    const tile = (q: string, letter: string) => view!.container.querySelector(`[data-card-question="${q}"] [data-card-option="${letter}"]`)!;
-    await click(tile("q1", "A"));
-    await click(tile("q2", "A"));
-    await click(tile("q2", "C"));
-    expect(send().textContent).toBe("Send answers (2/2)");
-    expect(tile("q2", "A").getAttribute("role")).toBe("checkbox");
-    await click(send());
+    const submit = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Submit"))!;
+    const tile = (i: number) => view!.container.querySelector(`[data-question-option="${i}"]`)!;
+    await click(tile(0));
+    await click(view.container.querySelector('[data-question-tab="1"]'));
+    await click(tile(0));
+    await click(tile(2));
+    expect(submit().textContent).toBe("Submit ✓");
+    await click(submit());
     expect(posts[0]!.body).toEqual({ answersById: { q1: ["Merge, off by default (Recommended)"], q2: ["#88", "#93"] } });
   });
 

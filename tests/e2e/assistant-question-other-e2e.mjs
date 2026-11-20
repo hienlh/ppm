@@ -1,15 +1,15 @@
 // A chat's AskUserQuestion, shown outside the chat as the PPM Assistant's "Needs your answer" card,
-// answered in the user's own words ("Other") on every surface it reaches:
-//   1. desktop 1440: a single-choice question — a tile picked, then words typed in Other replace it;
-//   2. Telegram: a two-question card asked step by step — ✏️ Other then a message on question 1, a
+// is answered with the very form the chat shows (`chat/question-card.tsx`: options, "Other",
+// several choices, Submit and Skip), and in the user's own words on Telegram:
+//   1. desktop 1440: a single-choice question; an option picked, then words typed in Other replace it;
+//      the same question in the chat itself is photographed beside the card;
+//   2. Telegram: a two-question card asked step by step: ✏️ Other then a message on question 1, a
 //      tick then a reply to the card on the several-choice question 2, then Send;
-//   3. phone 390: a several-choice question and a question with no choices, both typed;
+//   3. phone 390: a several-choice question and a question with no choices, both typed, with the
+//      chat's own form photographed beside the card;
 // and each time the scripted provider is handed the answer in Claude's own shape (question text →
-// the words). The manager's set of decisions, which already had Other, is photographed for the
-// record. Photographs every step, desktop, phone and Telegram (drawn from the fake Bot API).
-//
-// PPM_Q_OTHER_MODE=before runs the same steps against a build without the fix: it only takes the
-// photographs and answers with tiles and buttons, asserting nothing about Other.
+// the words), as an answer from the chat would be. The manager's set of decisions is photographed
+// for the record. The "before" pictures in the same folder come from an earlier run on 006a79ce.
 //
 // Same disposable fixture as the manager loop (tests/e2e/fixtures/assistant-server.ts with
 // PPM_ASSISTANT_MANAGER_LOOP=1, a fake Telegram and a scripted provider): no real model, no real
@@ -26,8 +26,7 @@ import assert from "node:assert/strict";
 import { fixtureApi, phone, startChild, until, labelsOf } from "./assistant-telegram/harness.mjs";
 import { loopKit } from "./assistant-manager-loop/loop-kit.mjs";
 
-const BEFORE = process.env.PPM_Q_OTHER_MODE === "before";
-const P = BEFORE ? "before" : "after";
+const P = "after";
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-q-other-e2e-"));
 const shotsDir = resolve(process.env.PPM_Q_OTHER_SHOTS ?? join(sandbox, "shots"));
 const logs = join(sandbox, "logs");
@@ -172,8 +171,20 @@ try {
       return qs.length > before ? qs.find((c) => c.status === "open" && c.payload.questions?.[0]?.question === questions[0].question) : null;
     }, 30000);
   };
-  // Before the fix, a card holding a question with no choices went out with no buttons at all.
-  const tgCopyOf = (question) => tg.waitFor(OWNER, `Telegram copy of "${question}"`, (m) => m.text.includes(question) && (BEFORE || labelsOf(m).length > 0));
+  const tgCopyOf = (question) => tg.waitFor(OWNER, `Telegram copy of "${question}"`, (m) => m.text.includes(question) && labelsOf(m).length > 0);
+  /** The same question as the chat itself shows it, photographed in a page of its own. */
+  const chatShot = async (ctx, name) => {
+    const pg = await ctx.newPage();
+    await pg.goto(`${web}/project/ppm?openChat=claude%2F${chat}`);
+    // The chat's own panel only: the Assistant's floating window (it holds the same card) stays out of the picture.
+    await pg.locator("[data-window-layer]").first().waitFor({ state: "attached", timeout: 30000 }).catch(() => {});
+    await pg.addStyleTag({ content: "[data-window-layer]{display:none!important}" });
+    const form = pg.locator("[data-question-card]:visible").first();
+    await form.waitFor({ timeout: 30000 });
+    await pg.waitForTimeout(500);
+    await form.screenshot({ path: join(shotsDir, `${P}-${name}.png`) });
+    await pg.close();
+  };
 
   // ---- 1. Desktop: a single-choice question, answered in words ----
   const single = await ask("q-single", SINGLE, "Ask which approach");
@@ -181,69 +192,63 @@ try {
   await page.goto(`${web}/project/ppm/assistant`);
   const singleCard = k.body().locator(`[data-waiting-card="${single.id}"]`);
   await singleCard.waitFor({ timeout: 30000 });
-  await singleCard.locator('[data-card-option="C"]').click();
+  const singleForm = singleCard.locator("[data-question-card]");
+  assert.equal(await singleForm.count(), 1, "desktop: the card holds the chat's own question form");
+  await chatShot(desk, "17-desktop-chat-same-question");
+  await singleForm.locator('[data-question-option="2"]').click();
   await page.screenshot({ path: join(shotsDir, `${P}-01-desktop-1440-waiting-on-you.png`) });
   await cardShot(page, singleCard, "02-desktop-single-question-card");
   const singleTg = await tgCopyOf(SINGLE[0].question);
   await tgShot("03-telegram-single-question", [singleTg]);
-  if (BEFORE) {
-    await singleCard.getByRole("button", { name: "Send answer" }).click();
-  } else {
-    assert.equal(await singleCard.locator("[data-card-other-input]").count(), 1, "desktop: an Other field under the tiles");
-    assert.ok(labelsOf(singleTg).includes("✏️ Other (type it)"), `Telegram: an Other button (has ${labelsOf(singleTg).join(", ")})`);
-    await singleCard.locator("[data-card-other-input]").fill("Neither: patch it now, rewrite next sprint");
-    assert.equal(await singleCard.locator('[data-card-option="C"]').getAttribute("aria-checked"), "false", "typing clears the tile");
-    await cardShot(page, singleCard, "04-desktop-single-other-typed");
-    await singleCard.getByRole("button", { name: "Send answer" }).click();
+  assert.ok(labelsOf(singleTg).includes("✏️ Other (type it)"), `Telegram: an Other button (has ${labelsOf(singleTg).join(", ")})`);
+  await singleForm.locator("[data-question-other] input").fill("Neither: patch it now, rewrite next sprint");
+  assert.equal(await singleForm.locator('[data-question-option="2"]').getAttribute("aria-pressed"), "false", "typing clears the option");
+  await cardShot(page, singleCard, "04-desktop-single-other-typed");
+  await singleForm.locator("button", { hasText: "Submit ✓" }).click();
+  {
     const [rec] = await k.answered("q-single", 1);
     assert.equal(rec.approved, true);
     assert.deepEqual(rec.answer, { [SINGLE[0].question]: "Neither: patch it now, rewrite next sprint" }, "the provider got the words, as from the chat's form");
     const edited = await tg.waitFor(OWNER, "single card answered", (m) => m.message_id === singleTg.message_id && /Answered in PPM/.test(m.text));
     assert.deepEqual(labelsOf(edited).filter((l) => l.startsWith("✏️")), []);
-    ok("desktop: Other under the tiles; the typed words replaced the tile and reached the provider as Claude's answer; Telegram copy ended");
   }
+  ok("desktop: the card holds the chat's question form; the typed words replaced the option and reached the provider as Claude's answer; the Telegram copy ended");
   await k.idle(chat);
 
   // ---- 2. Telegram: two questions, step by step ----
   const two = await ask("q-two", TWO, "Ask about the release");
   const twoCard = k.body().locator(`[data-waiting-card="${two.id}"]`);
   await twoCard.waitFor({ timeout: 30000 });
+  assert.equal(await twoCard.locator("[data-question-card] [data-question-tab]").count(), 2, "desktop: one tab per question, as in the chat");
   await cardShot(page, twoCard, "05-desktop-two-questions-card");
   let step = await tgCopyOf(TWO[0].question);
   await tgShot("06-telegram-step-1", [step]);
-  if (BEFORE) {
-    await tg.pressLabel(OWNER, step, "staging");
-    step = await tg.waitFor(OWNER, "step 2", (m) => m.message_id === step.message_id && m.text.includes("Question 2/2"));
-    await tgShot("07-telegram-step-2", [step]);
-    await tg.pressLabel(OWNER, step, "email");
-    await tg.pressLabel(OWNER, await tg.message(OWNER, step.message_id), "Next »");
-    step = await tg.waitFor(OWNER, "summary", (m) => m.message_id === step.message_id && m.text.includes("Your answers"));
-    await tg.pressLabel(OWNER, step, "Send");
-  } else {
-    assert.equal(await twoCard.locator("[data-card-other-input]").count(), 2, "desktop: Other on both questions, the several-choice one too");
-    await tg.pressLabel(OWNER, step, "✏️ Other (type it)");
-    const prompt = await tg.waitFor(OWNER, "the type-your-answer line", (m) => m.text.startsWith("✏️ Type your answer to: Which environment first?"));
-    assert.deepEqual(labelsOf(prompt), ["Cancel"]);
-    await tg.send(OWNER, "staging-2, the new cluster");
-    step = await tg.waitFor(OWNER, "step 2", (m) => m.message_id === step.message_id && m.text.includes("Question 2/2"));
+  await tg.pressLabel(OWNER, step, "✏️ Other (type it)");
+  const prompt = await tg.waitFor(OWNER, "the type-your-answer line", (m) => m.text.startsWith("✏️ Type your answer to: Which environment first?"));
+  assert.deepEqual(labelsOf(prompt), ["Cancel"]);
+  await tg.send(OWNER, "staging-2, the new cluster");
+  step = await tg.waitFor(OWNER, "step 2", (m) => m.message_id === step.message_id && m.text.includes("Question 2/2"));
+  {
     const sent = await tg.sent(OWNER);
     await tgShot("07-telegram-other-pressed-and-typed", [...sent.filter((m) => m.message_id === prompt.message_id), { text: "staging-2, the new cluster", fromUser: true }, ...sent.filter((m) => m.text.startsWith("Got it"))]);
-    assert.ok(labelsOf(step).includes("✏️ Other (type it)"), "Other on the several-choice question too");
-    await tg.pressLabel(OWNER, step, "email");
-    await tgShot("08-telegram-step-2-ticked", [await tg.message(OWNER, step.message_id)]);
-    // A reply to the card: the words replace the tick.
-    await tg.send(OWNER, "Only the on-call person", { extra: { reply_to_message: { message_id: step.message_id, chat: { id: OWNER, type: "private" }, date: Math.floor(Date.now() / 1000) } } });
-    step = await tg.waitFor(OWNER, "summary", (m) => m.message_id === step.message_id && m.text.includes("Your answers"));
-    assert.ok(step.text.includes("→ staging-2, the new cluster") && step.text.includes("→ Only the on-call person"), step.text);
-    await tgShot("09-telegram-summary", [step]);
-    await tg.pressLabel(OWNER, step, "Send");
+  }
+  assert.ok(labelsOf(step).includes("✏️ Other (type it)"), "Other on the several-choice question too");
+  await tg.pressLabel(OWNER, step, "email");
+  await tgShot("08-telegram-step-2-ticked", [await tg.message(OWNER, step.message_id)]);
+  // A reply to the card: the words replace the tick.
+  await tg.send(OWNER, "Only the on-call person", { extra: { reply_to_message: { message_id: step.message_id, chat: { id: OWNER, type: "private" }, date: Math.floor(Date.now() / 1000) } } });
+  step = await tg.waitFor(OWNER, "summary", (m) => m.message_id === step.message_id && m.text.includes("Your answers"));
+  assert.ok(step.text.includes("→ staging-2, the new cluster") && step.text.includes("→ Only the on-call person"), step.text);
+  await tgShot("09-telegram-summary", [step]);
+  await tg.pressLabel(OWNER, step, "Send");
+  {
     const [rec] = await k.answered("q-two", 1);
     assert.deepEqual(rec.answer, { [TWO[0].question]: "staging-2, the new cluster", [TWO[1].question]: "Only the on-call person" });
     const done = await tg.waitFor(OWNER, "two-question card answered", (m) => m.message_id === step.message_id && /Answered here/.test(m.text));
     await tgShot("10-telegram-answered", [done]);
     await until("the PPM card is answered", async () => (await k.cards()).find((c) => c.id === two.id)?.status !== "open", 15000);
-    ok("Telegram: ✏️ Other then a message, a tick then a reply to the card (several-choice), Send: the provider got both typed answers; the PPM card closed");
   }
+  ok("Telegram: ✏️ Other then a message, a tick then a reply to the card (several-choice), Send: the provider got both typed answers; the PPM card closed");
   await k.idle(chat);
 
   // ---- 3. Phone 390: a several-choice question and one with no choices ----
@@ -253,33 +258,27 @@ try {
   const mob = await phoneCtx.newPage();
   mob.on("pageerror", (e) => pageErrors.push(`${e}\n${e.stack ?? ""}`));
   const mk = loopKit({ web, fx, tg, page: mob, shotsDir, owner: OWNER, record: () => {} });
+  await chatShot(phoneCtx, "18-phone-390-chat-same-question");
   await mob.goto(`${web}/project/ppm/assistant`);
   const phoneCard = mk.body().locator(`[data-waiting-card="${phoneQ.id}"]`);
   await phoneCard.waitFor({ timeout: 30000 });
+  const phoneForm = phoneCard.locator("[data-question-card]");
+  assert.equal(await phoneForm.count(), 1, "phone: the card holds the chat's own question form");
   await cardShot(mob, phoneCard, "11-phone-390-question-card");
   await mob.screenshot({ path: join(shotsDir, `${P}-12-phone-390-waiting-on-you.png`) });
   const phoneTg = await tgCopyOf(PHONE[0].question);
   await tgShot("13-telegram-phone-card", [phoneTg]);
-  if (BEFORE) {
-    // The old card locks every tile when one question has no choices ("Answer it in the chat"), and
-    // Telegram offered no button for it either: the card is declined through the API to end the run.
-    assert.equal(await phoneCard.locator('[data-card-option="A"]').isDisabled(), true);
-    await fx.post(`/api/assistant/cards/${phoneQ.id}/answer`, { decision: "deny" });
-  } else {
-    const fields = phoneCard.locator("[data-card-other-input]");
-    assert.equal(await fields.count(), 2);
-    const box = await phoneCard.locator("[data-card-other]").first().boundingBox();
-    assert.ok(box.height >= 44, `the Other row is a 44 px target on a phone (${box.height})`);
-    assert.equal(await fields.first().evaluate((el) => getComputedStyle(el).fontSize), "16px", "16 px text: no zoom on focus");
-    await phoneCard.locator('[data-card-question="q1"] [data-card-option="B"]').tap();
-    await fields.nth(0).fill("unit and the payroll smoke test");
-    await fields.nth(1).fill("Fixes the login loop after a password reset.");
-    await cardShot(mob, phoneCard, "14-phone-390-other-typed");
-    await phoneCard.getByRole("button", { name: "Send answers (2/2)" }).tap();
+  await phoneForm.locator('[data-question-option="1"]').tap();
+  await phoneForm.locator("[data-question-other] input").fill("unit and the payroll smoke test");
+  await phoneForm.locator('[data-question-tab="1"]').tap();
+  await phoneForm.locator("[data-question-other] input").fill("Fixes the login loop after a password reset.");
+  await cardShot(mob, phoneCard, "14-phone-390-other-typed");
+  await phoneForm.locator("button", { hasText: "Submit ✓" }).tap();
+  {
     const [rec] = await k.answered("q-phone", 1);
     assert.deepEqual(rec.answer, { [PHONE[0].question]: "unit and the payroll smoke test", [PHONE[1].question]: "Fixes the login loop after a password reset." });
-    ok("phone 390: Other on a several-choice question and the field alone on a no-choice question, 44 px and 16 px; the provider got both");
   }
+  ok("phone 390: the chat's form on the card, Other on a several-choice question and alone on a no-choice question; the provider got both");
   await k.idle(chat);
 
   // ---- 4. The manager's set of decisions (already had Other), for the record ----
@@ -293,10 +292,8 @@ try {
   const mset = mk.body().locator("[data-decision-set]");
   await mset.waitFor({ timeout: 30000 });
   await cardShot(mob, mset, "16-phone-390-decision-set");
-  if (!BEFORE) {
-    assert.equal(await set.locator("[data-decision-reply]").count(), 1, "the set keeps its Other");
-    ok("decision set: its Other field is still there, desktop and phone");
-  }
+  assert.equal(await set.locator("[data-decision-reply]").count(), 1, "the set keeps its Other");
+  ok("decision set: its Other field is still there, desktop and phone");
   await phoneCtx.close();
 
   const unexpected = pageErrors.filter((e) => !/read the 'serviceWorker' property/.test(e));
