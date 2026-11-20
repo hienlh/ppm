@@ -75,6 +75,8 @@ let script: ScriptOp[] = [];
 let turnCount = 0;
 
 class PathsMock extends MockProvider {
+  /** The PPM Assistant runs on it too, so its ui_open_file_browser call is under test. */
+  readonly supportsAssistantSessions = true;
   private history = new Map<string, ChatMessage[]>();
   constructor() {
     super();
@@ -99,7 +101,9 @@ class PathsMock extends MockProvider {
     for (const op of ops) {
       if ("text" in op) {
         text += op.text;
-        yield { type: "text", content: op.text };
+        const ev = { type: "text", content: op.text } as ChatEvent;
+        events.push(ev);
+        yield ev;
         continue;
       }
       const toolUseId = `tu-${crypto.randomUUID()}`;
@@ -115,7 +119,9 @@ class PathsMock extends MockProvider {
     // Numbered, so the e2e can tell when this turn's answer is on screen.
     const tail = `\n\nTurn ${++turnCount}: done.`;
     text += tail;
-    yield { type: "text", content: tail };
+    const end = { type: "text", content: tail } as ChatEvent;
+    events.push(end);
+    yield end;
     history.push({ id: crypto.randomUUID(), role: "assistant", content: text, events, timestamp: new Date().toISOString() } as ChatMessage);
     this.history.set(sessionId, history);
     yield { type: "done", sessionId };

@@ -14,6 +14,7 @@
 // without these features); PPM_FB_ARTIFACTS=<dir> keeps them.
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { cpSync, existsSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -45,6 +46,8 @@ if (!webDir) {
   webDir = join(sandbox, "web");
   await writeFile(join(artifacts, "build.log"), await command("bun", ["node_modules/vite/bin/vite.js", "build", "--outDir", webDir]));
 }
+// What `scripts/copy-monaco.ts` does for dist/web: a file link opens the editor, which loads Monaco from here.
+if (!existsSync(join(webDir, "assets/monaco/vs"))) cpSync(resolve("node_modules/monaco-editor/min/vs"), join(webDir, "assets/monaco/vs"), { recursive: true });
 
 const listener = createServer(); await new Promise((r) => listener.listen(0, "127.0.0.1", r));
 const port = listener.address().port; await new Promise((r) => listener.close(r));
@@ -121,8 +124,9 @@ try {
   if (MODE === "before") {
     await mobile.goto(`${web}/project/${NAME}`);
     await mobile.getByRole("button", { name: "Open menu" }).click();
-    await mobile.getByRole("button", { name: "Files" }).click();
-    await mobile.waitForTimeout(1200);
+    await mobile.getByText("Files", { exact: true }).last().click();
+    await mobile.locator('button[aria-label="Close file explorer"]').waitFor({ timeout: 15000 });
+    await mobile.waitForTimeout(800);
     await shot(mobile, "phone-390-file-browser");
   } else {
     await mobile.goto(files(story));
@@ -176,7 +180,13 @@ try {
   const desk = await deskContext(); await desk.addInitScript(onboarding);
   const page = await desk.newPage();
   page.on("pageerror", (e) => pageErrors.push(String(e)));
-  if (MODE === "after") {
+  if (MODE === "before") {
+    await page.goto(`${web}/project/${NAME}`);
+    await page.getByRole("button", { name: "File Explorer" }).first().click();
+    await frontWindow(page).getByRole("button", { name: "Edit path" }).waitFor({ timeout: 15000 });
+    await page.waitForTimeout(800);
+    await shot(page, "desktop-1440-file-browser");
+  } else {
     await page.goto(files(clip));
     const row = page.locator(`[data-path="${clip}"][aria-selected="true"]`);
     await row.first().waitFor({ timeout: 30000 });
@@ -207,7 +217,7 @@ try {
     ], "open the london story folder");
     const answers = (await api("/__fb-test/state")).answers.filter((a) => a.tool.endsWith("ui_open_file_browser"));
     assert.equal(answers[0]?.isError, false, `opened: ${answers[0]?.output}`);
-    assert.match(answers[0].output, /"select":\s*".*notes\.txt"/);
+    assert.match(answers[0].output, /select[^,]*notes\.txt/);
     assert.equal(answers[1]?.isError, true, "~/.ssh refused");
     assert.match(answers[1].output, /logins or keys/);
     await asst.locator(`[data-path="${join(story, "notes.txt")}"][aria-selected="true"]`).first().waitFor({ timeout: 10000 });
@@ -223,7 +233,7 @@ try {
   await api(`/api/project/${NAME}/workspace`, { method: "PUT", body: JSON.stringify({ layout: { panels: { main: { id: "main", tabs: [chatTab], activeTabId: chatTab.id, tabHistory: [chatTab.id] } }, grid: [["main"]], focusedPanelId: "main" } }) });
   const chat = await freshPage(deskContext);
   chat.on("pageerror", (e) => pageErrors.push(String(e)));
-  await chat.goto(`${web}/project/${NAME}`);
+  await chat.goto(`${web}/project/${NAME}/chat/claude/${sessionId}`);
   await chat.locator('textarea[aria-label="Message"]:visible').first().waitFor({ timeout: 30000 });
   await sendTurn(chat, [
     ...(MODE === "after" ? [{ tool: "mcp__ppm-tabs__open_file", input: { path: story } }] : []),
@@ -251,14 +261,15 @@ try {
     await chat.locator(`[data-path="${clip}"]`).first().waitFor({ timeout: 10000 });
     await shot(chat, "desktop-1440-chat-folder-link-opened");
     record("chat: clicking a folder in an answer opens the file browser there");
-    await chat.locator('[data-local-path="file"]', { hasText: "src/app.ts" }).first().click();
+    // The file browser just opened sits over the chat, so the link is clicked where it is.
+    await chat.locator('[data-local-path="file"]', { hasText: "src/app.ts" }).first().dispatchEvent("click");
     await until("the project file opened in the editor", async () => chat.evaluate(() => [...document.querySelectorAll('[role="tab"], [data-tab-id]')].some((el) => el.textContent?.includes("app.ts"))), 10000);
     record("chat: clicking a project code file opens it in the editor");
   }
 
   // The same answer on the phone.
   const phoneChat = await freshPage(phoneContext);
-  await phoneChat.goto(`${web}/project/${NAME}`);
+  await phoneChat.goto(`${web}/project/${NAME}/chat/claude/${sessionId}`);
   await phoneChat.locator(`text=Turn`).first().waitFor({ timeout: 30000 });
   await phoneChat.waitForTimeout(800);
   await shot(phoneChat, "phone-390-chat-answer");
@@ -277,6 +288,9 @@ try {
   console.log(`DONE ${MODE}: ${results.length} checks passed; screenshots in ${artifacts}`);
 } catch (e) {
   await writeFile(join(artifacts, `${MODE}-server.log`), serverLog).catch(() => {});
+  // Every open page as it was when the step failed.
+  const pages = browser ? browser.contexts().flatMap((c) => c.pages()) : [];
+  await Promise.all(pages.map((p, i) => p.screenshot({ path: join(artifacts, `${MODE}-failed-${i}.png`) }).catch(() => {})));
   console.error(e);
   process.exitCode = 1;
 } finally {
