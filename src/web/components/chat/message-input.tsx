@@ -1195,7 +1195,7 @@ export const MessageInput = memo(function MessageInput({
           disabled={disabled}
           rows={1}
           aria-label="Message"
-          className="block w-full resize-none bg-transparent px-3 pb-0 pt-2 text-sm leading-relaxed text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-20 [field-sizing:content] md:hidden"
+          className="block w-full resize-none bg-transparent px-3 pb-0 pt-2 text-sm leading-relaxed text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 min-h-12 max-h-32 [field-sizing:content] md:hidden"
         />
         <textarea
           ref={textareaRef}
