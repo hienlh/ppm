@@ -813,6 +813,21 @@ chatRoutes.get("/sessions/:id/usage", (c) => {
   }));
 });
 
+/**
+ * GET /chat/sessions/:id/context-usage?detail=summary|full — what fills the session's context
+ * window, asked of its live CLI (the chat footer's context meter). `usage` is null when the
+ * session has no live Claude process or its provider cannot say.
+ */
+chatRoutes.get("/sessions/:id/context-usage", async (c) => {
+  const sessionId = c.req.param("id");
+  const provider = providerRegistry.get(getSessionProvider(sessionId) ?? "claude") as
+    | { readContextUsage?: (id: string, detail: "summary" | "full") => Promise<unknown> }
+    | undefined;
+  const detail = c.req.query("detail") === "summary" ? "summary" : "full";
+  const usage = (await provider?.readContextUsage?.(sessionId, detail)) ?? null;
+  return c.json(ok({ usage }));
+});
+
 /** Recompute from stored counts — the rate is derived, so it is never persisted. */
 function cacheHitRateOf(r: { input_tokens: number; cache_read_tokens: number; cache_write_tokens: number }): number {
   const prefix = r.input_tokens + r.cache_read_tokens + r.cache_write_tokens;

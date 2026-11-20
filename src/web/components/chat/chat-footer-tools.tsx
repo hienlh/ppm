@@ -40,8 +40,9 @@ import { FooterPopover, FooterPopoverHeader } from "./footer-popover";
 import { FOOTER_CLUSTER, FOOTER_GHOST } from "./footer-chip";
 import { UsageWindow } from "./usage-meters";
 import { AntigravityUsagePanel } from "./antigravity-usage-panel";
+import { ContextMeterFace, ContextMeterPanel } from "./context-meter";
 
-type Panel = "history" | "more" | "config" | "team" | "usage" | null;
+type Panel = "history" | "more" | "config" | "team" | "usage" | "context" | null;
 
 interface TeamActivityState {
   hasTeams: boolean;
@@ -78,6 +79,10 @@ export interface ChatFooterToolsProps {
   /** Reconnecting or offline: on a narrow chat the ring gives its room to the connection chip. */
   connectionTrouble?: boolean;
   teamActivity?: TeamActivityState;
+  /** How full the context window was at the last turn's end (Claude); null before one has run. */
+  contextPct?: number | null;
+  /** Sends `/compact` from the context meter; absent while a turn runs. */
+  onCompact?: () => void;
   teamMessages?: TeamMessageItem[];
   onTeamOpen?: () => void;
 }
@@ -85,8 +90,12 @@ export interface ChatFooterToolsProps {
 export function ChatFooterTools({
   tabId, projectName, usageInfo, usageLoading, lastFetchedAt, onRefreshUsage, sessionId, providerId, pickedAccountLabel, pickedAccountId, onSelectAccount,
   onSelectSession, historyFilter, isConnected, onReload, connectionTrouble, teamActivity, teamMessages, onTeamOpen,
+  contextPct, onCompact,
 }: ChatFooterToolsProps) {
   const [panel, setPanel] = useState<Panel>(null);
+  /** A figure the context popover read since the last turn ended; the turn's own figure replaces it. */
+  const [freshContextPct, setFreshContextPct] = useState<number | null>(null);
+  useEffect(() => { setFreshContextPct(null); }, [contextPct, sessionId]);
   const [moreView, setMoreView] = useState<"main" | "accounts">("main");
   /** Back from Switch account: the main view slides in from the left rather than just appearing. */
   const [returned, setReturned] = useState(false);
@@ -164,6 +173,22 @@ export function ChatFooterTools({
   return (
     <>
       <div ref={clusterRef} className={FOOTER_CLUSTER} data-footer-cluster="">
+        {isClaude && sessionId && (freshContextPct ?? contextPct) != null && (
+          <>
+            <button
+              type="button"
+              onClick={() => toggle("context")}
+              aria-expanded={panel === "context"}
+              aria-haspopup="dialog"
+              title={`Context ${freshContextPct ?? contextPct}% used: see what fills it, or compact`}
+              aria-label={`Context ${freshContextPct ?? contextPct}% used`}
+              className={cn(FOOTER_GHOST, "px-2 @max-[420px]/chat:px-1 max-md:px-1", usageHidden)}
+            >
+              <ContextMeterFace pct={(freshContextPct ?? contextPct)!} />
+            </button>
+            <span aria-hidden="true" data-context-divider="" className={cn("mx-0.5 h-3.5 w-px shrink-0 bg-border", usageHidden)} />
+          </>
+        )}
         {/* No figure yet, no usage: a "--%" says nothing and takes a slot. The divider belongs to
             the usage part and lives in its branch, so whatever hides one hides both. */}
         {(hasAccounts || isAntigravity) && hasUsage && (
@@ -276,6 +301,16 @@ export function ChatFooterTools({
         )}
       </FooterPopover>
 
+      <FooterPopover open={panel === "context"} onClose={close} align="right" label="Context" anchorRef={clusterRef} className="w-[min(100%,360px)]">
+        <ContextMeterPanel
+          projectName={projectName}
+          sessionId={sessionId}
+          open={panel === "context"}
+          lastPct={contextPct ?? null}
+          onFresh={setFreshContextPct}
+          onCompact={onCompact ? () => { close(); onCompact(); } : undefined}
+        />
+      </FooterPopover>
       <FooterPopover open={panel === "config"} onClose={close} align="right" label="AI settings" anchorRef={clusterRef}>
         <FooterPopoverHeader><b className="text-[13px] font-semibold max-md:text-sm">AI settings</b></FooterPopoverHeader>
         <div className="max-h-[320px] min-h-0 overflow-y-auto px-3 py-2 max-md:max-h-none max-md:flex-1">

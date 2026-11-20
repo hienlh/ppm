@@ -1585,6 +1585,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
             teamActivity={teamActivity}
             teamMessages={teamMessages}
             onTeamOpen={markTeamRead}
+            contextPct={contextWindowPct}
+            onCompact={isConnected && phase === "idle" ? () => sendMessage("/compact", { permissionMode }) : undefined}
           />
         </div>
 

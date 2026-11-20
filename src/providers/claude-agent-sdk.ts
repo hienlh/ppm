@@ -29,6 +29,7 @@ import { CONTINUE_NUDGE } from "../shared/user-prompt-kind.ts";
 import { APPROVAL_WAKE, ApprovalQueue } from "./claude-approval-queue.ts";
 import { EFFORT_ENV_VAR, effortStatusFromCli, estimateEffortStatus, userSettingsFile, type EffortSettingsQuery } from "./claude-effort-status.ts";
 import type { EffortStatus } from "../shared/effort-status.ts";
+import { toContextUsageView, type ContextUsageAnswer, type ContextUsageView } from "../shared/context-usage.ts";
 import { withTimeout } from "../services/mcp-oauth/mcp-control-query.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
@@ -88,6 +89,8 @@ const mcpControlLog = createLogger("mcp-control");
 const claudeProjectsDir = (): string => resolve(claudeProjectsRoot());
 /** A running CLI answers `get_settings` in a few ms; this only bounds one that never does. */
 const EFFORT_READ_TIMEOUT_MS = 5_000;
+/** `detail: "full"` asks the token-count API for every category, which can take a few seconds. */
+const CONTEXT_USAGE_TIMEOUT_MS = 20_000;
 
 /**
  * Resolve the Claude CLI the SDK should spawn.
@@ -2992,6 +2995,23 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       });
     } catch (e) {
       log.debug(`session=${sessionId} effort status unavailable: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * What fills this session's context window (Claude's `/context`), asked of its live CLI. Null
+   * when the session has no live subprocess or the CLI does not answer in time.
+   */
+  async readContextUsage(sessionId: string, detail: "summary" | "full" = "full"): Promise<ContextUsageView | null> {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss) return null;
+    try {
+      const q = ss.query as unknown as { getContextUsage(opts?: { detail?: "summary" | "full" }): Promise<ContextUsageAnswer> };
+      const answer = await withTimeout(q.getContextUsage({ detail }), CONTEXT_USAGE_TIMEOUT_MS, "Claude did not report its context usage");
+      return toContextUsageView(answer);
+    } catch (e) {
+      log.debug(`session=${sessionId} context usage unavailable: ${(e as Error).message}`);
       return null;
     }
   }
