@@ -2248,11 +2248,14 @@ and runs in bypass mode:
   status`, `ls`, `find`, `grep -r` with no path ask; with `git -C <project>` or a path they do not.
 - **No Windows low-memory events.** `system_resources` and `ppm_memory_report` do not read the
   Windows event log; they say so instead.
-- **"Act on its own" reaches Claude at the next CLI start.** Edit/Write are offered or not when the
-  CLI starts; a session started before the switch was turned on keeps asking for edits, one
-  started while it was on asks again once it is off. Full mode is the same for edits and for its
-  instructions section; its own-card answers and the hard limits are read on every call, so a
-  switch to Ask stops them at the next action.
+- **A mode change restarts an open Assistant chat when it is idle.** Edit/Write and the mode's
+  instructions section are fixed when the CLI starts, so a save that changes acting on its own or
+  Full (`startupPermissionsChanged`) marks every open Assistant session for the same restart an
+  extension binding change uses (`chat.ts`, reason `assistant_permissions`): at once when idle,
+  otherwise at the end of the running turn, never across a card or background work. Until then a
+  running turn keeps the tools it started with. The next message cold-reads the context once.
+  Everything else about the mode — PPM's own cards, the provider-tool rules, the hard limits —
+  is read on every call and changes at the next action.
 - **Full mode's outbound list reads command text.** A push or upload spelled through a variable,
   an alias or a script file is not recognised (`assistant-outbound-action.ts`), and a user MCP
   tool is judged by its name's first word.

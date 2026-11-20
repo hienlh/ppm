@@ -18,7 +18,7 @@ export type PermissionModeState = AssistantPermissionMode | "unset";
 const MODE_CHANGED_EVENT = "ppm:assistant-permission-mode";
 
 /** What switching to Full lets the Assistant do, shown before it is switched on (Settings and the window chip). */
-export const FULL_MODE_CONFIRM = "In turns you start, the Assistant will message and open chats, change schedules, projects and git, edit files and run commands without asking. It reads other chats, logs and web pages, and text in them can try to steer it. Pushing, publishing, sending to other people, database writes (unless you tick a connection), the vault and your private folders still ask; turns PPM starts on its own (watch reports, the digest, restart news) never act. Edits become available from the Assistant's next session start.";
+export const FULL_MODE_CONFIRM = "In turns you start, the Assistant will message and open chats, change schedules, projects and git, edit files and run commands without asking. It reads other chats, logs and web pages, and text in them can try to steer it. Pushing, publishing, sending to other people, database writes (unless you tick a connection), the vault and your private folders still ask; turns PPM starts on its own (watch reports, the digest, restart news) never act. An Assistant chat already open takes this on at once for everything but file edits, and restarts for those the moment it is idle.";
 
 /** Turns a mode read from the server into the hook's state. */
 export function modeState(mode: AssistantPermissionMode | null | undefined): PermissionModeState {

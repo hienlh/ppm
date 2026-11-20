@@ -61,6 +61,16 @@ export function assistantPolicySwitches(): { autoReadonlyCommands: boolean; actO
   }
 }
 
+/**
+ * Whether a save changed what an Assistant subprocess fixes when it starts: Edit/Write being
+ * offered (acting on its own, which Full includes) and the mode section of its instructions.
+ * Everything else about the mode is read per call and needs no restart.
+ */
+export function startupPermissionsChanged(before: AssistantSettings, after: AssistantSettings): boolean {
+  const fixed = (s: AssistantSettings) => `${s.act_on_own || s.permission_mode === "full"}/${s.permission_mode === "full"}`;
+  return fixed(before) !== fixed(after);
+}
+
 /** Connection ids the user lets the Assistant write to without a card in Full mode. */
 export function assistantDbWriteConnections(): ReadonlySet<number> {
   try {
@@ -82,10 +92,10 @@ export function writeMainSessionSetting(value: AssistantMainSession | null): voi
 
 /** The "PPM has new features" answer for Full mode; every other setting keeps its stored value. */
 export function writeAssistantPermissionMode(mode: AssistantPermissionMode): void {
-  configService.set("assistant", { ...getAssistantSettings(), permission_mode: mode });
-  for (const listener of [...savedListeners]) {
-    try { listener(); } catch { /* a listener's own problem; the write stands */ }
-  }
+  const before = getAssistantSettings();
+  const next = { ...before, permission_mode: mode };
+  configService.set("assistant", next);
+  notifySaved(before, next);
 }
 
 /** Whether two stored URLs (both validated as http/https on the way in) share scheme, host and port. */
@@ -167,19 +177,26 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
   if (permissionMode) next.permission_mode = permissionMode;
   else delete next.permission_mode;
   configService.set("assistant", next);
-  for (const listener of [...savedListeners]) {
-    try { listener(); } catch { /* a listener's own problem; the save stands */ }
-  }
+  notifySaved(saved, next);
   return { ok: true, settings: maskAssistantSettings(next) };
 }
 
-const savedListeners = new Set<() => void>();
+type SavedListener = (before: AssistantSettings, after: AssistantSettings) => void;
+const savedListeners = new Set<SavedListener>();
+
+function notifySaved(before: AssistantSettings, after: AssistantSettings): void {
+  for (const listener of [...savedListeners]) {
+    try { listener(before, after); } catch { /* a listener's own problem; the save stands */ }
+  }
+}
 
 /**
- * Hears every settings save from the pane, so a schedule that reads them (the morning digest's
- * timer) is recomputed at once instead of at its next fire. The returned function unsubscribes.
+ * Hears every settings save, from the pane or the new-features answer, with the settings before
+ * and after it: a schedule that reads them (the morning digest's timer) is recomputed at once, and
+ * an open Assistant chat restarts when the switches it was started with changed. The returned
+ * function unsubscribes.
  */
-export function onAssistantSettingsSaved(listener: () => void): () => void {
+export function onAssistantSettingsSaved(listener: SavedListener): () => void {
   savedListeners.add(listener);
   return () => { savedListeners.delete(listener); };
 }

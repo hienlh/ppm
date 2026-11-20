@@ -34,7 +34,7 @@ export const READONLY_COMMANDS_HINT = "Commands PPM can prove only read — git 
 export const ACT_ON_OWN_LABEL = "Let the Assistant act on its own";
 export const ACT_ON_OWN_HINT = "Edits files and runs commands without asking, in conversations you start. PPM's own approvals, pushing or posting, and your private folders still ask.";
 export const ACT_ON_OWN_IN_FULL_HINT = "Included in Full mode.";
-export const ACT_ON_OWN_CONFIRM = "The Assistant will edit files in your projects and run any command without asking, in conversations you start (not in watch or scheduled turns). It reads other chats, logs and web results, and text in them can try to steer it. PPM's own approvals (database changes, git, messages to chats), pushing or posting, and your private folders still ask. Edits become available from the Assistant's next session start.";
+export const ACT_ON_OWN_CONFIRM = "The Assistant will edit files in your projects and run any command without asking, in conversations you start (not in watch or scheduled turns). It reads other chats, logs and web results, and text in them can try to steer it. PPM's own approvals (database changes, git, messages to chats), pushing or posting, and your private folders still ask. An Assistant chat already open takes this on at once for everything but file edits, and restarts for those the moment it is idle.";
 
 /**
  * Buttons follow the chip-row standard (docs/design-guidelines.md rule 3): 28px with text on a

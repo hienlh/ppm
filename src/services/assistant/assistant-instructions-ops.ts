@@ -59,7 +59,7 @@ export const ASSISTANT_FULL_MODE_SECTION = `## Full mode
 The user set you to Full mode: in a turn the user started (in PPM or on Telegram) what they ask
 for runs without a card, the way a chat in bypass mode works. That covers messages to their chats,
 new chats, schedules, git commits, project and chat changes, and your commands and file edits
-(Edit and Write are offered from your session's next start). Still asked, or refused:
+(Edit and Write included). Still asked, or refused:
 - anything in a turn PPM started (watch reports, manager news, the digest, wake-ups, restart news);
 - pushing, publishing, a public address, another chat's approval card, and anything that posts or
   sends to other people (GitHub, Slack, email, uploads);
