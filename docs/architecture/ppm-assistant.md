@@ -40,7 +40,8 @@ the Assistant's. Losing the answer is the dangerous direction — an Assistant s
 ordinary one falls back to the provider default, usually bypass — so any one source is enough.
 Assistant sessions never adopt a warm spare and get no tab tools.
 
-**Permissions** ignore the composer's mode. Claude is forced to `default`, because the policy
+**Permissions** ignore the composer's mode, so an Assistant chat's composer shows no mode chip
+(the window's Full/Ask chip is the control). Claude is forced to `default`, because the policy
 lives in the PreToolUse hook and bypass mode installs no hook; `assistantToolDecision`
 (`src/services/assistant/assistant-tool-policy.ts`) decides there, with the same check as a
 `canUseTool` backstop. It allows only Read, Glob and Grep that resolve inside a registered

@@ -155,8 +155,8 @@ interface MessageInputProps {
   /** Permission mode change handler */
   onModeChange?: (mode: string) => void;
   /**
-   * The chat's permission is fixed by the server (the PPM Assistant always asks first):
-   * the chip shows that mode, disabled, and Shift+Tab does not cycle it.
+   * The chat's permission is decided elsewhere (the PPM Assistant's Full/Ask, switched from its
+   * own window): no mode chip is shown, and Shift+Tab does not cycle a mode.
    */
   permissionLocked?: boolean;
   /** `@` opens the project-file picker. Off for a chat with no project files to mention. */
@@ -263,7 +263,7 @@ export const MessageInput = memo(function MessageInput({
   // A locked chat runs in "ask before edits" whatever its metadata says, so that is shown.
   // An unknown mode shows no chip rather than a guess: falling back to "Bypass permissions"
   // put that label on chats the server runs in "Ask before edits".
-  const chipMode = permissionLocked ? "default" : boundAwareMode;
+  const chipMode = permissionLocked ? null : boundAwareMode;
   const [pendingSend, setPendingSend] = useState(false);
   const [priority, setPriority] = useState<MessagePriority>('next');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1144,13 +1144,12 @@ export const MessageInput = memo(function MessageInput({
             <div className="relative">
               <ModeChip
                 mode={chipMode}
-                locked={permissionLocked}
                 onClick={() => setModeSelectorOpen((v) => !v)}
               />
               <ModeSelector
                 value={chipMode}
                 onChange={(m) => onModeChange?.(m)}
-                open={modeSelectorOpen && !permissionLocked}
+                open={modeSelectorOpen}
                 onOpenChange={setModeSelectorOpen}
                 allowedModeIds={allowedModeIds}
               />
@@ -1218,9 +1217,6 @@ export const MessageInput = memo(function MessageInput({
   );
 });
 
-/** Why a locked chip cannot be changed — its tooltip and its accessible description. */
-const LOCKED_MODE_REASON = "PPM Assistant always asks before it changes anything, so its permission mode cannot be changed.";
-
 /** The composer bar's square icon buttons: Attach and the mic. */
 const SQUARE_BUTTON =
   "flex size-[34px] items-center justify-center rounded-[10px] text-text-3 transition-[background-color,color,transform] duration-150 motion-safe:active:scale-[0.97] can-hover:hover:bg-surface-hover can-hover:hover:text-text disabled:opacity-50 max-md:size-8";
@@ -1230,19 +1226,16 @@ const BAR_CHIP =
   "inline-flex h-[30px] items-center gap-1.5 whitespace-nowrap rounded-full px-[9px] text-[11.5px] text-text-2 transition-[background-color,color,transform] duration-150 motion-safe:active:scale-[0.97] can-hover:hover:bg-surface-hover can-hover:hover:text-text @max-[420px]/chat:gap-1 @max-[420px]/chat:px-1.5 max-md:h-7 max-md:gap-1 max-md:px-1.5";
 
 /** The permission mode in one word ("Bypass"), its icon alone on a narrow chat. */
-function ModeChip({ mode, locked = false, onClick }: { mode: string; locked?: boolean; onClick: () => void }) {
+function ModeChip({ mode, onClick }: { mode: string; onClick: () => void }) {
   const Icon = getModeIcon(mode);
   const label = getModeLabel(mode);
   return (
     <button
       type="button"
-      // `aria-disabled` rather than `disabled`: a disabled button shows no tooltip and is
-      // skipped by screen readers, which are exactly where the reason has to be found.
-      aria-disabled={locked || undefined}
-      onClick={(e) => { e.stopPropagation(); if (!locked) onClick(); }}
-      className={locked ? `${BAR_CHIP} cursor-not-allowed opacity-70` : BAR_CHIP}
-      aria-label={locked ? `Permission mode: ${label} (fixed). ${LOCKED_MODE_REASON}` : `Permission mode: ${label}`}
-      title={locked ? `${label} — ${LOCKED_MODE_REASON}` : `Permission mode: ${label}`}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className={BAR_CHIP}
+      aria-label={`Permission mode: ${label}`}
+      title={`Permission mode: ${label}`}
     >
       <Icon className="size-4" />
       <span className="@max-[420px]/chat:hidden max-md:hidden">{getModeShortLabel(mode)}</span>
