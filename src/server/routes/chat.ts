@@ -828,6 +828,37 @@ chatRoutes.get("/sessions/:id/context-usage", async (c) => {
   return c.json(ok({ usage }));
 });
 
+/** A `/btw` question is a line or two; this keeps a pasted file from becoming one. */
+const MAX_SIDE_QUESTION_CHARS = 8_000;
+
+/**
+ * POST /chat/sessions/:id/side-question { question } — Claude Code's `/btw`: answered from the
+ * session's context by its live CLI, with no tools, even mid-turn, and never added to the chat.
+ * 409 when no Claude process runs for the session (send a message first), 400 for a provider
+ * that has no side questions.
+ */
+chatRoutes.post("/sessions/:id/side-question", async (c) => {
+  const sessionId = c.req.param("id");
+  const body = await c.req.json<{ question?: unknown }>().catch(() => ({}) as { question?: unknown });
+  const question = typeof body.question === "string" ? body.question.trim() : "";
+  if (!question || question.length > MAX_SIDE_QUESTION_CHARS) {
+    return c.json(err(`question must be 1–${MAX_SIDE_QUESTION_CHARS} characters`), 400);
+  }
+  const provider = providerRegistry.get(getSessionProvider(sessionId) ?? "claude") as
+    | { askSideQuestion?: (id: string, q: string, signal?: AbortSignal) => Promise<{ live: boolean; response?: string | null }> }
+    | undefined;
+  if (!provider?.askSideQuestion) return c.json(err("Side questions (/btw) need a Claude chat"), 400);
+  // One model call can outlast Bun.serve's 10 s idle timeout.
+  (c.env as { timeout?: (request: Request, seconds: number) => void } | undefined)?.timeout?.(c.req.raw, 150);
+  try {
+    const answer = await provider.askSideQuestion(sessionId, question, c.req.raw.signal);
+    if (!answer.live) return c.json(err("This chat's Claude process is not running. Send a message first, then ask with /btw."), 409);
+    return c.json(ok({ response: answer.response ?? null }));
+  } catch (e) {
+    return c.json(err((e as Error).message || "Claude did not answer"), 502);
+  }
+});
+
 /** Recompute from stored counts — the rate is derived, so it is never persisted. */
 function cacheHitRateOf(r: { input_tokens: number; cache_read_tokens: number; cache_write_tokens: number }): number {
   const prefix = r.input_tokens + r.cache_read_tokens + r.cache_write_tokens;

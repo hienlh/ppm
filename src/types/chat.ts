@@ -546,6 +546,8 @@ export type ChatEvent =
     }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown; questions?: import("../shared/approval-questions").NormalizedQuestion[]; /** Claude tool cards: what "Allow for this chat" would allow. */ rule?: { label: string } }
   | { type: "error"; message: string }
+  /** Claude's guess at the person's next prompt, after a turn; the composer offers it. */
+  | { type: "prompt_suggestion"; suggestion: string }
   | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; costUsd?: number; lastMessageUuid?: string; usage?: import("../shared/turn-usage").TurnUsage }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "account_retry"; reason: string; accountId?: string; accountLabel?: string }

@@ -726,6 +726,36 @@ describe("ClaudeAgentSdkProvider", () => {
 
     });
 
+    describe("side questions and prompt suggestions", () => {
+      it("asks for prompt suggestions and passes the one that follows a turn's result", async () => {
+        mockQueryFn.mockClear();
+        mockQueryFn.mockReturnValue(createMockQueryIterator([
+          { type: "result" },
+          { type: "prompt_suggestion", suggestion: "  run the tests  " } as any,
+        ]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        const events: any[] = [];
+        for await (const ev of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) events.push(ev);
+        expect(mockQueryFn.mock.calls[0]![0].options.promptSuggestions).toBe(true);
+        expect(events.filter((e) => e.type === "prompt_suggestion")).toEqual([{ type: "prompt_suggestion", suggestion: "run the tests" }]);
+        expect(events.findIndex((e) => e.type === "done")).toBeLessThan(events.findIndex((e) => e.type === "prompt_suggestion"));
+      });
+
+      it("asks a side question of the session's live CLI, and says when there is none", async () => {
+        const asked: unknown[] = [];
+        const streaming = (provider as any).streamingSessions as Map<string, unknown>;
+        streaming.set("side-1", { query: { askSideQuestion: async (q: string, o: unknown) => { asked.push([q, o]); return { response: "It is in src/a.ts." }; } } });
+        try {
+          expect(await provider.askSideQuestion("side-1", "where is a?")).toEqual({ live: true, response: "It is in src/a.ts." });
+          expect((asked[0] as [string, { signal?: AbortSignal }])[0]).toBe("where is a?");
+          expect((asked[0] as [string, { signal?: AbortSignal }])[1].signal).toBeInstanceOf(AbortSignal);
+          expect(await provider.askSideQuestion("no-such-session", "x")).toEqual({ live: false });
+        } finally {
+          streaming.delete("side-1");
+        }
+      });
+    });
+
     describe("design session", () => {
       const designOpts = { designSession: true, designInstructions: "# Design mode", permissionMode: "acceptEdits" };
 

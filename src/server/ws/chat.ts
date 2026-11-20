@@ -1878,6 +1878,11 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         if (entry.phase === "idle") void continueFromProvider(sessionId, String(ev.content ?? ""));
         continue;
       }
+      // Claude's guess at the next prompt arrives after the turn's `done`: shown, never a turn.
+      if (evType === "prompt_suggestion") {
+        broadcast(sessionId, event);
+        continue;
+      }
 
       // System events → transition connecting → thinking, forward compact events
       if (evType === "system") {

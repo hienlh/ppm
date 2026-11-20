@@ -8,6 +8,8 @@ export interface BuiltinSlashCommand {
   aliases?: string[];
   /** "ppm" = server intercepts, "client" = web UI intercepts, "sdk" = passed through */
   handler: SlashHandler;
+  /** Works only in a Claude chat, though the web UI is what intercepts it. */
+  claudeOnly?: boolean;
 }
 
 /** Static registry of built-in slash commands */
@@ -18,6 +20,8 @@ const BUILTIN_COMMANDS: BuiltinSlashCommand[] = [
   // Client-executed: the SDK treats /clear as a no-op because session lifecycle
   // belongs to the host UI, so the web client opens a fresh chat tab instead.
   { name: "clear", summary: "Start a new chat tab with empty context", category: "session", argumentHint: "[title]", handler: "client" },
+  // Client-executed, Claude only: the SDK's side question, answered above the composer.
+  { name: "btw", summary: "Ask a quick side question; not added to the chat", category: "session", argumentHint: "<question>", handler: "client", claudeOnly: true },
   // SDK-passthrough commands (picker hints, SDK handles execution)
   { name: "help", summary: "Show available commands and skills", category: "session", handler: "sdk" },
   { name: "status", summary: "Show session status and context usage", category: "session", handler: "sdk" },
@@ -52,7 +56,8 @@ export function getBuiltinSlashItems(): SlashItem[] {
  * belong in every picker.
  */
 export function getHostBuiltinSlashItems(): SlashItem[] {
-  return getBuiltinSlashItems().filter((item) => item.handler !== "sdk");
+  const claudeOnly = new Set(BUILTIN_COMMANDS.filter((c) => c.claudeOnly).map((c) => c.name));
+  return getBuiltinSlashItems().filter((item) => item.handler !== "sdk" && !claudeOnly.has(item.name));
 }
 
 /** Look up a builtin command by name (or alias) */

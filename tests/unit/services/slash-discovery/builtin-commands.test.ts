@@ -73,9 +73,9 @@ describe("getBuiltinSlashItems", () => {
     }
   });
 
-  it("returns expected count of items (10 built-in commands)", () => {
+  it("returns expected count of items (11 built-in commands)", () => {
     const items = getBuiltinSlashItems();
-    expect(items.length).toBe(10);
+    expect(items.length).toBe(11);
   });
 
   it("exposes the handler so the client can intercept its own commands", () => {

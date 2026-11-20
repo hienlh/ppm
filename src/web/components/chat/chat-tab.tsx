@@ -56,6 +56,7 @@ import { ChatFooterTools } from "./chat-footer-tools";
 import { buildMessageWithAttachments } from "./build-message-with-attachments";
 import { NewChatProviderGate, useNewChatPreparation } from "./new-chat-provider-gate";
 import { UserBubble } from "./message-user-bubble";
+import { SideQuestionPanel, sideQuestionOf, useSideQuestion } from "./side-question-panel";
 import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
 import type { StoredVoiceDraft } from "../../../shared/voice-draft";
 import { currentTabMetadata, patchTabMetadata } from "@/lib/patch-tab-metadata";
@@ -549,6 +550,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     promptCache,
     mcpNeedsAuth,
     turnStop,
+    promptSuggestion,
     sessionPermission,
     boundPermissionMode,
     statusMessage,
@@ -1199,6 +1201,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
   const slashItemsRef = useRef(slashItems);
   slashItemsRef.current = slashItems;
 
+  const sideQuestion = useSideQuestion(projectName, sessionId);
+
   /**
    * Stable wrapper for MessageInput onSend — drops the prefill and delegates.
    *
@@ -1213,6 +1217,19 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
       const selectedReply = replyToRef.current;
       const selectedRefs = turnRefsRef.current.length ? [...turnRefsRef.current] : null;
       const selectedTasks = taskChipsRef.current.length ? [...taskChipsRef.current] : null;
+      // `/btw`: a side question to the live Claude process, never a message of the chat.
+      const side = sideQuestionOf(content);
+      if (side !== null) {
+        if (!side) { toast.error("Ask something after /btw"); return false; }
+        if (!sessionId || providerId !== "claude") { toast.error("/btw needs a Claude chat that has already started"); return false; }
+        if (selectedReply || selectedRefs || selectedTasks || attachments.length > 0) {
+          toast.error("A side question takes only text: remove the reply, chips and attachments first");
+          return false;
+        }
+        clearDraft();
+        void sideQuestion.ask(side);
+        return;
+      }
       // Client-handled built-ins act on the UI, so they must not reach the SDK.
       const slash = content.trim().match(/^\/(\S+)(?:\s+([\s\S]+))?$/);
       if (slash) {
@@ -1266,7 +1283,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
       }
       void handleSend(content, attachments, priority, selectedReply, selectedRefs, selectedTaskIds);
     },
-    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, handleNewSession, replyOwner, turnRefsRef, replaceTurnChips, tabId, rememberSentTaskChips],
+    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, handleNewSession, replyOwner, turnRefsRef, replaceTurnChips, tabId, rememberSentTaskChips, providerId, sideQuestion.ask],
   );
 
   // Past user messages for the composer's ArrowUp/Down recall. Read through a ref
@@ -1636,6 +1653,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           </div>
         )}
 
+        {sideQuestion.state && (
+          <SideQuestionPanel state={sideQuestion.state} projectName={projectName} onClose={sideQuestion.close} />
+        )}
+
         {composerOverride}
         {/* Input is available immediately; network preparation never gates typing. `contents`
             keeps the box out of the layout unless a host's override hides it. */}
@@ -1701,6 +1722,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
             promptCache={promptCache}
             offline={connectionStage !== "hidden"}
             idlePlaceholder={phase === "idle" && turnStop && isSessionMissingStop(turnStop) ? "Message to start fresh…" : undefined}
+            suggestion={providerId === "claude" ? promptSuggestion : null}
           />
         </div>
       </div>

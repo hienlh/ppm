@@ -700,6 +700,24 @@ type ChatWsClientMessage =
 
 Images are passed to provider's message context and included in tool input/output.
 
+### Side questions (`/btw`) and suggested prompts
+
+Claude chats only, both from the Claude CLI itself.
+
+- **`/btw <question>`** is intercepted by `chat-tab.tsx` (`sideQuestionOf` in
+  `side-question-panel.tsx`) and never sent as a message: it goes to
+  `POST /chat/sessions/:id/side-question`, which calls the SDK's `askSideQuestion` (in `sdk.mjs`,
+  not in `sdk.d.ts`) on the session's live CLI. Claude answers from the chat's context with no
+  tools, even mid-turn, and neither question nor answer joins the history; the answer shows above
+  the composer until closed. With no live CLI for the session (after a restart, before the first
+  message) the route answers 409 and the panel says to send a message first.
+- **Suggested prompt**: the provider passes `promptSuggestions: true`, and the CLI sends a
+  `prompt_suggestion` after a turn's `result` (never on the first turn, in plan mode, or near the
+  plan's usage limit; `promptSuggestionEnabled: false` in a settings file turns it off). The
+  provider yields it after `done`, `ws/chat.ts` broadcasts it without touching the turn, and
+  `useChat` keeps it until a turn starts or a message is sent. The empty, idle composer shows it
+  as its placeholder; Tab takes it, and a phone gets a chip to tap instead.
+
 ## Voice messages
 
 The chat mic records a voice message instead of dictating, once the install has said yes to the `voice-messages-2026-11` feature intro (config `voice_message.enabled`; Settings → Voice Input has the same switch). Off, the mic dictates exactly as before.

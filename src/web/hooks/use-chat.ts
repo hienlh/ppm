@@ -155,6 +155,8 @@ interface UseChatReturn {
    * the transcript, so every history reload would otherwise wipe it.
    */
   turnStop: TurnStop | null;
+  /** Claude's guess at the next prompt, until a turn starts or a message is sent. */
+  promptSuggestion: string | null;
   /**
    * The mode an extension-bound chat really runs in ("default" or "acceptEdits" — the server
    * clamps out bypass and plan), from the server's own `session_state`. Null for every other
@@ -291,6 +293,8 @@ export function useChat(
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
   const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
+  /** Claude's guess at the next prompt, offered by the composer until a turn starts. */
+  const [promptSuggestion, setPromptSuggestion] = useState<string | null>(null);
   /** The permission mode the server holds for the chat, from its connect greeting. */
   const [sessionPermission, setSessionPermission] = useState<SessionPermissionState | null>(null);
   // A ref, not state: nothing draws it, and every `turn_started` would redraw the whole chat tab.
@@ -1226,6 +1230,12 @@ export function useChat(
       return;
     }
 
+    if ((data as any).type === "prompt_suggestion") {
+      const suggestion = (data as any).suggestion;
+      if (typeof suggestion === "string" && phaseRef.current === "idle") setPromptSuggestion(suggestion);
+      return;
+    }
+
     if ((data as any).type === "effort_status") {
       setEffortStatus(((data as any).status as EffortStatus | undefined) ?? null);
       return;
@@ -1258,6 +1268,7 @@ export function useChat(
       if (p !== "idle") historyActivityRef.current++;
       // A new turn is running, so the last one's stop no longer describes the session.
       if (p !== "idle") setTurnStop(null);
+      if (p !== "idle") setPromptSuggestion(null);
       setPhase(p);
       phaseRef.current = p;
       setConnectingElapsed(p === "connecting" ? ((data as any).elapsed ?? 0) : 0);
@@ -1537,6 +1548,7 @@ export function useChat(
     // Another session's subprocess saw another MCP state; its session_state brings its own.
     setMcpNeedsAuth([]);
     setTurnStop(null);
+    setPromptSuggestion(null);
     currentTurnIdRef.current = null;
     setEffortStatus(undefined);
     // Clear ephemeral pre-compact expansions on session change
@@ -1698,6 +1710,7 @@ export function useChat(
       historyActivityRef.current++;
       // Whatever ended the last turn, this message moves the session past it.
       setTurnStop(null);
+      setPromptSuggestion(null);
 
       const isFollowUp = phaseRef.current !== "idle";
       if (sessionIdRef.current) attemptRef.current?.start(sessionIdRef.current, !isFollowUp, isConnected && connectedSessionId === sessionIdRef.current);
@@ -2071,6 +2084,7 @@ export function useChat(
     promptCache,
     mcpNeedsAuth,
     turnStop,
+    promptSuggestion,
     sessionPermission,
     boundPermissionMode,
     statusMessage,

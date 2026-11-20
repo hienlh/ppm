@@ -16,7 +16,7 @@ describe("getHostBuiltinSlashItems", () => {
 
   it("drops the ones that only the Claude SDK executes", () => {
     const names = getHostBuiltinSlashItems().map((i) => i.name);
-    for (const sdkOnly of ["help", "status", "cost", "compact", "model", "config", "memory"]) {
+    for (const sdkOnly of ["help", "status", "cost", "compact", "model", "config", "memory", "btw"]) {
       expect(names).not.toContain(sdkOnly);
     }
   });

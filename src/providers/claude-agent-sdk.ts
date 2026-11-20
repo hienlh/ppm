@@ -92,6 +92,11 @@ const claudeProjectsDir = (): string => resolve(claudeProjectsRoot());
 const EFFORT_READ_TIMEOUT_MS = 5_000;
 /** `detail: "full"` asks the token-count API for every category, which can take a few seconds. */
 const CONTEXT_USAGE_TIMEOUT_MS = 20_000;
+/** A side question is one model call with no tools; this only bounds one that never answers. */
+const SIDE_QUESTION_TIMEOUT_MS = 120_000;
+
+/** `/btw`'s answer: `live: false` when no Claude process runs for the session; `response` null when it gave none. */
+export type SideQuestionAnswer = { live: false } | { live: true; response: string | null };
 
 /**
  * Resolve the Claude CLI the SDK should spawn.
@@ -1056,6 +1061,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // subprocess. Entitled OAuth accounts still get 1M context via the [1m] model suffix.
       ...(mqo.use1m && !!p.env.ANTHROPIC_API_KEY && { betas: ["context-1m-2025-08-07"] }),
       includePartialMessages: true,
+      // After each turn the CLI guesses the next prompt, which the composer offers (Tab).
+      promptSuggestions: true,
       stderr: p.stderr,
     };
   }
@@ -2531,6 +2538,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           continue;
         }
 
+        // The CLI's guess at the next prompt, sent after a turn's result (`promptSuggestions`).
+        if ((msg as any).type === "prompt_suggestion") {
+          const suggestion = (msg as any).suggestion;
+          if (typeof suggestion === "string" && suggestion.trim()) yield { type: "prompt_suggestion", suggestion: suggestion.trim() };
+          continue;
+        }
+
         if (msg.type === "result") {
           // Account error detection — only act on pre-stream 429/401
           if (account) {
@@ -3031,6 +3045,32 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     } catch (e) {
       log.debug(`session=${sessionId} context usage unavailable: ${(e as Error).message}`);
       return null;
+    }
+  }
+
+  /**
+   * Claude Code's `/btw`: a quick question answered from the session's context by its live CLI,
+   * with no tools, while a turn may be running, and kept out of the session's history. Uses the
+   * SDK's `askSideQuestion` (in `sdk.mjs`, not in `sdk.d.ts`). `live: false` when the session
+   * has no running Claude process to ask.
+   */
+  async askSideQuestion(sessionId: string, question: string, signal?: AbortSignal): Promise<SideQuestionAnswer> {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss) return { live: false };
+    const q = ss.query as unknown as {
+      askSideQuestion?(question: string, opts?: { signal?: AbortSignal }): Promise<{ response: string; synthetic?: boolean } | null>;
+    };
+    if (typeof q.askSideQuestion !== "function") return { live: false };
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), SIDE_QUESTION_TIMEOUT_MS);
+    const onAbort = () => stop.abort();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      const answer = await q.askSideQuestion(question, { signal: stop.signal });
+      return { live: true, response: answer?.response ?? null };
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
     }
   }
 
