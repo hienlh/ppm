@@ -10,14 +10,29 @@
  * left for the new supervisor to adopt (`adoptEdge`, `adoptTunnel`, which check identity).
  */
 
-/** The previous run's processes to kill before starting: its supervisor and server, if alive. */
-export function leftoverPidsToKill(prev: Record<string, unknown>, alive: (pid: number) => boolean): number[] {
-  const out: number[] = [];
+const LIVE_STATES = new Set(["running", "paused", "upgrading"]);
+
+/**
+ * The previous run's processes to kill before starting: its supervisor and server, if alive, and
+ * its tunnel when no supervisor will adopt it (the run was not live: stopped, or no state). Nothing
+ * at all when `status.json` predates this boot — it survives a reboot, and its pids may now name
+ * any program. The tunnel is a candidate only: the caller confirms it is PPM's own cloudflared.
+ */
+export function leftoverPidsToKill(
+  prev: Record<string, unknown>,
+  alive: (pid: number) => boolean,
+  boot: { bootAt?: number | null; statusWrittenAt?: number | null } = {},
+): { pids: number[]; tunnel: number | null } {
+  if (boot.bootAt != null && boot.statusWrittenAt != null && boot.statusWrittenAt < boot.bootAt) return { pids: [], tunnel: null };
+  const pids: number[] = [];
   for (const key of ["supervisorPid", "pid"] as const) {
     const p = prev[key];
-    if (typeof p === "number" && p > 0 && !out.includes(p) && alive(p)) out.push(p);
+    if (typeof p === "number" && p > 0 && !pids.includes(p) && alive(p)) pids.push(p);
   }
-  return out;
+  const t = prev.tunnelPid;
+  const adoptable = LIVE_STATES.has(String(prev.state));
+  const tunnel = !adoptable && typeof t === "number" && t > 0 && !pids.includes(t) && alive(t) ? t : null;
+  return { pids, tunnel };
 }
 
 /**

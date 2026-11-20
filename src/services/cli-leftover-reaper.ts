@@ -23,11 +23,22 @@ export interface CliLeftover {
   startedAt: number;
 }
 
-/** The processes below `cliPids` in `list`, the CLIs themselves excluded. Exported for tests. */
+/**
+ * Programs a CLI runs its own shell tools in. What runs below them is something a command started
+ * (a dev server left in the background, say), which Linux leaves running too: the reaper keeps out.
+ */
+const SHELLS = new Set(["bash", "sh", "zsh", "powershell", "pwsh", "conhost", "git"]);
+
+/**
+ * The MCP servers below `cliPids` in `list`: every subtree under a direct child of a CLI that is
+ * not a shell, the CLIs themselves excluded. Exported for tests.
+ */
 export function cliDescendants(list: ProcessMemoryEntry[], cliPids: readonly number[]): CliLeftover[] {
   const out: CliLeftover[] = [];
   for (const pid of cliPids) {
-    for (const d of descendantsOf(pid, list)) out.push({ pid: d.pid, startedAt: d.startedAt });
+    const tree = descendantsOf(pid, list);
+    const shellBranches = new Set(tree.filter((d) => d.depth === 1 && SHELLS.has(d.name)).map((d) => d.branchPid));
+    for (const d of tree) if (!shellBranches.has(d.branchPid)) out.push({ pid: d.pid, startedAt: d.startedAt });
   }
   return out;
 }

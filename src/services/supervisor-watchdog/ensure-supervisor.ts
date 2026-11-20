@@ -3,6 +3,7 @@ import { uptime as osUptime } from "node:os";
 import { resolve } from "node:path";
 import { getPpmDir } from "../ppm-dir.ts";
 import { decideEnsure, type EnsureAction, type WatchdogState } from "./ensure-supervisor-decision.ts";
+import { commitExhausted, describeCommit, type SystemCommit } from "../system-commit.ts";
 
 /**
  * `ppm __ensure_supervisor__`: one run of PPM's watchdog task (`ensure-supervisor-decision.ts`
@@ -60,18 +61,16 @@ export async function runEnsureSupervisor(): Promise<EnsureAction> {
   try { bootAt = now - osUptime() * 1000; } catch { /* unknown */ }
   const supervisorAlive = await supervisorRuns(status?.supervisorPid);
 
-  // The common run, PPM up: no config, no database.
-  let freeMB: number | null = null;
-  let blockFreeGB = 0;
+  // The common run, PPM up: no memory read, no config, no database.
+  let commit: SystemCommit | null = null;
   if (!supervisorAlive && status) {
     const { readSystemCommit } = await import("../system-commit.ts");
-    freeMB = (await readSystemCommit())?.freeMB ?? null;
-    blockFreeGB = await configuredBlockFreeGB();
+    commit = await readSystemCommit();
   }
 
   const { decision, state: next } = decideEnsure({
     now, bootAt, statusState: typeof status?.state === "string" ? status.state : null, statusAgeMs,
-    supervisorAlive, state, freeMB, blockFreeGB,
+    supervisorAlive, state, memoryExhausted: commitExhausted(commit),
   });
   writeState(dir, next);
 
@@ -79,7 +78,7 @@ export async function runEnsureSupervisor(): Promise<EnsureAction> {
     case "none":
       return decision;
     case "wait":
-      logLine(dir, "WARN", `PPM is not running, but only ${freeMB} MB of commit is free (under ${blockFreeGB} GB): waiting ${Math.round(decision.waitedMs / 1000)}s so far before starting it`);
+      logLine(dir, "WARN", `PPM is not running, but the machine is out of memory (${commit ? describeCommit(commit) : "unreadable"}): waiting ${Math.round(decision.waitedMs / 1000)}s so far before starting it`);
       return decision;
     case "give-up":
       logLine(dir, "ERROR", `PPM was started ${decision.starts} times in 30 minutes and is down again: not starting it again for now`);
@@ -91,18 +90,6 @@ export async function runEnsureSupervisor(): Promise<EnsureAction> {
       await startPpm(dir, status, decision);
       return decision;
     }
-  }
-}
-
-async function configuredBlockFreeGB(): Promise<number> {
-  try {
-    const { configService } = await import("../config.service.ts");
-    configService.load();
-    const { memoryGuardSettings } = await import("../../shared/memory-guard.ts");
-    return memoryGuardSettings(configService.get("ai") as never).blockFreeGB;
-  } catch {
-    const { DEFAULT_MEMORY_BLOCK_FREE_GB } = await import("../../shared/memory-guard.ts");
-    return DEFAULT_MEMORY_BLOCK_FREE_GB;
   }
 }
 

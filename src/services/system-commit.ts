@@ -48,6 +48,20 @@ export async function readSystemCommit(platform: NodeJS.Platform = process.platf
   return null;
 }
 
+/** Free commit at or under this share of the limit is exhausted, whatever the thresholds say. */
+export const EXHAUSTED_SHARE = 0.05;
+/** …as is free commit at or under this many MB, whatever the limit. */
+export const EXHAUSTED_MB = 2048;
+
+/**
+ * Whether the machine is out of memory now, not merely low on it. The restart paths (the
+ * supervisor's wait, the watchdog task, a death diagnosis) go by this rather than by the user's
+ * block threshold: a machine that normally runs with less free commit than the threshold would
+ * otherwise have every crash read as out of memory and every restart held for minutes.
+ */
+export const commitExhausted = (c: SystemCommit | null): boolean =>
+  !!c && (c.freeMB <= EXHAUSTED_MB || c.freeMB <= c.limitMB * EXHAUSTED_SHARE);
+
 /** "4.4 of 51.9 GB free", for a log line or a notification. */
 export function describeCommit(c: SystemCommit): string {
   const gb = (mb: number) => (mb / 1024).toFixed(1);

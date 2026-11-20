@@ -102,8 +102,11 @@ describe("CLI leftovers", () => {
     { pid: 20, ppid: 1, name: "claude", privateMB: 0, startedAt: 5 },
   ];
 
-  it("takes everything below the released CLI, and only that", () => {
+  it("takes the MCP servers below the released CLI, and only those", () => {
     expect(cliDescendants(list, [10])).toEqual([{ pid: 11, startedAt: 3 }, { pid: 12, startedAt: 4 }]);
+    // What a shell command started (a dev server left running) is left alone, as on Linux.
+    const withShell = [...list, { pid: 13, ppid: 10, name: "bash", privateMB: 0, startedAt: 6 }, { pid: 14, ppid: 13, name: "node", privateMB: 0, startedAt: 7 }];
+    expect(cliDescendants(withShell, [10])).toEqual([{ pid: 11, startedAt: 3 }, { pid: 12, startedAt: 4 }]);
     // The CLI already gone: its children are still found by the parent pid they keep.
     expect(cliDescendants(list.filter((p) => p.pid !== 10), [10])).toEqual([{ pid: 11, startedAt: 3 }, { pid: 12, startedAt: 4 }]);
   });

@@ -1454,12 +1454,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
      * on memory or another heavy job runs (`memory-guard/heavy-command-gate.ts`). A refusal goes
      * back to the model as the reason, so it can wait or run less at once.
      */
-    const heavyCommandGateHook = async (hookInput: any) => {
+    const heavyCommandGateHook = async (hookInput: any, _toolUseId?: unknown, hookOptions?: { signal?: AbortSignal }) => {
       const call = shellHookCall(hookInput);
       if (call?.phase !== "begin" || !call.command) return {};
       try {
         const { heavyCommandGate } = await import("../services/memory-guard/heavy-command-gate.ts");
-        const reason = await (await heavyCommandGate()).check(call.command);
+        const reason = await (await heavyCommandGate()).check(call.command, { signal: hookOptions?.signal });
         if (reason) {
           log.warn(`session=${sessionId} held a heavy command: ${reason.slice(0, 160)}`);
           return preToolUseDecision("deny", reason);

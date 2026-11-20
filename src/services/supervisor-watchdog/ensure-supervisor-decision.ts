@@ -15,9 +15,10 @@
  *    next boot, as before.
  * 3. At most {@link MAX_STARTS} starts in {@link START_WINDOW_MS}: past that it gives up once,
  *    loudly, instead of restarting into a machine that keeps killing it.
- * 4. After a death, while free commit is under the block threshold, it waits (the next run asks
- *    again) for at most {@link MAX_MEMORY_WAIT_MS}: a server started into an exhausted machine dies
- *    again and spends the budget.
+ * 4. After a death, while free commit is exhausted (`commitExhausted`: 2 GB or 5% of the limit), it
+ *    waits (the next run asks again) for at most {@link MAX_MEMORY_WAIT_MS}: a server started into
+ *    an exhausted machine dies again and spends the budget. Not the user's block threshold, which a
+ *    machine may sit under all day.
  */
 
 export const MAX_STARTS = 5;
@@ -48,10 +49,8 @@ export interface EnsureFacts {
   statusAgeMs?: number | null;
   supervisorAlive: boolean;
   state: WatchdogState;
-  /** Free commit in MB, or null when unreadable. */
-  freeMB: number | null;
-  /** Wait for memory under this many GB free; 0 never waits. */
-  blockFreeGB: number;
+  /** Whether free commit is exhausted right now (false when unreadable). */
+  memoryExhausted: boolean;
 }
 
 export type EnsureAction =
@@ -81,8 +80,7 @@ export function decideEnsure(f: EnsureFacts): { decision: EnsureAction; state: W
   }
 
   let afterWaitMs: number | undefined;
-  const low = f.freeMB !== null && f.blockFreeGB > 0 && f.freeMB < f.blockFreeGB * 1024;
-  if (died && !bootPending && low) {
+  if (died && !bootPending && f.memoryExhausted) {
     const since = state.waitingSince ?? f.now;
     const waitedMs = f.now - since;
     if (waitedMs < MAX_MEMORY_WAIT_MS) {

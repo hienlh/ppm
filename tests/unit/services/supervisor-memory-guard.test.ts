@@ -26,8 +26,11 @@ describe("memory guard settings", () => {
     expect(belowFreeGB(100, 0)).toBe(false);
     expect(belowFreeGB(10 * 1024 - 1, 10)).toBe(true);
     expect(belowFreeGB(10 * 1024, 10)).toBe(false);
-    expect(memoryExhausted(null, 10)).toBe(false);
-    expect(memoryExhausted({ freeMB: 4500, limitMB: 53000 }, 10)).toBe(true);
+    expect(memoryExhausted(null)).toBe(false);
+    // Low but not exhausted: a machine that runs under the block threshold all day is not out of memory.
+    expect(memoryExhausted({ freeMB: 4500, limitMB: 53000 })).toBe(false);
+    expect(memoryExhausted({ freeMB: 2048, limitMB: 53000 })).toBe(true);
+    expect(memoryExhausted({ freeMB: 2500, limitMB: 60000 })).toBe(true);
   });
 });
 
@@ -63,11 +66,18 @@ describe("out-of-memory restarts", () => {
 describe("recovery after a dead supervisor", () => {
   const alive = (pids: number[]) => (pid: number) => pids.includes(pid);
 
-  it("kills only the previous supervisor and server, never the edge or the tunnel", () => {
-    const prev = { supervisorPid: 10, pid: 20, tunnelPid: 30, edgePid: 40 };
-    expect(leftoverPidsToKill(prev, alive([10, 20, 30, 40]))).toEqual([10, 20]);
-    expect(leftoverPidsToKill(prev, alive([30, 40]))).toEqual([]);
-    expect(leftoverPidsToKill({}, alive([1]))).toEqual([]);
+  it("kills the previous supervisor and server, and the tunnel only when nobody will adopt it", () => {
+    const prev = { supervisorPid: 10, pid: 20, tunnelPid: 30, edgePid: 40, state: "running" };
+    expect(leftoverPidsToKill(prev, alive([10, 20, 30, 40]))).toEqual({ pids: [10, 20], tunnel: null });
+    expect(leftoverPidsToKill(prev, alive([30, 40]))).toEqual({ pids: [], tunnel: null });
+    expect(leftoverPidsToKill({ ...prev, state: "stopped" }, alive([30]))).toEqual({ pids: [], tunnel: 30 });
+    expect(leftoverPidsToKill({}, alive([1]))).toEqual({ pids: [], tunnel: null });
+  });
+
+  it("kills nothing named by a status.json written before this boot (its pids may be anyone's now)", () => {
+    const prev = { supervisorPid: 10, pid: 20, tunnelPid: 30, state: "stopped" };
+    expect(leftoverPidsToKill(prev, alive([10, 20, 30]), { bootAt: 1000, statusWrittenAt: 999 })).toEqual({ pids: [], tunnel: null });
+    expect(leftoverPidsToKill(prev, alive([10, 20, 30]), { bootAt: 1000, statusWrittenAt: 1001 }).pids).toEqual([10, 20]);
   });
 
   it("leaves the port to the previous edge only when that edge is alive and is the listener", () => {
@@ -85,5 +95,7 @@ describe("recovery after a dead supervisor", () => {
     expect(previousSupervisorDied({ supervisorPid: deadPid, state: "stopped" })).toBe(false);
     expect(previousSupervisorDied({ supervisorPid: process.ppid || deadPid, state: "running" })).toBe(!process.ppid);
     expect(previousSupervisorDied({})).toBe(false);
+    expect(previousSupervisorDied({ supervisorPid: deadPid, state: "running" }, { bootAt: 1000, statusWrittenAt: 999 })).toBe(false);
+    expect(previousSupervisorDied({ supervisorPid: deadPid, state: "stopping" })).toBe(false);
   });
 });

@@ -11,8 +11,7 @@ const facts = (over: Partial<EnsureFacts> = {}): EnsureFacts => ({
   statusState: "running",
   supervisorAlive: false,
   state: { starts: [], bootHandledAt: BOOT + 1000 },
-  freeMB: 30_000,
-  blockFreeGB: 10,
+  memoryExhausted: false,
   ...over,
 });
 
@@ -43,25 +42,27 @@ describe("decideEnsure", () => {
   });
 
   it("waits for memory after a death, then starts anyway after the longest wait", () => {
-    const first = decideEnsure(facts({ freeMB: 4_500 }));
+    const first = decideEnsure(facts({ memoryExhausted: true }));
     expect(first.decision).toEqual({ action: "wait", reason: "low-memory", waitedMs: 0 });
     expect(first.state.waitingSince).toBe(NOW);
 
-    const later = decideEnsure(facts({ now: NOW + 120_000, freeMB: 4_500, state: first.state }));
+    const later = decideEnsure(facts({ now: NOW + 120_000, memoryExhausted: true, state: first.state }));
     expect(later.decision).toEqual({ action: "wait", reason: "low-memory", waitedMs: 120_000 });
 
-    const recovered = decideEnsure(facts({ now: NOW + 240_000, freeMB: 20_000, state: later.state }));
+    const recovered = decideEnsure(facts({ now: NOW + 240_000, memoryExhausted: false, state: later.state }));
     expect(recovered.decision).toEqual({ action: "start", why: "died", afterWaitMs: 240_000 });
     expect(recovered.state.waitingSince).toBeUndefined();
 
-    const tooLong = decideEnsure(facts({ now: NOW + MAX_MEMORY_WAIT_MS, freeMB: 4_500, state: first.state }));
+    const tooLong = decideEnsure(facts({ now: NOW + MAX_MEMORY_WAIT_MS, memoryExhausted: true, state: first.state }));
     expect(tooLong.decision).toEqual({ action: "start", why: "died", afterWaitMs: MAX_MEMORY_WAIT_MS });
   });
 
-  it("does not wait for memory at boot, when the threshold is off, or when memory is unreadable", () => {
-    expect(decideEnsure(facts({ freeMB: 1000, state: { starts: [] } })).decision.action).toBe("start");
-    expect(decideEnsure(facts({ freeMB: 1000, blockFreeGB: 0 })).decision.action).toBe("start");
-    expect(decideEnsure(facts({ freeMB: null })).decision.action).toBe("start");
+  it("does not wait for memory at boot", () => {
+    expect(decideEnsure(facts({ memoryExhausted: true, state: { starts: [] } })).decision.action).toBe("start");
+  });
+
+  it("does not restart a PPM being taken down (ppm stop --kill marks it stopping first)", () => {
+    expect(decideEnsure(facts({ statusState: "stopping" })).decision).toEqual({ action: "none", reason: "not-wanted" });
   });
 
   it("gives up once after too many starts in the window, and tries again once they age out", () => {

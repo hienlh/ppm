@@ -637,7 +637,18 @@ export async function startServer(options: {
         prevRun = JSON.parse(readFileSync(statusFile, "utf-8"));
         const { killProcessTree } = await import("../services/windows-process-tree.ts");
         const { leftoverPidsToKill } = await import("../services/supervisor-watchdog/leftover-recovery.ts");
-        for (const p of leftoverPidsToKill(prevRun, isAlive)) killProcessTree(p);
+        const { statSync } = await import("node:fs");
+        const { uptime } = await import("node:os");
+        const leftovers = leftoverPidsToKill(prevRun, isAlive, {
+          bootAt: Date.now() - uptime() * 1000,
+          statusWrittenAt: statSync(statusFile).mtimeMs,
+        });
+        for (const p of leftovers.pids) killProcessTree(p);
+        if (leftovers.tunnel !== null) {
+          // Only PPM's own cloudflared: a tunnel pid from a stopped run may since name another program.
+          const { isCloudflaredPid } = await import("../services/tunnel-registry.service.ts");
+          if (await isCloudflaredPid(leftovers.tunnel)) killProcessTree(leftovers.tunnel);
+        }
       } catch {}
     }
 

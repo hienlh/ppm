@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
-  decideHeavyGate, HeavyCommandGate, HEAVY_QUEUE_WAIT_MS, isHeavyCommand, isHeavyProcess, parseCommandLines, type ProcLine,
+  commandSegments, decideHeavyGate, HeavyCommandGate, HEAVY_QUEUE_WAIT_MS, isHeavyCommand, isHeavyProcess, LEASE_MS, parseCommandLines, type ProcLine,
 } from "../../../src/services/memory-guard/heavy-command-gate.ts";
 import { buildToolHooks, preToolUseDecision } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 
@@ -12,19 +12,38 @@ describe("what counts as heavy", () => {
       "npx tsc --noEmit", "bun test tests/unit", "pnpm run test", "npm test", "yarn build", "vite build",
       "npx playwright test", "docker run --rm ppm-e2e-chromium", "docker compose up -d", "cargo test", "pytest -q",
     ]) expect([c, isHeavyCommand(c)]).toEqual([c, true]);
-    for (const c of ["git status", "ls node_modules", "cat tsconfig.json", "npx -y @playwright/mcp@latest", "docker ps -a", "bun run dev:server"]) {
+    for (const c of [
+      "git status", "ls node_modules", "cat tsconfig.json", "npx -y @playwright/mcp@latest", "docker ps -a", "bun run dev:server",
+      // A word in an argument is not the program.
+      'git commit -m "fix jest config; run tsc later"', "grep -rn tsc src", "rg jest", "mvn -v", "echo vitest",
+      // Watchers and dev servers run for hours: they are not a job to queue behind.
+      "npx tsc --watch", "npx vitest --watch", "npx webpack serve", "npm run dev", "vite",
+    ]) {
       expect([c, isHeavyCommand(c)]).toEqual([c, false]);
     }
   });
 
+  it("splits a command line at its operators, outside quotes", () => {
+    expect(commandSegments(`cd x && FOO=1 npx jest "a b.spec.ts" | tee log; echo "x && y"`)).toEqual([
+      ["cd", "x"], ["FOO=1", "npx", "jest", "a b.spec.ts"], ["tee", "log"], ["echo", "x && y"],
+    ]);
+  });
+
   it("knows a running heavy job, and not an MCP server or a watcher", () => {
     expect(isHeavyProcess('"node" D:\\x\\node_modules\\jest\\bin\\jest.js --maxWorkers=2')).toBe(true);
-    expect(isHeavyProcess("node /repo/node_modules/jest-worker/build/workers/processChild.js")).toBe(true);
+    // jest-worker alone is not counted: next dev keeps one alive for hours. jest itself is (above).
+    expect(isHeavyProcess("node /repo/node_modules/jest-worker/build/workers/processChild.js")).toBe(false);
     expect(isHeavyProcess("node /repo/node_modules/typescript/bin/tsc --noEmit")).toBe(true);
     expect(isHeavyProcess("C:\\Users\\PC\\.bun\\bin\\bun.exe test tests/unit")).toBe(true);
     expect(isHeavyProcess('"node" C:\\npm-cache\\_npx\\x\\node_modules\\@playwright\\mcp\\cli.js --extension')).toBe(false);
     expect(isHeavyProcess("node node_modules/vitest/vitest.mjs --watch")).toBe(false);
     expect(isHeavyProcess("bun run src/server/index.ts __serve__ 0")).toBe(false);
+    // Not by a word in an argument, a folder named jest-something, or a dev server.
+    expect(isHeavyProcess('git commit -m "fix jest config"')).toBe(false);
+    expect(isHeavyProcess("node /repo/node_modules/jest-environment-node/x.js")).toBe(false);
+    expect(isHeavyProcess("node /r/node_modules/webpack-dev-server/bin/webpack-dev-server.js")).toBe(false);
+    expect(isHeavyProcess("node /r/node_modules/webpack/bin/webpack.js serve")).toBe(false);
+    expect(isHeavyProcess("node /r/node_modules/next/dist/compiled/jest-worker/processChild.js")).toBe(false);
   });
 });
 
@@ -69,7 +88,30 @@ describe("HeavyCommandGate", () => {
     // The lease: a second heavy command right after waits while the first one's processes come up,
     // and goes once the lease has run out with nothing heavy seen running.
     expect(await gate.check("npx tsc --noEmit")).toBeNull();
-    expect(now).toBe(30_000 + 90_000);
+    expect(now).toBe(30_000 + LEASE_MS);
+  });
+
+  it("gives the lease back as soon as the first job's processes are seen", async () => {
+    let now = 0;
+    let running: ProcLine[] = [];
+    const gate = new HeavyCommandGate({
+      readFreeMB: async () => 30_000, blockGB: () => 10, listRunning: async () => running,
+      sleep: async (ms) => { now += ms; running = []; }, now: () => now,
+    });
+    expect(await gate.check("npx jest")).toBeNull();
+    running = [{ pid: 9, cmdline: "node /r/node_modules/jest/bin/jest.js" }];
+    expect(await gate.check("npx tsc")).toBeNull();
+    expect(now).toBe(15_000);
+  });
+
+  it("stops waiting when the turn is stopped", async () => {
+    const controller = new AbortController();
+    const gate = new HeavyCommandGate({
+      readFreeMB: async () => 30_000, blockGB: () => 10,
+      listRunning: async () => [{ pid: 9, cmdline: "node /r/node_modules/jest/bin/jest.js" }],
+      sleep: async () => { controller.abort(); }, now: () => 0,
+    });
+    expect(await gate.check("npx jest", { signal: controller.signal })).toBeNull();
   });
 
   it("never holds a light command", async () => {

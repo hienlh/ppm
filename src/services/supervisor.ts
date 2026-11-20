@@ -58,9 +58,8 @@ import { previousSupervisorDied, readPreviousRunDeath } from "./restart-news/pre
 import { describeCommit, readSystemCommit } from "./system-commit.ts";
 import { readPulse } from "./memory-pulse.ts";
 import {
-  healthMissCounts, MAX_MEMORY_WAIT_MS, MEMORY_POLL_MS, memoryExhausted, memoryGuardFromRaw, oomBackoffMs, oomExitReason,
+  healthMissCounts, MAX_MEMORY_WAIT_MS, MEMORY_POLL_MS, memoryExhausted, oomBackoffMs, oomExitReason,
 } from "./supervisor-memory-guard.ts";
-import type { MemoryGuardSettings } from "../shared/memory-guard.ts";
 import { dropStaleRestartRequest, peekRestartRequester, requesterNote, startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
 import { dropOrderedStop, writeOrderedStop } from "./restart-news/ordered-stop-note.ts";
 import {
@@ -941,17 +940,17 @@ export async function spawnServer(
   // restart on a backoff of its own, outside the crash budget that pauses PPM for good.
   const upForS = Math.round((Date.now() - startedAt) / 1000);
   const exitCommit = await readSystemCommit();
-  const guard = await freshMemoryGuard();
-  if (exitCommit && memoryExhausted(exitCommit, guard.blockFreeGB)) {
+  if (exitCommit && memoryExhausted(exitCommit)) {
     const reason = oomExitReason({ exitCode, signal: exitSignal, upForS }, exitCommit, readPulse(getPpmDir(), childPid));
     if (Date.now() - lastOomRestart > STABLE_WINDOW_MS) oomRestarts = 0;
     oomRestarts++;
     const delay = oomBackoffMs(oomRestarts);
-    log("ERROR", `Server went down with the machine out of memory (${describeCommit(exitCommit)}) — ${reason.detail}. Waiting ${Math.round(delay / 1000)}s, then until ${guard.blockFreeGB} GB is free (at most ${MAX_MEMORY_WAIT_MS / 60_000} min), before restarting it`);
+    log("ERROR", `Server went down with the machine out of memory (${describeCommit(exitCommit)}) — ${reason.detail}. Waiting ${Math.round(delay / 1000)}s, then until memory is no longer exhausted (at most ${MAX_MEMORY_WAIT_MS / 60_000} min), before restarting it`);
     serverBackoffPending = true;
+    memoryWaitSkipped = false;
     try {
-      await Bun.sleep(delay);
-      const waited = await waitForFreeMemory(guard.blockFreeGB);
+      await sleepUnlessSkipped(delay);
+      const waited = await waitForFreeMemory();
       if (waited > 0) log("INFO", `Free memory ${waited >= MAX_MEMORY_WAIT_MS ? "did not come back" : "came back"} after ${Math.round(waited / 1000)}s — restarting the server`);
     } finally { serverBackoffPending = false; }
     lastOomRestart = Date.now();
@@ -1004,26 +1003,37 @@ export async function spawnServer(
 const takeRequest = (): StartReason | null => takeRestartRequest(getPpmDir());
 
 /**
- * The memory guard thresholds, read fresh from the database: the server writes Settings, and this
- * process's own config cache would never see the change. Defaults when unreadable.
+ * Set by a restart someone asks for (`ppm restart`, PPM Cloud) while the supervisor waits out an
+ * out-of-memory exit: the wait ends and the server starts now. Without it the restart found no
+ * server to bounce and did nothing for up to twelve minutes.
  */
-async function freshMemoryGuard(): Promise<MemoryGuardSettings> {
-  try {
-    const { getConfigValue } = await import("./db.service.ts");
-    return memoryGuardFromRaw(getConfigValue("ai"));
-  } catch {
-    return memoryGuardFromRaw(undefined);
-  }
+let memoryWaitSkipped = false;
+
+/** Sleep `ms`, cut short by {@link memoryWaitSkipped} or a shutdown. */
+async function sleepUnlessSkipped(ms: number): Promise<void> {
+  const until = Date.now() + ms;
+  while (!memoryWaitSkipped && !shuttingDown && Date.now() < until) await Bun.sleep(Math.min(1000, until - Date.now()));
 }
 
-/** Wait until free commit is at least `blockFreeGB` (or unreadable), for at most {@link MAX_MEMORY_WAIT_MS}. Returns the ms waited. */
-async function waitForFreeMemory(blockFreeGB: number): Promise<number> {
+/** Wait until free commit is no longer exhausted (or unreadable), for at most {@link MAX_MEMORY_WAIT_MS}. Returns the ms waited. */
+async function waitForFreeMemory(): Promise<number> {
   const start = Date.now();
-  while (!shuttingDown && Date.now() - start < MAX_MEMORY_WAIT_MS) {
-    if (!memoryExhausted(await readSystemCommit(), blockFreeGB)) break;
-    await Bun.sleep(MEMORY_POLL_MS);
+  while (!shuttingDown && !memoryWaitSkipped && Date.now() - start < MAX_MEMORY_WAIT_MS) {
+    if (!memoryExhausted(await readSystemCommit())) break;
+    await sleepUnlessSkipped(MEMORY_POLL_MS);
   }
   return Date.now() - start;
+}
+
+/**
+ * A restart asked for while no server runs: during an out-of-memory wait, end the wait (the pending
+ * spawn then starts the server) instead of starting a second one. True when it did.
+ */
+function skipMemoryWaitForRestart(): boolean {
+  if (!serverBackoffPending || serverChild) return false;
+  memoryWaitSkipped = true;
+  log("INFO", "Restart asked for during the wait for memory — starting the server now");
+  return true;
 }
 
 /** Seconds since the machine started; null when the OS will not say (then it is not a boot). */
@@ -1563,7 +1573,7 @@ function startServerHealthCheck() {
     // A server not answering while the machine is out of memory is paging, not hung, and
     // killing it frees nothing the culprit holds: those misses do not count, for a while.
     const probeCommit = await readSystemCommit();
-    const grace = healthMissCounts(memoryExhausted(probeCommit, (await freshMemoryGuard()).blockFreeGB), healthLowMemorySince, Date.now());
+    const grace = healthMissCounts(memoryExhausted(probeCommit), healthLowMemorySince, Date.now());
     healthLowMemorySince = grace.lowSince;
     if (!grace.counts && probeCommit) {
       log("WARN", `Server health probe on port ${checkPort} failed (${lastProbe}) with the machine out of memory (${describeCommit(probeCommit)}) — not counted; the server is left running`);
@@ -1797,13 +1807,20 @@ async function adoptTunnel(): Promise<boolean> {
 }
 
 /** Kill stale tunnel PID from status.json (cleanup after failed adoption) */
-function killStaleTunnel() {
+async function killStaleTunnel(): Promise<void> {
   try {
     const status = readStatus();
     const pid = status.tunnelPid as number;
-    if (!pid) return;
-    try { process.kill(pid, "SIGTERM"); } catch {}
-    log("INFO", `Killed stale tunnel (PID: ${pid})`);
+    if (pid) {
+      // Only a cloudflared: the record can be from a run whose pid now names another program
+      // (a dead supervisor's, kept for adoption, when adoption refused it for exactly that).
+      if (await isCloudflaredPid(pid)) {
+        try { process.kill(pid, "SIGTERM"); } catch {}
+        log("INFO", `Killed stale tunnel (PID: ${pid})`);
+      } else {
+        log("INFO", `Stale tunnel record PID ${pid} is not a cloudflared — leaving it alone`);
+      }
+    }
   } catch {}
   updateStatus({ tunnelPid: null, shareUrl: null });
 }
@@ -2156,6 +2173,8 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
           } else if (getState() === "paused" || getState() === "stopped") {
             triggerResume();
             sendResult(true);
+          } else if (skipMemoryWaitForRestart()) {
+            sendResult(true);
           } else {
             sendResult(false, "No server child to restart");
           }
@@ -2441,15 +2460,23 @@ export async function runSupervisor(opts: {
   const prevStatus = readStatus();
   const isUpgrade = prevStatus.state === "upgrading";
   // Read before the rewrite below erases what the previous run left: whether it died, and of what.
-  const previousDeath = isUpgrade ? null : await readPreviousRunDeath(prevStatus, getPpmDir(), {
+  const bootInfo = {
     bootAt: ((up) => (up === null ? null : Date.now() - up * 1000))(machineUptimeS()),
     statusWrittenAt: statusWrittenAt(),
-  });
-  if (previousDeath) log("WARN", `Previous run did not stop — ${previousDeath.kind}: ${previousDeath.detail ?? "no detail"}`);
+  };
+  // Not awaited here: asking the OS for its low-memory reports takes seconds on a struggling
+  // machine, and `ppm start` gives a new supervisor ten seconds to publish its server. Only the
+  // first server's start reason needs it, and the edge and the tunnel come up meanwhile.
+  const previousDeathP = isUpgrade
+    ? Promise.resolve(null)
+    : readPreviousRunDeath(prevStatus, getPpmDir(), bootInfo).then((death) => {
+      if (death) log("WARN", `Previous run did not stop — ${death.kind}: ${death.detail ?? "no detail"}`);
+      return death;
+    });
   // A supervisor that died (out of memory, killed) leaves its detached edge and tunnel running,
   // still serving the public port and URL: keep their records, as an upgrade does, so they are
   // adopted rather than replaced. Adoption checks each one's identity and liveness itself.
-  const keepDetached = isUpgrade || previousSupervisorDied(prevStatus);
+  const keepDetached = isUpgrade || previousSupervisorDied(prevStatus, bootInfo);
   writeStatus({
     supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null,
     // Which database this supervisor's server runs on: the CLI's process commands and its
@@ -2582,6 +2609,8 @@ export async function runSupervisor(opts: {
     if (serverChild) {
       serverRestartRequested = true; // flag so spawnServer skips backoff
       requestServerShutdown(serverChild, "ppm restart").catch(() => {});
+    } else if (skipMemoryWaitForRestart()) {
+      // A spawn is already pending behind the wait for memory; it starts now.
     } else {
       // Nothing to bounce — the spawn loop is gone. Without this `ppm restart`
       // silently no-ops and only `stop --kill` + `start` recovers.
@@ -2690,6 +2719,8 @@ export async function runSupervisor(opts: {
         log("INFO", `Windows command: restart server only${requesterNote(cmd.requestedBy ?? peekRestartRequester(getPpmDir()))}`);
         if (getState() === "paused" || getState() === "stopped") {
           triggerResume();
+        } else if (skipMemoryWaitForRestart()) {
+          // A spawn is already pending behind the wait for memory; it starts now.
         } else if (serverChild) {
           serverRestartRequested = true;
           // Tree-kill + reap — single-PID kill orphans SDK grandchildren that
@@ -2797,7 +2828,7 @@ export async function runSupervisor(opts: {
       log("INFO", "Tunnel adopted from previous instance — public URL preserved");
     } else {
       log("WARN", "Tunnel adoption failed/skipped — spawning FRESH tunnel (public URL will change)");
-      killStaleTunnel(); // kill orphaned tunnel before spawning new one
+      await killStaleTunnel(); // kill orphaned tunnel before spawning new one
     }
     // Sweep leftover cloudflared orphans (crashed supervisors / pre-fix stale
     // loops) so they don't saturate the network and false-trigger regeneration.
@@ -2806,7 +2837,7 @@ export async function runSupervisor(opts: {
     // Switched off while a tunnel from an earlier boot is still alive: nothing
     // adopts or probes it now, so it would go on serving a stale origin with no
     // supervisor watching it.
-    killStaleTunnel();
+    await killStaleTunnel();
     await reapOrphanedTunnels(null);
   }
 
@@ -2867,7 +2898,7 @@ export async function runSupervisor(opts: {
   }, prevStatus.shareHostPid, { ppmRestarting: true });
 
   // Spawn server + (fresh) tunnel in parallel
-  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd, initialStartReason({ isUpgrade, uptimeS: machineUptimeS(), takeRequest, previousDeath }))];
+  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd, initialStartReason({ isUpgrade, uptimeS: machineUptimeS(), takeRequest, previousDeath: await previousDeathP }))];
   const tunnelLoopStarted = tunnelSharingEnabled && !tunnelAdopted;
   if (tunnelLoopStarted) promises.push(spawnTunnel(_opts.port));
 

@@ -1,4 +1,5 @@
 import { describeGrowth, fastestGrowth, type MemoryPulse } from "../memory-pulse.ts";
+import { commitExhausted } from "../system-commit.ts";
 import type { StartReason } from "./start-reason.ts";
 
 /**
@@ -35,10 +36,6 @@ export interface PreviousRunFacts {
   statusWrittenAt?: number | null;
 }
 
-/** Free commit at or under this share of the limit at the last reading counts as exhausted on its own. */
-const EXHAUSTED_SHARE = 0.05;
-/** …or under this many MB, whatever the limit. */
-const EXHAUSTED_MB = 2048;
 /** The window around the last reading in which an OS low-memory report is taken as this death's. */
 export const OOM_EVENT_BEFORE_MS = 2 * 60_000;
 export const OOM_EVENT_AFTER_MS = 10 * 60_000;
@@ -66,7 +63,7 @@ export function diagnosePreviousRunDeath(f: PreviousRunFacts): StartReason | nul
   if (f.bootAt != null && lastSign !== null && lastSign < f.bootAt) return null;
   const growth = fastestGrowth(samples);
   const commit = last?.commit ?? null;
-  const exhausted = !!commit && (commit.freeMB <= EXHAUSTED_MB || commit.freeMB <= commit.limitMB * EXHAUSTED_SHARE);
+  const exhausted = commitExhausted(commit);
   const event = f.oomEvents.length
     ? [...f.oomEvents].sort((a, b) => a.t - b.t)[0]!
     : null;
@@ -163,14 +160,25 @@ export async function readOomEvents(from: number, to: number, platform: NodeJS.P
   return [];
 }
 
+/** Whether `status.json` was last written before the machine started. False when either is unknown. */
+export function statusFromEarlierBoot(boot: { bootAt?: number | null; statusWrittenAt?: number | null }): boolean {
+  return boot.bootAt != null && boot.statusWrittenAt != null && boot.statusWrittenAt < boot.bootAt;
+}
+
 /**
  * Whether the supervisor `prevStatus` names is gone while its run was live (running, paused or
  * mid-upgrade): it died rather than was stopped. False for this process's own pid (a reused pid
  * is not the old supervisor coming back), for a stopped run, and when there is no status.
  */
-export function previousSupervisorDied(prevStatus: Record<string, unknown>): boolean {
+export function previousSupervisorDied(
+  prevStatus: Record<string, unknown>,
+  boot: { bootAt?: number | null; statusWrittenAt?: number | null } = {},
+): boolean {
   const pid = prevStatus.supervisorPid;
   if (typeof pid !== "number" || !LIVE_STATES.has(String(prevStatus.state))) return false;
+  // Written before this boot: the run ended with the machine, and every pid in it may now name
+  // some other program (status.json survives a reboot).
+  if (statusFromEarlierBoot(boot)) return false;
   if (pid === process.pid) return true;
   try { process.kill(pid, 0); return false; } catch { return true; }
 }
@@ -187,7 +195,7 @@ export async function readPreviousRunDeath(
 ): Promise<StartReason | null> {
   const now = opts.now ?? Date.now();
   try {
-    if (!previousSupervisorDied(prevStatus)) return null;
+    if (!previousSupervisorDied(prevStatus, opts)) return null;
     const supervisorAlive = false;
     const { readPulse } = await import("../memory-pulse.ts");
     const pulse = typeof prevStatus.pid === "number" ? readPulse(ppmDir, prevStatus.pid) : null;

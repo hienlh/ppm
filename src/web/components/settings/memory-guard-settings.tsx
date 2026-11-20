@@ -14,7 +14,7 @@ export function MemoryGuardSettingsFields({
 }: {
   settings: MemoryGuardConfig;
   revision: number;
-  compact: boolean;
+  compact?: boolean;
   labelSize: string;
   fieldGap: string;
   onSave: (patch: MemoryGuardConfig) => void;
