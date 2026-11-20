@@ -77,7 +77,7 @@ export function createVaultUnlockBroker(opts: {
   service?: VaultService;
   grants?: VaultGrants;
   now?: () => number;
-  onShown?: (sessionId: string, requestId: string) => void;
+  onShown?: (sessionId: string, requestId: string, input: VaultCardInput) => void;
 }) {
   const canonical = opts.canonical ?? ((id: string) => id);
   const service = opts.service ?? vaultService;
@@ -153,7 +153,7 @@ export function createVaultUnlockBroker(opts: {
         shownAt.set(sessionId, list);
       }
       timer = setTimeout(() => settle({ ok: false, reason: "timeout", message: `The user did not answer within ${Math.round(waitMs / 60_000)} minutes.` }), waitMs);
-      try { opts.onShown?.(sessionId, requestId); } catch { /* a notice never decides the card */ }
+      try { opts.onShown?.(sessionId, requestId, input); } catch { /* a notice never decides the card */ }
     });
   }
 
@@ -331,7 +331,9 @@ export type VaultUnlockBroker = ReturnType<typeof createVaultUnlockBroker>;
 
 let chat: VaultCardChat | null = null;
 let resolveSession: (sessionId: string) => string = (id) => id;
-const shownListeners = new Set<(sessionId: string, requestId: string) => void>();
+/** Told about each card shown: its session, its request and what it asks (never a value: a card holds none). */
+export type VaultCardShownListener = (sessionId: string, requestId: string, input: VaultCardInput) => void;
+const shownListeners = new Set<VaultCardShownListener>();
 
 /** `ws/chat.ts` owns the chats; it registers how to show a card and follow a renamed session. */
 export function setVaultCardChat(fn: VaultCardChat | null, canonical?: (sessionId: string) => string): void {
@@ -339,8 +341,11 @@ export function setVaultCardChat(fn: VaultCardChat | null, canonical?: (sessionI
   resolveSession = canonical ?? ((id) => id);
 }
 
-/** A card was shown: the channels that reach the user away from PPM say so (never what or which). */
-export function onVaultCardShown(listener: (sessionId: string, requestId: string) => void): () => void {
+/**
+ * A card was shown: the channels that reach the user away from PPM say so, naming the items, the
+ * tier and what is asked — never a value (a card holds none), the AI's stated purpose or a file.
+ */
+export function onVaultCardShown(listener: VaultCardShownListener): () => void {
   shownListeners.add(listener);
   return () => { shownListeners.delete(listener); };
 }
@@ -348,5 +353,5 @@ export function onVaultCardShown(listener: (sessionId: string, requestId: string
 export const vaultUnlockBroker = createVaultUnlockBroker({
   chat: () => chat,
   canonical: (id) => resolveSession(id),
-  onShown: (sessionId, requestId) => { for (const l of [...shownListeners]) { try { l(sessionId, requestId); } catch { /* notice only */ } } },
+  onShown: (sessionId, requestId, input) => { for (const l of [...shownListeners]) { try { l(sessionId, requestId, input); } catch { /* notice only */ } } },
 });

@@ -15,6 +15,8 @@ import {
   countItems, deleteItemRow, deleteTierRows, getItemRow, getKeyRow, insertItemRow, insertKeyRow, listItemRows, rewrapKeyRow,
   toMeta, updateItemRow, type VaultItemRow,
 } from "./vault-db.ts";
+import { VaultError } from "./vault-errors.ts";
+import { vaultAttachments as defaultAttachments, type VaultAttachments } from "./vault-attachments.service.ts";
 
 /**
  * The vault's rules over its storage: turning a locked tier on, changing or forgetting its
@@ -26,11 +28,7 @@ import {
 
 const log = createLogger("vault");
 
-export class VaultError extends Error {
-  constructor(readonly code: string, message: string, readonly status: 400 | 403 | 404 | 409 | 423 = 400) {
-    super(message);
-  }
-}
+export { VaultError };
 
 export type UnlockResult =
   | { ok: true; dek: Buffer }
@@ -69,16 +67,22 @@ function cleanName(name: unknown): string {
   return n;
 }
 
+/** One line ending everywhere, so a value copied out reads the same on every machine. */
+const oneLineEnding = (text: string) => text.replace(/\r\n?/g, "\n");
+
 function cleanValue(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) throw new VaultError("bad-value", "A value is required.");
-  if (value.length > VAULT_MAX_VALUE_LENGTH) throw new VaultError("bad-value", `A value may have at most ${VAULT_MAX_VALUE_LENGTH} characters.`);
-  return value;
+  const v = oneLineEnding(value);
+  if (v.length > VAULT_MAX_VALUE_LENGTH) throw new VaultError("bad-value", `A value may have at most ${VAULT_MAX_VALUE_LENGTH} characters.`);
+  return v;
 }
 
 function cleanNote(note: unknown): string | undefined {
   if (note == null || note === "") return undefined;
-  if (typeof note !== "string" || note.length > VAULT_MAX_VALUE_LENGTH) throw new VaultError("bad-note", "The note is too long.");
-  return note;
+  if (typeof note !== "string") throw new VaultError("bad-note", "The note is too long.");
+  const n = oneLineEnding(note);
+  if (n.length > VAULT_MAX_VALUE_LENGTH) throw new VaultError("bad-note", "The note is too long.");
+  return n;
 }
 
 function cleanKind(kind: unknown): VaultItemKind {
@@ -86,10 +90,26 @@ function cleanKind(kind: unknown): VaultItemKind {
   return kind;
 }
 
-export function createVaultService(opts: { attempts?: VaultAttempts; now?: () => number; kdfParams?: () => KdfParams } = {}) {
+export function createVaultService(opts: { attempts?: VaultAttempts; now?: () => number; kdfParams?: () => KdfParams; attachments?: VaultAttachments } = {}) {
   const now = opts.now ?? Date.now;
   const attempts = opts.attempts ?? createVaultAttempts({ now });
   const kdfParams = opts.kdfParams ?? (() => VAULT_KDF_PARAMS);
+  const files = opts.attachments ?? defaultAttachments;
+
+  /** Item metadata with its files' label, type and size, for a locked item that has any. */
+  function withFiles(rows: VaultItemRow[]): VaultItemMeta[] {
+    const byItem = new Map<string, ReturnType<VaultAttachments["list"]>>();
+    for (const f of files.list()) {
+      const list = byItem.get(f.itemId) ?? [];
+      list.push(f);
+      byItem.set(f.itemId, list);
+    }
+    return rows.map((r) => {
+      const meta = toMeta(r);
+      const attached = byItem.get(r.id);
+      return attached?.length ? { ...meta, attachments: attached } : meta;
+    });
+  }
 
   /** Length and auth-token rules; the other-tier rule needs a derivation and is checked apart. */
   function checkPasswordShape(tier: VaultLockedTier, password: unknown): string {
@@ -197,12 +217,12 @@ export function createVaultService(opts: { attempts?: VaultAttempts; now?: () =>
     /** Every item's name, kind and tier, never a value. */
     listItems(tier?: VaultTier): VaultItemMeta[] {
       if (tier !== undefined && !isVaultTier(tier)) throw new VaultError("bad-tier", "Unknown vault tier.");
-      return listItemRows(tier).map(toMeta);
+      return withFiles(listItemRows(tier));
     },
 
     getMeta(id: string): VaultItemMeta | null {
       const row = getItemRow(id);
-      return row ? toMeta(row) : null;
+      return row ? withFiles([row])[0]! : null;
     },
 
     /** Turns a locked tier on with its password. Forgetting that password loses the tier for good. */
@@ -265,8 +285,14 @@ export function createVaultService(opts: { attempts?: VaultAttempts; now?: () =>
         const opened = await unlockInner(tier, password);
         if (!opened.ok) return opened;
         opened.dek.fill(0);
-        const removed = deleteTierRows(tier);
-        log.info(`tier=${tier} deleted with ${removed} item(s)`);
+        let removed = 0;
+        let fileIds: string[] = [];
+        getDb().transaction(() => {
+          fileIds = files.removeRowsForTier(tier);
+          removed = deleteTierRows(tier);
+        })();
+        files.retire(fileIds);
+        log.info(`tier=${tier} deleted with ${removed} item(s) and ${fileIds.length} file(s)`);
         return { ok: true, removed } as const;
       });
     },
@@ -318,8 +344,13 @@ export function createVaultService(opts: { attempts?: VaultAttempts; now?: () =>
         if (!dek) throw new VaultError("locked", "Unlock this tier first.", 423);
         decryptRow(row, dek);
       }
-      deleteItemRow(id);
-      log.info(`item=${id} deleted from tier=${row.tier}`);
+      let fileIds: string[] = [];
+      getDb().transaction(() => {
+        fileIds = files.removeRowsForItem(id);
+        deleteItemRow(id);
+      })();
+      files.retire(fileIds);
+      log.info(`item=${id} deleted from tier=${row.tier}${fileIds.length ? ` with ${fileIds.length} file(s)` : ""}`);
     },
 
     /** Public items' values by id. Throws for an id that is not a public item. */
@@ -357,10 +388,28 @@ export function createVaultService(opts: { attempts?: VaultAttempts; now?: () =>
           return decryptRow(row, keys.from);
         })();
       if (isVaultLockedTier(to) && !keys.to) throw new VaultError("locked", "Unlock the target tier first.", 423);
+      const fileCount = files.count(id);
+      if (fileCount > 0 && to === "public") {
+        throw new VaultError("public-no-files", "The Public tier cannot hold files. Remove this item's files first, or move it to the other locked tier.", 409);
+      }
       const next: VaultItemRow = { ...row, tier: to, ...sealedColumns(to, id, payload, keys.to ?? null), updated_at: now() };
-      getDb().transaction(() => { updateItemRow(next); })();
-      log.info(`item=${id} moved tier=${row.tier} -> tier=${to}`);
-      return toMeta(next);
+      // Its files are re-encrypted under the target tier's key first, written as new files; the
+      // rows switch over in the item's own transaction, and the old files are retired after it.
+      const moving = fileCount > 0 && isVaultLockedTier(row.tier) && isVaultLockedTier(to)
+        ? files.prepareMove(id, to, keys.from!, keys.to!)
+        : null;
+      try {
+        getDb().transaction(() => {
+          updateItemRow(next);
+          moving?.apply();
+        })();
+      } catch (e) {
+        moving?.abort();
+        throw e;
+      }
+      moving?.commit();
+      log.info(`item=${id} moved tier=${row.tier} -> tier=${to}${fileCount ? ` with ${fileCount} file(s)` : ""}`);
+      return withFiles([next])[0]!;
     },
   };
 }

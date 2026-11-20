@@ -118,6 +118,11 @@ export function registerBackupCommands(program: Command): void {
         if (result.archivedTo) {
           console.log(`  ${C.dim}previous database kept at ${result.archivedTo}${C.reset}`);
         }
+        if (result.vaultFiles?.missing) {
+          console.log(`  ${C.yellow}${result.vaultFiles.missing} vault file(s) it names were not found beside the snapshot; those items show the file as missing.${C.reset}`);
+        } else if (result.vaultFiles?.restored) {
+          console.log(`  ${C.dim}${result.vaultFiles.restored} vault file(s) in place${C.reset}`);
+        }
         console.log(`  ${C.dim}start PPM with: ppm start${C.reset}`);
       } catch (e: any) {
         console.error(`${C.red}Restore failed:${C.reset} ${e?.message ?? e}`);

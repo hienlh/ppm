@@ -1,8 +1,9 @@
 import { Hono, type Context } from "hono";
 import { err, ok } from "../../types/api.ts";
 import { createLogger } from "../../services/logger.ts";
-import { isVaultLockedTier, isVaultTier, type VaultCardAnswer, type VaultLockedTier } from "../../shared/vault.ts";
+import { isVaultLockedTier, isVaultTier, VAULT_FILE_MAX_BYTES, type VaultCardAnswer, type VaultLockedTier } from "../../shared/vault.ts";
 import { vaultService, VaultError, type UnlockFailure } from "../../services/vault/vault.service.ts";
+import { vaultAttachments } from "../../services/vault/vault-attachments.service.ts";
 import { settingsHolder, vaultGrants } from "../../services/vault/vault-grants.ts";
 import { vaultUnlockBroker } from "../../services/vault/vault-unlock-broker.ts";
 
@@ -207,6 +208,91 @@ vaultRoutes.post("/items/:id/move", async (c) => {
   } finally {
     for (const k of keys) k.fill(0);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Files attached to an item (secure and sealed tiers only)
+// ---------------------------------------------------------------------------
+
+/** The multipart envelope around one file: the file itself plus a few short fields. */
+const UPLOAD_OVERHEAD_BYTES = 64 * 1024;
+
+/**
+ * POST /items/:id/files — multipart: `file`, `label?`, `password?`, `handle`. The browser has
+ * already shrunk a photo and dropped its EXIF unless the user kept the original; the server takes
+ * the bytes as they come and decides their type from them.
+ */
+vaultRoutes.post("/items/:id/files", async (c) => {
+  const meta = vaultService.getMeta(c.req.param("id"));
+  if (!meta) return c.json(err("No such vault item."), 404);
+  if (!isVaultLockedTier(meta.tier)) return c.json(err("Files can only be attached to Secure and Sealed items."), 400);
+  // A browser's multipart upload always declares its length; one that does not is not read at all.
+  const declared = Number(c.req.header("content-length") ?? "");
+  if (!Number.isFinite(declared) || declared <= 0) return c.json(err("The upload must declare its length."), 411);
+  if (declared > VAULT_FILE_MAX_BYTES + UPLOAD_OVERHEAD_BYTES) return c.json(err(`A file may be at most ${VAULT_FILE_MAX_BYTES / (1024 * 1024)} MB.`), 413);
+  const form = await c.req.parseBody().catch(() => null);
+  const file = form?.file;
+  if (!form || !(file instanceof File)) return c.json(err("Choose a file."), 400);
+  if (file.size > VAULT_FILE_MAX_BYTES) return c.json(err(`A file may be at most ${VAULT_FILE_MAX_BYTES / (1024 * 1024)} MB.`), 413);
+  const bytes = Buffer.from(await file.arrayBuffer());
+  try {
+    return await withKey(c, meta.tier, { password: form.password, handle: form.handle }, (dek) =>
+      vaultAttachments.add(meta.id, { fileName: file.name, label: typeof form.label === "string" ? form.label : undefined, bytes }, dek));
+  } finally {
+    bytes.fill(0);
+  }
+});
+
+/**
+ * POST /files/:fileId/content `{ password?, handle, download? }` — the decrypted file, to this page
+ * only. Never cached, never sniffed, and only ever one of the four types the vault stores. A POST,
+ * so a sealed tier's password is never part of a URL.
+ */
+vaultRoutes.post("/files/:fileId/content", async (c) => {
+  const att = vaultAttachments.getMeta(c.req.param("fileId"));
+  if (!att) return c.json(err("No such file."), 404);
+  const item = vaultService.getMeta(att.itemId);
+  if (!item || !isVaultLockedTier(item.tier)) return c.json(err("No such file."), 404);
+  const b = await body(c);
+  const k = await keyFor(item.tier, b.password, b.handle);
+  if (!k.ok) return k.reason === "need-password" ? c.json(err(k.message), 423) : failure(c, k);
+  try {
+    const content = vaultAttachments.read(att.id, k.dek);
+    const name = encodeURIComponent(content.fileName);
+    log.info(`file=${att.id} opened (${b.download === true ? "download" : "preview"})`);
+    return new Response(new Uint8Array(content.bytes), {
+      headers: {
+        "content-type": content.meta.type,
+        "content-length": String(content.bytes.length),
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; sandbox",
+        "content-disposition": `${b.download === true ? "attachment" : "inline"}; filename*=UTF-8''${name}`,
+      },
+    });
+  } catch (e) {
+    return fail(c, e);
+  } finally {
+    k.dek.fill(0);
+  }
+});
+
+/** PATCH /files/:fileId `{ label, password?, handle }` */
+vaultRoutes.patch("/files/:fileId", async (c) => {
+  const att = vaultAttachments.getMeta(c.req.param("fileId"));
+  const item = att ? vaultService.getMeta(att.itemId) : null;
+  if (!att || !item || !isVaultLockedTier(item.tier)) return c.json(err("No such file."), 404);
+  const b = await body(c);
+  return withKey(c, item.tier, b, (dek) => vaultAttachments.rename(att.id, b.label, dek));
+});
+
+/** POST /files/:fileId/delete `{ password?, handle }` */
+vaultRoutes.post("/files/:fileId/delete", async (c) => {
+  const att = vaultAttachments.getMeta(c.req.param("fileId"));
+  const item = att ? vaultService.getMeta(att.itemId) : null;
+  if (!att || !item || !isVaultLockedTier(item.tier)) return c.json(err("No such file."), 404);
+  const b = await body(c);
+  return withKey(c, item.tier, b, (dek) => { vaultAttachments.remove(att.id, dek); return { deleted: true }; });
 });
 
 /** POST /cards/:requestId — body `VaultCardAnswer`: the user's answer to a vault card in a chat. */

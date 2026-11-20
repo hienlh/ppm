@@ -1337,6 +1337,12 @@ if (process.argv.includes("__serve__")) {
     console.warn("[event-loop] Lag monitor failed to start:", e);
   });
 
+  // Vault files no item names (a write or a move a crash cut short) are retired, never deleted:
+  // the next database snapshot may still need them.
+  import("../services/vault/vault-attachments.service.ts")
+    .then(({ vaultAttachments }) => vaultAttachments.sweep())
+    .catch((e) => console.error("[vault] file sweep failed:", (e as Error)?.message));
+
   let schedulerStop: (() => void) | null = null;
   if (!isMinimalMode()) {
     // Discover + activate enabled extensions

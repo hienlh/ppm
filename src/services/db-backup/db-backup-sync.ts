@@ -3,6 +3,12 @@ import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from
 import { basename, resolve } from "node:path";
 import { getBackupsDir, backupFileName, type BackupReason } from "./db-backup-paths.ts";
 import { selectBackupsToDelete, DEFAULT_RETENTION, type RetentionPolicy } from "./db-backup-retention.ts";
+import { archivedDatabases, collectVaultFiles, pruneVaultFilePool, type VaultFilesResult } from "./db-backup-vault-files.ts";
+import { purgeRetired } from "../vault/vault-file-store.ts";
+import { vaultFilesDirFor } from "../vault/vault-files-dir.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("backup");
 
 /**
  * Synchronous core of the snapshot mechanism.
@@ -25,6 +31,8 @@ export interface BackupResult {
   bytes: number;
   ms: number;
   pruned: string[];
+  /** The vault files this snapshot names: kept beside it, or not found. Absent when none could be read. */
+  vaultFiles?: { kept: number; missing: number };
 }
 
 export interface BackupOptions {
@@ -99,6 +107,17 @@ export function backupDbSync(reason: BackupReason, opts: BackupOptions): BackupR
   }
 
   renameSync(partialPath, finalPath);
+
+  // The vault's encrypted files live outside the database: keep the ones this snapshot names
+  // beside it. A failure here leaves the snapshot itself good; only its files may be missing.
+  let vaultFiles: VaultFilesResult | null = null;
+  try {
+    vaultFiles = collectVaultFiles(finalPath, dbPath);
+  } catch (e) {
+    vaultFiles = null;
+    log.warn(`vault files for ${basename(finalPath)} not kept: ${(e as Error).message}`);
+  }
+  if (vaultFiles?.missing.length) log.warn(`${vaultFiles.missing.length} vault file(s) named by ${basename(finalPath)} were not found to keep`);
   const ms = Date.now() - started;
 
   const pruned: string[] = [];
@@ -108,6 +127,16 @@ export function backupDbSync(reason: BackupReason, opts: BackupOptions): BackupR
     // the new snapshot is already written and verified by this point.
     try { rmSync(resolve(dir, name), { force: true }); pruned.push(name); } catch { /* keep going */ }
   }
+  try {
+    pruneVaultFilePool(dir, dbFile, archivedDatabases(dbPath));
+    // Files removed before this snapshot began are named by no snapshot that has not kept them.
+    if (vaultFiles) purgeRetired(started, vaultFilesDirFor(dbPath));
+  } catch (e) {
+    log.warn(`vault file pruning skipped: ${(e as Error).message}`);
+  }
 
-  return { path: finalPath, bytes: statSync(finalPath).size, ms, pruned };
+  return {
+    path: finalPath, bytes: statSync(finalPath).size, ms, pruned,
+    ...(vaultFiles ? { vaultFiles: { kept: vaultFiles.kept, missing: vaultFiles.missing.length } } : {}),
+  };
 }

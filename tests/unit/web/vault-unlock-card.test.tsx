@@ -44,9 +44,10 @@ afterEach(async () => {
 const q = <T extends Element = HTMLElement>(sel: string) => view!.container.querySelector<T>(sel);
 const button = (text: string) => [...view!.container.querySelectorAll("button")].find((b) => b.textContent === text) ?? null;
 async function type(sel: string, text: string) {
-  const el = q<HTMLInputElement>(sel)!;
+  const el = q<HTMLInputElement | HTMLTextAreaElement>(sel)!;
+  const proto = el instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
   await act(async () => {
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, text);
+    Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, text);
     el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
@@ -147,9 +148,12 @@ describe("propose card", () => {
       view = await mount(<VaultUnlockCard requestId="r8" input={propose(true)} />);
       await flush();
       expect(get).toHaveBeenCalledWith("/api/vault/cards/r8/prefill");
-      const value = q<HTMLInputElement>('input[aria-label="Value"]')!;
-      expect(value.type).toBe("password");
-      expect(value.value).toBe("FAKE-12-34-56");
+      // Hidden: no field holds the value on screen (this DOM cannot draw a textarea as discs).
+      expect(q('textarea[aria-label="Value"]')).toBeNull();
+      expect(q("[data-vault-value-hidden]")?.textContent).toBe("•••••••• (1 line)");
+      expect(view.container.textContent).not.toContain("FAKE-12-34-56");
+      await click(q<HTMLButtonElement>('button[aria-label="Show value"]')!);
+      expect(q<HTMLTextAreaElement>('textarea[aria-label="Value"]')!.value).toBe("FAKE-12-34-56");
       expect(q("[data-vault-prefill-warning]")?.textContent).toBe("This value is already in the chat history.");
       // Sealed is off, so the suggestion falls back to Public, which asks no password and warns.
       const sealedTier = [...view.container.querySelectorAll("[data-vault-tier-picker] button")].find((b) => b.textContent?.startsWith("Sealed"))!;
@@ -165,11 +169,12 @@ describe("propose card", () => {
     view = await mount(<VaultUnlockCard requestId="r9" input={propose(false)} />);
     await click([...view.container.querySelectorAll("[data-vault-tier-picker] button")].find((b) => b.textContent === "Secure")!);
     expect(q("[data-vault-public-warning]")).toBeNull();
-    await type('input[aria-label="Value"]', "FAKE-VALUE");
+    await click(q<HTMLButtonElement>('button[aria-label="Show value"]')!);
+    await type('textarea[aria-label="Value"]', "FAKE-VALUE\nSECOND LINE");
     await type('input[aria-label="Secure tier password"]', "fake-secure-pass");
     await click(button("Save"));
     expect(post).toHaveBeenLastCalledWith("/api/vault/cards/r9", {
-      approved: true, tier: "secure", name: "Bank sort code", itemKind: "other", value: "FAKE-VALUE", password: "fake-secure-pass",
+      approved: true, tier: "secure", name: "Bank sort code", itemKind: "other", value: "FAKE-VALUE\nSECOND LINE", password: "fake-secure-pass",
     });
   });
 });

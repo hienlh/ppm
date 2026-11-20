@@ -5,9 +5,9 @@
  * Nothing here caches a value or a password: a revealed value lives in the component that asked
  * for it, and a password only in the input it was typed into.
  */
-import { api, ApiError } from "@/lib/api-client";
+import { api, ApiError, getAuthToken } from "@/lib/api-client";
 import type {
-  VaultCardAnswer, VaultCardAnswerResult, VaultItemKind, VaultItemMeta, VaultLockedTier, VaultStatus, VaultTier,
+  VaultAttachmentMeta, VaultCardAnswer, VaultCardAnswerResult, VaultItemKind, VaultItemMeta, VaultLockedTier, VaultStatus, VaultTier,
 } from "../../shared/vault";
 
 export interface VaultGrantInfo { tier: VaultLockedTier; expiresAt: number; settings: boolean }
@@ -16,6 +16,31 @@ export interface VaultItemValue extends VaultItemMeta { value: string; note?: st
 export type VaultPasswords = Partial<Record<VaultLockedTier, string>>;
 
 const item = (id: string) => `/api/vault/items/${encodeURIComponent(id)}`;
+const file = (id: string) => `/api/vault/files/${encodeURIComponent(id)}`;
+
+/** The auth header for the two requests `api` cannot make (a multipart body, a binary answer). */
+function authHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  return { ...(token ? { Authorization: `Bearer ${token}` } : {}), "x-ppm-client": "web" };
+}
+
+/** The original file name from `Content-Disposition: …; filename*=UTF-8''…`, else "file". */
+export function fileNameOf(header: string | null): string {
+  const m = header ? /filename\*=UTF-8''([^;]+)/i.exec(header) : null;
+  if (!m) return "file";
+  try {
+    return decodeURIComponent(m[1]!) || "file";
+  } catch {
+    return "file";
+  }
+}
+
+/** A `{ ok, data }` answer read the way `api` reads one, refusals as `ApiError`. */
+async function unwrap<T>(res: Response): Promise<T> {
+  const body = (await res.json().catch(() => null)) as { ok?: boolean; data?: T; error?: string } | null;
+  if (!res.ok || !body?.ok) throw new ApiError(body?.error ?? `Request failed (${res.status})`, res.status, body);
+  return body.data as T;
+}
 /**
  * This page's own handle for the Secure tier's Settings unlock: random, kept in memory only, so the
  * unlock answers to this page and not to anything else holding PPM's auth token. A reload starts
@@ -46,6 +71,28 @@ export const vaultApi = {
     for (const [tier, value] of Object.entries(passwords) as [VaultLockedTier, string | undefined][]) if (value) sent[tier] = value;
     return api.post<VaultItemMeta>(`${item(id)}/move`, { to, passwords: sent, handle: PAGE_HANDLE });
   },
+  uploadFile: async (itemId: string, file: Blob, fileName: string, opts: { label?: string; password?: string } = {}) => {
+    const form = new FormData();
+    form.set("file", file, fileName);
+    form.set("handle", PAGE_HANDLE);
+    if (opts.label) form.set("label", opts.label);
+    if (opts.password) form.set("password", opts.password);
+    const res = await fetch(`${item(itemId)}/files`, { method: "POST", headers: authHeaders(), body: form });
+    return unwrap<VaultAttachmentMeta>(res);
+  },
+  /** The decrypted file as a Blob, for this page only: nothing is cached and the caller drops it. */
+  openFile: async (fileId: string, opts: { password?: string; download?: boolean } = {}): Promise<{ blob: Blob; fileName: string }> => {
+    const res = await fetch(`${file(fileId)}/content`, {
+      method: "POST",
+      cache: "no-store",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ ...pw(opts.password), ...(opts.download ? { download: true } : {}) }),
+    });
+    if (!res.ok) await unwrap(res);
+    return { blob: await res.blob(), fileName: fileNameOf(res.headers.get("content-disposition")) };
+  },
+  renameFile: (fileId: string, label: string, password?: string) => api.patch<VaultAttachmentMeta>(file(fileId), { label, ...pw(password) }),
+  deleteFile: (fileId: string, password?: string) => api.post<{ deleted: boolean }>(`${file(fileId)}/delete`, pw(password)),
   answerCard: (requestId: string, answer: VaultCardAnswer) =>
     api.post<VaultCardAnswerResult>(`/api/vault/cards/${encodeURIComponent(requestId)}`, answer),
   cardPrefill: (requestId: string) => api.get<{ value: string | null }>(`/api/vault/cards/${encodeURIComponent(requestId)}/prefill`),

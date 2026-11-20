@@ -26,7 +26,7 @@ export function VaultShownValue({ name, value, until, onHide }: { name: string; 
         <span className="min-w-0 truncate">{name}</span>
         <span className="ml-auto font-mono text-text-subtle">{formatCountdown(until - now)}</span>
       </div>
-      <pre className="select-text whitespace-pre-wrap break-all rounded border border-border bg-background p-2 font-mono text-xs" data-vault-shown-value="">
+      <pre className="max-h-[40vh] select-text overflow-auto whitespace-pre-wrap break-all rounded border border-border bg-background p-2 font-mono text-xs" data-vault-shown-value="">
         {value}
       </pre>
       <p className="text-[11px] text-text-subtle">Shown to you only. The AI did not get it.</p>

@@ -25,7 +25,8 @@ import { hydrateProjectCache, peekLastProjectRef } from "@/lib/browser-cache/pro
 // Registers the slash-list hydrator before boot hydration runs; the chat tab that
 // otherwise loads this module sits in a lazy chunk.
 import "@/lib/slash-items-cache";
-import { useUrlSync, parseUrlState, autoOpenFromUrl, openAssistantFromAddress, openFileBrowserFromAddress, requestTurnJumpFromUrl } from "@/hooks/use-url-sync";
+import { useUrlSync, parseUrlState, autoOpenFromUrl, openAssistantFromAddress, openFileBrowserFromAddress, openVaultFromAddress, requestTurnJumpFromUrl } from "@/hooks/use-url-sync";
+import { vaultLinkFromSearch } from "@/lib/vault-deep-link";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { useWakeLock } from "@/hooks/use-wake-lock";
@@ -119,6 +120,8 @@ export function App() {
 
   // Capture URL state on mount — before any effect can overwrite it
   const initialUrlRef = useRef(parseUrlState());
+  // Read at mount, before anything rewrites the address for the tabs it opens.
+  const initialVaultLinkRef = useRef(vaultLinkFromSearch(window.location.search));
   // A notification's link to an extension command or panel; run once, after the boot project.
   const [bootDeepLink] = useState(takeDeepLinkFromLocation);
   const bootDeepLinkRanRef = useRef(false);
@@ -250,6 +253,10 @@ export function App() {
         if (urlState.assistant) openAssistantFromAddress(urlState.assistant);
         // A `/files?path=` address opens the file browser the same way: over whatever is on screen.
         if (urlState.filesPath) openFileBrowserFromAddress(urlState.filesPath);
+        // ?openVault=<id> (a vault card's Telegram notice): Settings → Vault, on that item.
+        const vaultLink = initialVaultLinkRef.current;
+        initialVaultLinkRef.current = null;
+        if (vaultLink) openVaultFromAddress(vaultLink);
       };
       if (projects.length === 0) {
         openAssistantFromUrl();
@@ -263,7 +270,7 @@ export function App() {
       if (!target) {
         target = resolveOrder(projects, customOrder)[0];
       }
-      if (!target) return;
+      if (!target) { openAssistantFromUrl(); return; }
 
       // Hydrate server workspace into localStorage BEFORE activating project.
       // setActiveProject triggers switchProject which creates an empty layout

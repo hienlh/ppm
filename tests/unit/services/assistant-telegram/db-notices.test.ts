@@ -260,3 +260,38 @@ describe("a connection that needs a login", () => {
     expect(t.links).toEqual([{ project: "", provider: null, id: "chat-7" }]);
   });
 });
+
+describe("a vault card on Telegram", () => {
+  const SEALED_ID = "3f3bc54c-543e-4f89-bba2-58693cc4507f";
+  it("names the item, the tier and the ask, and opens PPM on the chat and on the item, with no value and no way to answer", async () => {
+    const a = connectChat(freshChat());
+    let announce: ((sessionId: string, requestId: string, input: never) => void) | null = null;
+    const n = new AssistantTelegramDbNotices({
+      queue: queueFor(client),
+      events: createDbAttentionEvents(),
+      quiet: fakeQuiet(null).deps,
+      chatLink: async () => "https://ppm.example.com/project/visa?openChat=claude/chat-1",
+      pathLink: async (path) => `https://ppm.example.com${path}`,
+      describe: () => ({ project: "visa", providerId: "claude", title: "Visa form" }),
+      onVaultCard: (listener) => { announce = listener as never; return () => { announce = null; }; },
+    });
+    n.attach();
+    notices.push(n);
+    announce!("chat-1", "r1", {
+      kind: "read-sealed", requester: { sessionTitle: "Visa form", assistant: false, fromTelegram: false },
+      purpose: "Copy CANARY-PURPOSE into the form", item: { id: SEALED_ID, name: "Passport", kind: "passport" },
+      allowGiveToAi: true, attemptsLeft: 5, lockedUntil: 0,
+    } as never);
+    await fake.waitFor(() => texts(fake, a).length === 1);
+    const text = texts(fake, a)[0]!;
+    expect(text).toContain("Passport");
+    expect(text).toContain("Sealed");
+    expect(text).toContain("never here");
+    expect(text).not.toContain("CANARY");
+    const sent = fake.sent(Number(a));
+    const buttons = fake.buttons(Number(a), sent[0]!.message_id).flat() as Array<{ text: string; url?: string; callback_data?: string }>;
+    expect(buttons.map((b) => b.text)).toEqual(["Open in PPM", "Open Vault"]);
+    expect(buttons.every((b) => !b.callback_data)).toBe(true);
+    expect(buttons[1]!.url).toBe(`https://ppm.example.com/?openVault=${SEALED_ID}`);
+  });
+});

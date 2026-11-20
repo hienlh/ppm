@@ -14,7 +14,7 @@ import { TelegramBotClient } from "../../../../src/services/telegram/telegram-bo
 import { TELEGRAM_API_BASE_ENV } from "../../../../src/services/telegram/telegram-api-base.ts";
 import { startFakeTelegram } from "../../../helpers/fake-telegram-bot-api.ts";
 import { quoteCard, quoteTelegramMessage } from "../../../../src/services/assistant-telegram/assistant-telegram-reply-quote.ts";
-import { VAULT_NOTICE_HTML } from "../../../../src/services/assistant-telegram/assistant-telegram-db-notices.ts";
+import { vaultNoticeHtml } from "../../../../src/services/assistant-telegram/assistant-telegram-db-notices.ts";
 import { deliverCardFollowup } from "../../../../src/services/assistant-cards/card-reply-followup.ts";
 
 afterEach(() => turnSecretScrubber.clear());
@@ -131,7 +131,15 @@ describe("Telegram", () => {
       const all = JSON.stringify(fake.sent(4242));
       expect(all).not.toContain("CANARY");
       expect(all.match(/\[vault:NI\]/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
-      expect(VAULT_NOTICE_HTML).not.toMatch(/secure|sealed|NI|passport/i);
+      // The vault's own notice names the item and the tier, never the AI's purpose (its own text).
+      const notice = vaultNoticeHtml({ project: "p", providerId: "claude", title: "Visa" }, {
+        kind: "read-sealed", requester: { sessionTitle: "Visa", assistant: false, fromTelegram: false },
+        purpose: "fill the form with CANARY-T2-purpose", item: { id: "i1", name: "Passport", kind: "passport" },
+        allowGiveToAi: true, attemptsLeft: 5, lockedUntil: 0,
+      });
+      expect(notice).toContain("Passport");
+      expect(notice).toContain("Sealed");
+      expect(notice).not.toContain("CANARY");
     } finally {
       fake.stop();
       if (saved === undefined) delete process.env[TELEGRAM_API_BASE_ENV];
