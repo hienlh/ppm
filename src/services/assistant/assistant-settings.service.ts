@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { configService } from "../config.service.ts";
 import {
   maskAssistantSettings, readAssistantSettings,
-  type AssistantMainSession, type AssistantMcpServer, type AssistantProviderDefaults, type AssistantSettings, type AssistantSettingsView,
+  type AssistantMainSession, type AssistantMcpServer, type AssistantPermissionMode, type AssistantProviderDefaults, type AssistantSettings, type AssistantSettingsView,
 } from "../../shared/assistant-settings.ts";
 import { assistantDisplayName } from "../../shared/assistant-persona.ts";
 
@@ -45,12 +45,38 @@ export function assistantProviderDefaults(providerId: string): AssistantProvider
  * be read gives the strict answer — no read-only shortcut, no acting on its own — since a policy
  * must not loosen because its configuration failed.
  */
-export function assistantPolicySwitches(): { autoReadonlyCommands: boolean; actOnOwn: boolean } {
+/**
+ * The permission switches as the policies read them. Full mode includes acting on its own: every
+ * path that already asks `actOnOwn` (provider tools, Edit/Write being offered, Codex's sandbox)
+ * follows Full with no second flag, and `fullMode` adds what only Full does (PPM's own cards).
+ * Unreadable settings answer the strictest values.
+ */
+export function assistantPolicySwitches(): { autoReadonlyCommands: boolean; actOnOwn: boolean; fullMode: boolean } {
   try {
     const s = getAssistantSettings();
-    return { autoReadonlyCommands: s.auto_readonly_commands, actOnOwn: s.act_on_own };
+    const fullMode = s.permission_mode === "full";
+    return { autoReadonlyCommands: s.auto_readonly_commands, actOnOwn: s.act_on_own || fullMode, fullMode };
   } catch {
-    return { autoReadonlyCommands: false, actOnOwn: false };
+    return { autoReadonlyCommands: false, actOnOwn: false, fullMode: false };
+  }
+}
+
+/**
+ * Whether a save changed what an Assistant subprocess fixes when it starts: Edit/Write being
+ * offered (acting on its own, which Full includes) and the mode section of its instructions.
+ * Everything else about the mode is read per call and needs no restart.
+ */
+export function startupPermissionsChanged(before: AssistantSettings, after: AssistantSettings): boolean {
+  const fixed = (s: AssistantSettings) => `${s.act_on_own || s.permission_mode === "full"}/${s.permission_mode === "full"}`;
+  return fixed(before) !== fixed(after);
+}
+
+/** Connection ids the user lets the Assistant write to without a card in Full mode. */
+export function assistantDbWriteConnections(): ReadonlySet<number> {
+  try {
+    return new Set(getAssistantSettings().db_write_connections);
+  } catch {
+    return new Set();
   }
 }
 
@@ -62,6 +88,14 @@ export function enabledAssistantMcpServers(): AssistantMcpServer[] {
 /** Stores the main session as given; `assistant-main-session.ts` decides what may be stored. */
 export function writeMainSessionSetting(value: AssistantMainSession | null): void {
   configService.set("assistant", { ...getAssistantSettings(), main_session: value });
+}
+
+/** The "PPM has new features" answer for Full mode; every other setting keeps its stored value. */
+export function writeAssistantPermissionMode(mode: AssistantPermissionMode): void {
+  const before = getAssistantSettings();
+  const next = { ...before, permission_mode: mode };
+  configService.set("assistant", next);
+  notifySaved(before, next);
 }
 
 /** Whether two stored URLs (both validated as http/https on the way in) share scheme, host and port. */
@@ -134,22 +168,35 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
     restart_news: sentKey("restart_news") ? value.restart_news : saved.restart_news,
     auto_readonly_commands: sentKey("auto_readonly_commands") ? value.auto_readonly_commands : saved.auto_readonly_commands,
     act_on_own: sentKey("act_on_own") ? value.act_on_own : saved.act_on_own,
+    db_write_connections: sentKey("db_write_connections") ? value.db_write_connections : saved.db_write_connections,
     ...(timezone ? { timezone } : {}),
   };
+  // Not chosen yet stays absent (the new-features question is still open); a save that names
+  // the mode decides it.
+  const permissionMode = sentKey("permission_mode") ? value.permission_mode : saved.permission_mode;
+  if (permissionMode) next.permission_mode = permissionMode;
+  else delete next.permission_mode;
   configService.set("assistant", next);
-  for (const listener of [...savedListeners]) {
-    try { listener(); } catch { /* a listener's own problem; the save stands */ }
-  }
+  notifySaved(saved, next);
   return { ok: true, settings: maskAssistantSettings(next) };
 }
 
-const savedListeners = new Set<() => void>();
+type SavedListener = (before: AssistantSettings, after: AssistantSettings) => void;
+const savedListeners = new Set<SavedListener>();
+
+function notifySaved(before: AssistantSettings, after: AssistantSettings): void {
+  for (const listener of [...savedListeners]) {
+    try { listener(before, after); } catch { /* a listener's own problem; the save stands */ }
+  }
+}
 
 /**
- * Hears every settings save from the pane, so a schedule that reads them (the morning digest's
- * timer) is recomputed at once instead of at its next fire. The returned function unsubscribes.
+ * Hears every settings save, from the pane or the new-features answer, with the settings before
+ * and after it: a schedule that reads them (the morning digest's timer) is recomputed at once, and
+ * an open Assistant chat restarts when the switches it was started with changed. The returned
+ * function unsubscribes.
  */
-export function onAssistantSettingsSaved(listener: () => void): () => void {
+export function onAssistantSettingsSaved(listener: SavedListener): () => void {
   savedListeners.add(listener);
   return () => { savedListeners.delete(listener); };
 }

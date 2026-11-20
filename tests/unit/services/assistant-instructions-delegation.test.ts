@@ -38,7 +38,8 @@ describe("hand project work to project chats", () => {
   it("offers a manager chat or a one-off work chat when a project has none, without choosing", () => {
     expect(ASSISTANT_DELEGATION_SECTION).toContain("(`create_session` with `manager: true`)");
     expect(ASSISTANT_DELEGATION_SECTION).toContain("(`create_session` with the task)");
-    expect(ASSISTANT_DELEGATION_SECTION).toContain("Each is one card. Pick only if the user already said which.");
+    expect(ASSISTANT_DELEGATION_SECTION.replace(/\s+/g, " ")).toContain("Each is one card, or none in Full mode. Pick only if the user already said which.");
+    expect(ASSISTANT_DELEGATION_SECTION).toContain("company director's assistant");
     expect(ASSISTANT_CHATS_SUBSECTIONS).toContain('offer the choice "Hand project work to\n  project chats" describes');
   });
 
@@ -46,7 +47,7 @@ describe("hand project work to project chats", () => {
     const flat = ASSISTANT_DELEGATION_SECTION.replace(/\s+/g, " ");
     expect(flat).toContain("there is no Edit or Write");
     expect(flat).toContain("in Codex a file change you try is declined with no message");
-    expect(flat).toContain('unless a section "Acting on your own" below says otherwise');
+    expect(flat).toContain('unless a section "Acting on your own" or "Full mode" below says otherwise');
   });
 
   it("says which commands run unasked, and that one on the current folder always asks", () => {

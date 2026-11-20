@@ -9,6 +9,7 @@ import { useAssistantTelegramBinding } from "@/hooks/use-assistant-telegram-bind
 import { ASSISTANT_SETTINGS_LABEL } from "./assistant-title-extras";
 import { useAssistantShortName } from "@/stores/assistant-name-store";
 import { TelegramQuietHeadButton } from "./telegram-quiet-button";
+import { AssistantModeHeadButton } from "./assistant-mode-button";
 
 export function AssistantHead({ sessionId }: { sessionId: string | null }) {
   const { chatsOn } = useAssistantTelegramBinding();
@@ -26,6 +27,7 @@ export function AssistantHead({ sessionId }: { sessionId: string | null }) {
         </span>
       )}
       <span className="ml-auto" />
+      <AssistantModeHeadButton />
       <TelegramQuietHeadButton />
       <button
         type="button"

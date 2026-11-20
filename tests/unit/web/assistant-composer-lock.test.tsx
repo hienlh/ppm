@@ -1,7 +1,7 @@
 /**
- * The PPM Assistant always asks before it changes anything — the server forces that — so its
- * composer must not offer a permission mode it cannot have: the chip shows "ask first",
- * disabled, with the reason, and neither a click nor Shift+Tab changes it. Its virtual
+ * The PPM Assistant's permissions are its own Full/Ask, switched from its window — the
+ * composer's permission modes do not apply to it — so its composer shows no mode chip and
+ * Shift+Tab changes nothing. Its virtual
  * project has no files either, so `@` opens no file picker and fetches no file index.
  */
 import { afterAll, afterEach, expect, it, spyOn } from "bun:test";
@@ -30,18 +30,12 @@ function stubGet() {
 
 const chips = () => [...view!.container.querySelectorAll("button[aria-label^='Permission mode']")];
 
-it("shows the ask-first mode, disabled with its reason, whatever the metadata says", async () => {
+it("shows no mode chip, whatever the metadata says", async () => {
   stubGet();
   const modes: string[] = [];
   view = await mount(<MessageInput projectName="__assistant__" onSend={() => {}} permissionMode="bypassPermissions"
     permissionLocked onModeChange={(m) => modes.push(m)} />);
-  expect(chips().length).toBeGreaterThan(0);
-  for (const chip of chips()) {
-    expect(chip.getAttribute("aria-disabled")).toBe("true");
-    expect(chip.getAttribute("aria-label")).toContain("Ask before edits");
-    expect(chip.getAttribute("title")).toContain("always asks");
-  }
-  await click(chips()[0]!);
+  expect(chips()).toEqual([]);
   expect(view.container.querySelector("[aria-label='Permission modes']")).toBeNull();
 
   const textarea = view.container.querySelector("textarea")!;
@@ -54,7 +48,6 @@ it("shows the ask-first mode, disabled with its reason, whatever the metadata sa
 it("still opens the mode picker in an ordinary chat", async () => {
   stubGet();
   view = await mount(<MessageInput projectName="ppm" onSend={() => {}} permissionMode="default" onModeChange={() => {}} />);
-  for (const chip of chips()) expect(chip.getAttribute("aria-disabled")).toBeNull();
   await click(chips()[0]!);
   expect(view.container.querySelector("[aria-label='Permission modes']")).not.toBeNull();
 });

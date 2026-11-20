@@ -172,5 +172,7 @@ export const assistantTurnProvenance = createTurnProvenanceTracker({
 
 chatLifecycle.on("user_message", (m) => assistantTurnProvenance.noteMessage(m));
 chatLifecycle.on("stream", (s) => assistantTurnProvenance.noteToolUse(s.sessionId, s.event));
-chatLifecycle.on("turn_ended", (e) => assistantTurnProvenance.turnEnded(e.sessionId));
+// A builtin answered mid-turn (`turnStillRunning`) is not the end: forgetting the turn there would
+// let the user's next message re-open a PPM-started turn as their own (Full mode reads `startedBy`).
+chatLifecycle.on("turn_ended", (e) => { if (!e.turnStillRunning) assistantTurnProvenance.turnEnded(e.sessionId); });
 chatLifecycle.on("migrated", (e) => assistantTurnProvenance.migrated(e.oldSessionId, e.newSessionId));

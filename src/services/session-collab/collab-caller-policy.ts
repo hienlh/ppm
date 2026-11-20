@@ -11,7 +11,9 @@ import type { CollabCaller } from "./collab-context.ts";
  * - The PPM Assistant may create and message chats in any registered project. A message to a
  *   project's manager chat goes without a card, within the limits `collab-send-manager.ts`
  *   applies; every other message and every create is shown to the user on a card first, whatever
- *   the settings say. Its cards are answered once, never "for this session".
+ *   the settings say — unless the Assistant is in Full mode and the user started the turn, when
+ *   `collab-env.ts` answers that card itself (`assistant-full-mode.ts`). Its cards are answered
+ *   once, never "for this session".
  * - In an unattended Assistant turn (PPM started it, nobody has written in it since) nothing that
  *   would show a card runs, and nothing is asked: such a turn carries other chats' words, and a
  *   card in it is the shortest path from injected text to an action. It may still message a

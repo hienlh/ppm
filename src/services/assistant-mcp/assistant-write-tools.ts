@@ -54,6 +54,7 @@ export async function runApprovedQuery(
     tool: DB_QUERY_TOOL,
     input: { connection: conn.name, sql },
     summary: dbWriteSummary({ connection: { name: conn.name, type: conn.type, readonly: !!conn.readonly, folder: conn.group_name }, dialect, sql }),
+    connectionId: conn.id,
   });
   if (verdict.verdict !== "approved") {
     const message = `Not run: this query may change data or the server's state (${why}), and the user's approval was not given — ${verdict.reason}`;

@@ -11,7 +11,11 @@
 export async function answerFeatureIntrosAtStartup(answer: "on" | "off" = "off"): Promise<void> {
   const { answerFeatureIntro } = await import("../../../src/services/feature-intros.service");
   const { FEATURE_INTROS } = await import("../../../src/shared/feature-intros");
+  // PPM_FIXTURE_LEAVE_INTROS (comma-separated ids) keeps those questions unanswered, so a
+  // screenshot run can show the "PPM has new features" step the install has not yet answered.
+  const leave = new Set((process.env.PPM_FIXTURE_LEAVE_INTROS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
   for (const intro of FEATURE_INTROS) {
+    if (leave.has(intro.id)) continue;
     const result = answerFeatureIntro(intro.id, answer);
     if (!result.ok) throw new Error(`Could not answer the feature introduction ${intro.id}`);
   }

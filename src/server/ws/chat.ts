@@ -83,7 +83,7 @@ import {
 } from "./chat-deliver-user-message.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
 import { collabCardForListeners, settleCollabApprovalFromServer } from "./chat-collab-approval-relay.ts";
-import { assistantProviderDefaults } from "../../services/assistant/assistant-settings.service.ts";
+import { assistantProviderDefaults, onAssistantSettingsSaved, startupPermissionsChanged } from "../../services/assistant/assistant-settings.service.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
 import type { ReplyReference } from "../../shared/chat-reply.ts";
 import { CHAT_CLIENT_ID_PARAM, CHAT_NON_VIEWER_PARAM, chatClientIdFrom } from "../../shared/chat-client-id.ts";
@@ -470,8 +470,13 @@ export interface SessionEntry extends BackgroundTaskState {
   approvalDeadlines?: Map<string, ReturnType<typeof setTimeout>>;
   /** The first error the running (or last) turn reported, for an extension polling `chat:state`. */
   lastError?: string;
-  /** The extension that bound this chat changed what it bound; restart the subprocess when idle. */
+  /**
+   * Something the subprocess fixed when it started changed (an extension's binding, the PPM
+   * Assistant's permission switches): restart it when idle.
+   */
   bindingRestartPending?: boolean;
+  /** Why, for the log and the reason the abort carries; an extension binding when absent. */
+  restartWhy?: { reason: string; note: string };
 }
 
 /** An extension's message refused because the next turn already belongs to someone else. */
@@ -2933,12 +2938,33 @@ function restartForBindingIfIdle(sessionId: string): void {
     || (entry.messagesArriving ?? 0) > 0 || entry.nextTurnOrigin !== undefined || hasBackgroundWork(sessionId);
   if (busy) return;
   entry.bindingRestartPending = false;
-  dropIdleSubprocess(
-    sessionId,
-    "extension_binding",
-    "Subprocess restarted: the extension that manages this chat changed its instructions, tools or policy, the next message starts under them",
-  );
+  const why = entry.restartWhy ?? {
+    reason: "extension_binding",
+    note: "Subprocess restarted: the extension that manages this chat changed its instructions, tools or policy, the next message starts under them",
+  };
+  entry.restartWhy = undefined;
+  dropIdleSubprocess(sessionId, why.reason, why.note);
 }
+
+/**
+ * The PPM Assistant's permission switches changed in a way a running subprocess cannot follow
+ * (Edit/Write are offered when the CLI starts, and the mode's section is in its instructions):
+ * every open Assistant chat restarts at its first idle moment, the same way a binding change
+ * does — at once when idle, never in the middle of a turn, a card or background work. What the
+ * mode decides per call (PPM's own cards, commands, the hard limits) has already changed.
+ */
+onAssistantSettingsSaved((before, after) => {
+  if (!startupPermissionsChanged(before, after)) return;
+  for (const [id, entry] of activeSessions) {
+    if (!isAssistantSession(id, entry.projectPath)) continue;
+    entry.bindingRestartPending = true;
+    entry.restartWhy = {
+      reason: "assistant_permissions",
+      note: "Subprocess restarted: the Assistant's permission mode changed, the next message starts under it",
+    };
+    restartForBindingIfIdle(id);
+  }
+});
 
 /**
  * A fresh registry entry for a session, with `client` attached, or socketless without one. A

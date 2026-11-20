@@ -113,3 +113,30 @@ describe("a secret answer and the session trace", () => {
     expect(JSON.stringify(rows)).not.toContain("sk-live-123");
   });
 });
+
+describe("Full mode at the asker", () => {
+  it("approves a card PPM may answer itself without showing it", async () => {
+    let delivered = 0;
+    const broker = createApprovalBroker({ deliver: () => { delivered++; return 1; } });
+    const seen: unknown[] = [];
+    const ask = approvalAskerFor("asst", undefined, broker, () => false, async (_s, a) => { seen.push(a.connectionId); return true; });
+    expect(await ask({ tool: "db_query", input: {}, summary: { title: "x" } as never, connectionId: 4 })).toEqual({ verdict: "approved" });
+    expect(delivered).toBe(0);
+    expect(seen).toEqual([4]);
+  });
+
+  it("never runs in a watch turn: refused before Full mode is asked", async () => {
+    let asked = 0;
+    const ask = approvalAskerFor("asst", undefined, createApprovalBroker({ deliver: () => 1 }), () => true, async () => { asked++; return true; });
+    expect(await ask({ tool: "send_to_session", input: {}, summary: { title: "x" } as never })).toEqual({ verdict: "unavailable", reason: UNATTENDED_TURN_REFUSAL });
+    expect(asked).toBe(0);
+  });
+
+  it("shows the card when Full mode says no or fails", async () => {
+    let delivered = 0;
+    const broker = createApprovalBroker({ deliver: () => { delivered++; return 0; } });
+    await approvalAskerFor("asst", undefined, broker, () => false, async () => false)({ tool: "x", input: {}, summary: { title: "x" } as never });
+    await approvalAskerFor("asst", undefined, broker, () => false, async () => { throw new Error("boom"); })({ tool: "x", input: {}, summary: { title: "x" } as never });
+    expect(delivered).toBe(2);
+  });
+});

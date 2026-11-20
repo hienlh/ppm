@@ -75,9 +75,10 @@ function FeatureIntroStep({ intro, position, total }: { intro: FeatureIntro; pos
       <Button variant="outline" className="min-h-11" disabled={busy} onClick={() => void answer(intro.id, "off")}>Turn off</Button>
     </div>
     <Button variant="ghost" className="w-full min-h-11 mt-1" disabled={busy} onClick={() => void later(intro.id)}>Later</Button>
-    {/* Deciding there is answering, so this hides the part without counting a skip. */}
-    <Button variant="link" className="w-full min-h-11 text-xs" onClick={() => { hide(); openSettings("tools"); }}>
-      Change single tools in Settings → Tools
+    {/* Deciding there is answering, so this hides the part without counting a skip. A feature that
+        is one setting is changed where that setting lives, not among the tools. */}
+    <Button variant="link" className="w-full min-h-11 text-xs" onClick={() => { hide(); openSettings(intro.setting ? "assistant" : "tools"); }}>
+      {intro.setting ? "Choose in Settings → PPM Assistant instead" : "Change single tools in Settings → Tools"}
     </Button>
   </div>;
 }

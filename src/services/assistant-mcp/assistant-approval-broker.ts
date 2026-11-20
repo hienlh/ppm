@@ -57,7 +57,31 @@ export interface ApprovalAsk {
   tool: string;
   input: Record<string, unknown>;
   summary: ApprovalSummary;
+  /** For a database write: the connection's id, which Full mode checks against the writable list. Never shown. */
+  connectionId?: number;
+  /** The action reaches a folder PPM keeps private (`assistant-private-paths.ts`). Never shown. */
+  touchesPrivate?: boolean;
 }
+
+/**
+ * Whether PPM answers this card itself (Full mode, `assistant-full-mode.ts`). Any failure counts
+ * as no: the card is shown.
+ */
+export type AutoApprove = (sessionId: string, ask: ApprovalAsk) => Promise<boolean>;
+
+/** The running server's Full mode, loaded on first use so this module stays light for its many importers. */
+export const fullModeAutoApprove: AutoApprove = async (sessionId, ask) => {
+  const [{ assistantFullMode }, { resolveMigratedSession }] = await Promise.all([
+    import("../assistant/assistant-full-mode-live.ts"),
+    import("../db.service.ts"),
+  ]);
+  const verdict = await assistantFullMode.verdict(resolveMigratedSession(sessionId), {
+    tool: ask.tool, input: ask.input,
+    ...(ask.connectionId !== undefined ? { connectionId: ask.connectionId } : {}),
+    ...(ask.touchesPrivate ? { touchesPrivate: true } : {}),
+  });
+  return verdict.run;
+};
 
 /** Asks the user of one Assistant session; what the endpoint hands each tool that may change something. */
 export type AskApproval = (ask: ApprovalAsk) => Promise<ApprovalVerdict>;
@@ -207,17 +231,21 @@ export const assistantApprovalBroker = createApprovalBroker({
 /**
  * The asker one tool call gets: bound to its session and to the HTTP call it answers. In a turn
  * PPM started on its own it asks nobody and refuses (see `UNATTENDED_TURN_REFUSAL`): checked when
- * the tool asks, so a message the user types into that turn makes it theirs again.
+ * the tool asks, so a message the user types into that turn makes it theirs again. In Full mode a
+ * card PPM may answer itself is approved without being shown (`autoApprove`), after that check.
  */
 export function approvalAskerFor(
   sessionId: string,
   signal?: AbortSignal,
   broker: ApprovalBroker = assistantApprovalBroker,
   unattended: (sessionId: string) => boolean = isUnattendedTurn,
+  autoApprove: AutoApprove = fullModeAutoApprove,
 ): AskApproval {
-  return async (ask) => unattended(sessionId)
-    ? { verdict: "unavailable", reason: UNATTENDED_TURN_REFUSAL }
-    : broker.request(sessionId, ask, signal);
+  return async (ask) => {
+    if (unattended(sessionId)) return { verdict: "unavailable", reason: UNATTENDED_TURN_REFUSAL };
+    if (await autoApprove(sessionId, ask).catch(() => false)) return { verdict: "approved" };
+    return broker.request(sessionId, ask, signal);
+  };
 }
 
 /** The asker a tool falls back to outside an Assistant session's call: nobody to ask, so nothing runs. */

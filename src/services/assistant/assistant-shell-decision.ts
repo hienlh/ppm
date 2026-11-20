@@ -7,6 +7,7 @@ import { assistantPolicySwitches } from "./assistant-settings.service.ts";
 import { classifyBashCommand } from "./readonly-shell/bash-readonly-classifier.ts";
 import type { ReadonlyShellContext } from "./readonly-shell/readonly-path-check.ts";
 import { ask, type ShellVerdict } from "./readonly-shell/shell-verdict.ts";
+import { commandSendsOut, mcpToolSendsOut } from "./assistant-outbound-action.ts";
 
 /**
  * The PPM Assistant's permission decisions beyond the synchronous path rules of
@@ -115,6 +116,9 @@ export async function assistantClaudeDecision(
   if (shell && (command === null || commandMentionsPrivateRoot(command, ctx.home ?? homedir(), ctx.env))) {
     return { decision: "ask", reason: "the command names a private folder" };
   }
+  // Pushing, publishing and sending to other people still need the user, as in Full mode's own cards.
+  const sendsOut = shell && command !== null ? commandSendsOut(command) : mcpToolSendsOut(toolName);
+  if (sendsOut) return { decision: "ask", reason: `${sendsOut} still needs the user` };
   if (PATH_TOOLS.has(toolName) && assistantToolTouchesPrivate(toolName, input, ctx)) {
     return { decision: "ask", reason: "it reaches a private folder" };
   }

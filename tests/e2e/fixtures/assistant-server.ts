@@ -88,6 +88,10 @@ configService.set("ai", {
     codex: { type: "mock", permission_mode: "bypassPermissions" },
   },
 });
+// PPM_ASSISTANT_ANSWER_INTROS=1 answers every "PPM has new features" question at startup, "off"
+// unless PPM_FIXTURE_LEAVE_INTROS names it (assistant-full-mode-e2e.mjs). Off by default: other
+// suites rely on the questions being pending.
+if (process.env.PPM_ASSISTANT_ANSWER_INTROS === "1") await (await import("./answer-feature-intros")).answerFeatureIntrosAtStartup();
 const managerLoop = process.env.PPM_ASSISTANT_MANAGER_LOOP === "1"
   ? await (await import("./assistant-manager-fixture")).setupManagerLoop({ port })
   : null;

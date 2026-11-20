@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { providerRegistry } from "../../providers/registry.ts";
 import { assistantSettingsView, saveAssistantSettings } from "../../services/assistant/assistant-settings.service.ts";
-import { ASSISTANT_INSTRUCTIONS_MAX_CHARS, ASSISTANT_MCP_MAX_SERVERS } from "../../shared/assistant-settings.ts";
+import {
+  ASSISTANT_INSTRUCTIONS_MAX_CHARS, ASSISTANT_MCP_MAX_SERVERS, ASSISTANT_PERMISSION_MODE_EVENT, type AssistantPermissionModeEvent,
+} from "../../shared/assistant-settings.ts";
 import { RULES_FILE_MAX_BYTES } from "../../shared/assistant-limits.ts";
 import { DEFAULT_MANAGER_RULES_TEMPLATE } from "../../services/assistant-managers/manager-rules-default-template.ts";
 import { createLogger } from "../../services/logger.ts";
@@ -10,6 +12,9 @@ import { assistantManagerRoutes } from "./assistant-managers.ts";
 import { assistantCardRoutes } from "./assistant-cards.ts";
 import { assistantNotesRoutes } from "./assistant-notes.ts";
 import { ok, err } from "../../types/api.ts";
+import { settleFeaturesDecidedInSettings } from "../../services/feature-intros.service.ts";
+import { FEATURE_INTROS_CHANGED_EVENT } from "../../shared/feature-intros.ts";
+import { broadcastGlobalEvent } from "../ws/global.ts";
 
 /** Counts and names only: a server's settings carry secrets. */
 const log = createLogger("assistant-settings");
@@ -68,6 +73,14 @@ assistantSettingsRoutes.put("/settings", async (c) => {
     const result = saveAssistantSettings(body, (id) => supported.has(id));
     if (!result.ok) return c.json(err(result.errors.join("; ")), 400);
     log.info(`Saved: ${result.settings.mcp_servers.length} MCP server(s): ${result.settings.mcp_servers.map((s) => s.name).join(", ") || "none"}`);
+    // Choosing Full or Ask here answers the "PPM has new features" question for it on every device.
+    const named = typeof body === "object" && body !== null && "permission_mode" in body;
+    if (named) {
+      log.info(`Permission mode: ${result.settings.permission_mode ?? "not chosen"}`);
+      const event: AssistantPermissionModeEvent = { type: ASSISTANT_PERMISSION_MODE_EVENT, mode: result.settings.permission_mode ?? null };
+      broadcastGlobalEvent(event);
+      if (settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
+    }
     return c.json(ok(payload()));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
