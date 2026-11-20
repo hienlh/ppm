@@ -5,8 +5,9 @@
  * failure says what failed and offers Retry and Remove.
  */
 import { useEffect, useState, type ReactNode } from "react";
-import { AlertTriangle, Loader2, Mic, RotateCw, Sparkles, Trash2 } from "@/lib/icons";
+import { AlertTriangle, Loader2, Mic, RotateCw, Trash2 } from "@/lib/icons";
 import { transcriptFooter } from "@/lib/voice-message-compose";
+import { VoiceTimingLine } from "./voice-timing-line";
 import type { VoiceDraft } from "@/hooks/use-voice-message-draft";
 import { cn } from "@/lib/utils";
 
@@ -55,10 +56,11 @@ export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, on
             <FailureNotice message="The recording could not be uploaded, so it cannot be sent yet." onRetry={onRetry} onRemove={onRemove} />
           )}
           <TranscriptEditor key={draft.id} initial={transcript.shown} onChange={onTextChange} onSubmit={onSubmit} disabled={disabled} />
-          <p className="flex items-center gap-1 text-[11px] text-text-3">
-            {transcript.cleaned && <Sparkles className="size-3 shrink-0 text-accent-2" />}
-            {transcriptFooter({ ...transcript, reviewBeforeSend })}
-          </p>
+          <VoiceTimingLine
+            timings={transcript.timings}
+            next={reviewBeforeSend || !transcript.cleaned ? "read it, then send" : "sending when ready"}
+            fallback={transcriptFooter({ ...transcript, reviewBeforeSend })}
+          />
         </>
       )}
     </div>

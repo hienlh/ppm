@@ -45,6 +45,8 @@ export interface ProcessVoiceResult {
   text: string;
   cleaned: boolean;
   cleanupError?: string;
+  /** Turning the recording into Whisper's WAV on the host (0 when it already was one). */
+  convertMs: number;
   transcribeMs: number;
   cleanupMs: number;
 }
@@ -85,7 +87,9 @@ export async function processVoiceMessage(
   if (input.audio.byteLength > MAX_VOICE_AUDIO_BYTES) throw new VoiceMessageError("too_long", "The recording is too large");
   if (!deps.whisperReady()) throw new VoiceMessageError("whisper_missing", "Whisper is not installed on this host");
 
+  const convertStarted = Date.now();
   const wav = await toWhisperWav(input.audio);
+  const convertMs = Date.now() - convertStarted;
   const seconds = wavDurationSec(wav);
   if (seconds !== null && seconds > VOICE_MAX_SECONDS + DURATION_SLACK_SEC) {
     throw new VoiceMessageError("too_long", `A voice message can be at most ${VOICE_MAX_SECONDS / 60} minutes long`);
@@ -110,16 +114,16 @@ export async function processVoiceMessage(
     throw new VoiceMessageError("transcribe_failed", message);
   }
   const raw = transcript.text.trim();
-  if (!raw) return { raw: "", text: "", cleaned: false, transcribeMs: transcript.ms, cleanupMs: 0 };
+  if (!raw) return { raw: "", text: "", cleaned: false, convertMs, transcribeMs: transcript.ms, cleanupMs: 0 };
 
   const started = Date.now();
   const cleanup = await cleanupTranscript(raw, await context, deps.ask);
   const cleanupMs = Date.now() - started;
   if (!cleanup.ok) {
     log.warn(`clean-up failed, keeping the raw transcript: ${cleanup.error}`);
-    return { raw, text: raw, cleaned: false, cleanupError: cleanup.error, transcribeMs: transcript.ms, cleanupMs };
+    return { raw, text: raw, cleaned: false, cleanupError: cleanup.error, convertMs, transcribeMs: transcript.ms, cleanupMs };
   }
-  return { raw, text: cleanup.text, cleaned: true, transcribeMs: transcript.ms, cleanupMs };
+  return { raw, text: cleanup.text, cleaned: true, convertMs, transcribeMs: transcript.ms, cleanupMs };
 }
 
 export interface LearnFromEditInput {

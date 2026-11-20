@@ -116,7 +116,11 @@ describe("/voice-message", () => {
   it("passes the fields on and answers with the review setting", async () => {
     await put({ enabled: true, reviewBeforeSend: false });
     const res = await postVoice({ audio: audio(), project: "demo", sessionId: "s1", providerId: "codex", typed: "ảnh", lang: "en" });
-    expect((await json(res)).data).toEqual({ ...CLEANED, reviewBeforeSend: false });
+    const data = (await json(res)).data;
+    expect(data).toMatchObject({ ...CLEANED, reviewBeforeSend: false });
+    // The step timings the composer shows: reading the upload, then the whole handler.
+    expect(data.receiveMs).toBeGreaterThanOrEqual(0);
+    expect(data.serverMs).toBeGreaterThanOrEqual(data.receiveMs);
     expect(processed[0]).toMatchObject({ project: "demo", sessionId: "s1", providerId: "codex", typed: "ảnh", lang: "en" });
     expect(processed[0]!.audio).toBeInstanceOf(Uint8Array);
   });

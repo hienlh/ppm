@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { recordingToWav } from "@/lib/voice-wav";
 import { randomId } from "@/lib/utils";
 import { postVoiceMessage, VoiceMessageError } from "@/lib/voice-message-client";
+import type { VoiceTimings } from "@/lib/voice-message-timings";
 import { transcriptFailureAction, voiceFileName } from "@/lib/voice-message-compose";
 import type { VoicePart } from "../../shared/voice-message";
 import type { VoiceRecording } from "./use-voice-message-recorder";
@@ -23,6 +24,8 @@ export interface VoiceDraft {
     cleanupError?: string;
     transcribeMs: number;
     cleanupMs: number;
+    /** Each step's seconds, for the line under the transcript. */
+    timings?: VoiceTimings;
     /** The server's setting when it answered: fresher than the one the composer read at mount. */
     reviewBeforeSend?: boolean;
     error?: string;
@@ -100,10 +103,17 @@ export function useVoiceMessageDraft(deps: VoiceDraftDeps) {
     const { project, sessionId, providerId, getTyped } = depsRef.current;
     patch(id, (d) => ({ ...d, transcript: { ...d.transcript, status: "processing", startedAt: Date.now(), error: undefined } }));
     try {
+      const convertStarted = performance.now();
       const wav = await recordingToWav(recording.blob);
+      const requestStarted = performance.now();
       const result = await postVoiceMessage({
         wav, project: project ?? "", sessionId, providerId, typed: getTyped().trim() || undefined, signal: controller.signal,
       });
+      const timings: VoiceTimings = {
+        browserConvertMs: requestStarted - convertStarted, requestMs: performance.now() - requestStarted,
+        serverMs: result.serverMs, receiveMs: result.receiveMs, convertMs: result.convertMs,
+        transcribeMs: result.transcribeMs, cleanupMs: result.cleanupMs, cleaned: result.cleaned,
+      };
       if (draftRef.current?.id !== id) return;
       if (!result.text.trim()) {
         clear(false);
@@ -117,7 +127,7 @@ export function useVoiceMessageDraft(deps: VoiceDraftDeps) {
         transcript: {
           status: "ready", startedAt: d.transcript.startedAt, shown: result.text, cleaned: result.cleaned,
           cleanupError: result.cleanupError, transcribeMs: result.transcribeMs, cleanupMs: result.cleanupMs,
-          reviewBeforeSend: result.reviewBeforeSend,
+          timings, reviewBeforeSend: result.reviewBeforeSend,
         },
       }));
     } catch (e) {

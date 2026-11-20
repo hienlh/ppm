@@ -82,7 +82,10 @@ describe("processVoiceMessage", () => {
 
   it("asks nothing for an empty transcript", async () => {
     const { d, seen } = deps({ transcribe: async () => ({ text: "  ", ms: 3 }) });
-    expect(await processVoiceMessage({ audio: wav(1), project: "demo" }, d)).toEqual({ raw: "", text: "", cleaned: false, transcribeMs: 3, cleanupMs: 0 });
+    const result = await processVoiceMessage({ audio: wav(1), project: "demo" }, d);
+    expect(result).toMatchObject({ raw: "", text: "", cleaned: false, transcribeMs: 3, cleanupMs: 0 });
+    // The host's conversion is timed too (a WAV needs none, so it is near zero).
+    expect(result.convertMs).toBeGreaterThanOrEqual(0);
     expect(seen.asks).toBe(0);
   });
 

@@ -96,12 +96,15 @@ export function registerVoiceMessageRoutes(routes: Hono, deps: VoiceRouteDeps): 
   });
 
   routes.post("/voice-message", async (c) => {
+    // Timed here so the composer can show where the wait went: receiving the upload, then the steps.
+    const handlerStarted = Date.now();
     if (!voiceMessagesEnabled()) return fail(c, 409, "Voice messages are turned off", "voice_messages_off");
     if (Number(c.req.header("content-length") ?? 0) > MAX_VOICE_AUDIO_BYTES + 64 * 1024) {
       return fail(c, 400, "The recording is too large", "too_long");
     }
     let body: Record<string, unknown>;
     try { body = await c.req.parseBody(); } catch { return fail(c, 400, "Expected a multipart form"); }
+    const receiveMs = Date.now() - handlerStarted;
     const audio = body.audio;
     if (!(audio instanceof Blob)) return fail(c, 400, "audio must be a file", "empty_audio");
     if (audio.size > MAX_VOICE_AUDIO_BYTES) return fail(c, 400, "The recording is too large", "too_long");
@@ -122,7 +125,9 @@ export function registerVoiceMessageRoutes(routes: Hono, deps: VoiceRouteDeps): 
       // The setting as it is now, nothing folded into it: a raw transcript (`cleaned: false`) always
       // waits for the user, and the client decides that from `cleaned`. Folding it in here made a
       // send queued before the text arrived read "review on" and go out unread.
-      return c.json(ok({ ...result, reviewBeforeSend: readVoiceSettings().review_before_send }));
+      return c.json(ok({
+        ...result, reviewBeforeSend: readVoiceSettings().review_before_send, receiveMs, serverMs: Date.now() - handlerStarted,
+      }));
     } catch (e) {
       if (e instanceof VoiceMessageError) return fail(c, STATUS[e.code], e.message, e.code);
       return fail(c, 500, (e as Error)?.message || "The voice message failed");

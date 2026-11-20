@@ -31,6 +31,10 @@ export interface VoiceTranscript {
   transcribeMs: number;
   cleanupMs: number;
   reviewBeforeSend: boolean;
+  /** The server's step timings, when it sends them. */
+  convertMs?: number;
+  receiveMs?: number;
+  serverMs?: number;
 }
 
 /** A failed transcript request; `code` is the server's (`whisper_missing` when Whisper is not installed). */
@@ -115,6 +119,9 @@ export async function postVoiceMessage(input: {
     transcribeMs: Number(d.transcribeMs) || 0,
     cleanupMs: Number(d.cleanupMs) || 0,
     reviewBeforeSend: d.reviewBeforeSend !== false,
+    ...(Number.isFinite(Number(d.convertMs)) && d.convertMs !== undefined && { convertMs: Number(d.convertMs) }),
+    ...(Number.isFinite(Number(d.receiveMs)) && d.receiveMs !== undefined && { receiveMs: Number(d.receiveMs) }),
+    ...(Number.isFinite(Number(d.serverMs)) && d.serverMs !== undefined && { serverMs: Number(d.serverMs) }),
   };
 }
 
