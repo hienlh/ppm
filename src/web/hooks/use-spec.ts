@@ -67,14 +67,20 @@ export function useSpec(projectName: string, slug: string | null) {
 }
 
 /** The spec a chat is bound to, looked up once per session (and again when a spec is created). */
+/**
+ * The spec a chat is bound to: `null` once the server said none, `undefined` while that is not
+ * known (loading, or the lookup failed). Only `null` may offer to start a spec in the chat —
+ * starting one in a chat that is in fact bound would take it off the spec it drives.
+ */
 export function useSessionSpec(projectName: string, sessionId: string | null | undefined) {
-  const [binding, setBinding] = useState<{ slug: string; taskId: string | null } | null>(null);
+  const [binding, setBinding] = useState<{ slug: string; taskId: string | null } | null | undefined>(undefined);
   const refresh = useCallback(async () => {
     if (!projectName || !sessionId) { setBinding(null); return; }
+    setBinding((b) => (b === null ? undefined : b));
     try {
       setBinding(await specsApi.bySession(projectName, sessionId));
     } catch {
-      setBinding(null);
+      setBinding(undefined);
     }
   }, [projectName, sessionId]);
   useEffect(() => { void refresh(); }, [refresh]);

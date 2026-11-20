@@ -3,10 +3,10 @@
  * scheduler or the CLI — goes through these functions, under one lock per spec, after asking
  * `spec-gates.ts` whether it may happen.
  */
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   loadSpecState, saveSpecState, readSpecDoc, writeSpecDoc, resolveSpecDir, listSpecSlugs, slugFromTitle,
-  bindSpecSession, hashFile, hasSpecState, SpecError,
+  bindSpecSession, hashFile, hasSpecState, specForSession, SpecError,
 } from "./spec-store.ts";
 import { evaluateSpec, type SpecEvaluation, type GateDocs } from "./spec-gates.ts";
 import type { SpecTaskView, SpecView } from "../../shared/spec-view.ts";
@@ -23,7 +23,7 @@ import {
   type SpecSummary, type SpecTaskState, type SpecWorkflow, type TaskStatus,
 } from "../../shared/spec-types.ts";
 import { createLogger } from "../logger.ts";
-import { resolveMigratedSession } from "../db.service.ts";
+import { resolveMigratedSession, sessionIdAliases } from "../db.service.ts";
 
 const log = createLogger("spec");
 
@@ -189,6 +189,15 @@ export interface CreateSpecInput {
 export async function createSpec(projectPath: string, input: CreateSpecInput): Promise<SpecView> {
   const title = input.title.trim().slice(0, 120);
   if (!title) throw new SpecError(400, "EBADTITLE", "A spec needs a title");
+  // A chat drives one spec. Starting another from it would silently take it off the one it
+  // drives — what the Workflow menu did when it offered "start here" before it knew the
+  // chat was bound. Moving a chat to another spec is attachSession's job, never a side effect.
+  if (input.sessionId) {
+    const bound = sessionIdAliases(input.sessionId).map((id) => specForSession(id)).find((b) => b !== null);
+    if (bound && resolve(bound.projectPath) === resolve(projectPath) && hasSpecState(bound.projectPath, bound.slug)) {
+      throw new SpecError(409, "EBOUND", "This chat already drives the spec \"" + bound.slug + "\"");
+    }
+  }
   let slug = input.slug && isValidSpecSlug(input.slug) ? input.slug : slugFromTitle(title) || "spec";
   const taken = new Set(await listSpecSlugs(projectPath));
   if (taken.has(slug)) {

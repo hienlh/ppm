@@ -296,7 +296,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     boundChecks: specState.spec?.checks ?? null,
     onTogglePane: () => setSpecPaneOpen((v) => !v),
     paneOpen: specPaneOpen,
-    onStartHere: sessionId && !designSlug && !specBinding ? startSpecHere : undefined,
+    onStartHere: sessionId && !designSlug && specBinding === null ? startSpecHere : undefined,
   }), [specStart, setSpecStart, sessionId, designSlug, specState.spec?.title, specState.spec?.checks, specPaneOpen, specBinding, startSpecHere]);
 
   /**

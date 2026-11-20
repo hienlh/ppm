@@ -74,6 +74,13 @@ describe("creating and approving", () => {
     expect((await svc.listSpecs(project)).map((s) => s.slug).sort()).toEqual(["export-chat", "export-chat-2"]);
   });
 
+  it("refuses to start a second spec from a chat that drives one, and leaves it bound", async () => {
+    await svc.createSpec(project, { title: "Linux OS", slug: "linux-os", sessionId: "s-bound" });
+    await expect(svc.createSpec(project, { title: "Linux OS disscus", sessionId: "s-bound" })).rejects.toMatchObject({ status: 409 });
+    expect(specForSession("s-bound")).toEqual({ projectPath: project, slug: "linux-os" });
+    expect((await svc.listSpecs(project)).map((s) => s.slug)).toEqual(["linux-os"]);
+  });
+
   it("refuses to approve a phase whose prerequisites are not approved", async () => {
     await svc.createSpec(project, { title: "Sum", slug: "sum" });
     writeFileSync(specFile("sum", "requirements.md"), REQ);
