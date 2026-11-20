@@ -1,5 +1,7 @@
 import { decodeMessageBlocks } from "../shared/chat-message-blocks.ts";
 import { liveTasksFrom } from "../shared/background-tasks.ts";
+import { WORKTREE_NAME_RE } from "../shared/session-worktree.ts";
+import { excludeWorktreesFromGit, getSessionWorktree, recordSessionWorktree, worktreeOfCwd } from "../services/session-worktree.service.ts";
 import { isMinimalMode } from "../services/runtime-mode.ts";
 import type { StripMode } from "../services/transcript-images.ts";
 import {
@@ -1736,6 +1738,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         providerConfig,
         stderr: stderrCallback,
       });
+      // A new chat asked to run in a worktree of its own: the CLI creates it and, from then on,
+      // resumes the session there by itself, so only the session's first spawn carries the flag.
+      if (isFirstMessage && !shouldFork && opts?.worktree && WORKTREE_NAME_RE.test(opts.worktree)) {
+        queryOptions.extraArgs = { ...(queryOptions.extraArgs ?? {}), worktree: opts.worktree };
+      }
       // Every retry below restarts the CLI with these same options.
       this.startedEffort.set(sessionId, (queryOptions.effort as string | undefined) ?? null);
 
@@ -2033,6 +2040,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               subtype,
               ...(Array.isArray(initServers) && { mcpServers: initServers }),
             } as any;
+            // Working in one of the project's worktrees: record it (the transcript now lives
+            // under the worktree's path) and tell the chat which branch it is on.
+            const worktree = meta.projectPath ? worktreeOfCwd(meta.projectPath, (msg as any).cwd) : null;
+            if (worktree) {
+              if (!getSessionWorktree(sessionId)) {
+                recordSessionWorktree(sessionId, meta.projectPath!, worktree);
+                void excludeWorktreesFromGit(meta.projectPath!);
+                log.info(`session=${sessionId} runs in worktree ${worktree.path} (${worktree.branch})`);
+              }
+              yield { type: "system" as any, subtype: "worktree", worktree } as any;
+            }
             continue;
           }
 

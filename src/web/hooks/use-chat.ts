@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo, startTransition } from "react";
 import type { LiveBackgroundTask } from "../../shared/background-tasks";
+import { newWorktreeName, type SessionWorktree } from "../../shared/session-worktree";
 import { ChatAttemptLifecycle, type ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useWebSocket } from "./use-websocket";
 import { api, projectUrl } from "@/lib/api-client";
@@ -158,6 +159,11 @@ interface UseChatReturn {
   turnStop: TurnStop | null;
   /** Claude's guess at the next prompt, until a turn starts or a message is sent. */
   promptSuggestion: string | null;
+  /** The git worktree this chat runs in, once its CLI reported one. */
+  worktree: SessionWorktree | null;
+  /** A new Claude chat's choice to run in a worktree of its own, sent with its first message. */
+  worktreeWanted: boolean;
+  setWorktreeWanted: (wanted: boolean) => void;
   /**
    * The mode an extension-bound chat really runs in ("default" or "acceptEdits" — the server
    * clamps out bypass and plan), from the server's own `session_state`. Null for every other
@@ -299,6 +305,13 @@ export function useChat(
   const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
   /** Claude's guess at the next prompt, offered by the composer until a turn starts. */
   const [promptSuggestion, setPromptSuggestion] = useState<string | null>(null);
+  const [worktree, setWorktree] = useState<SessionWorktree | null>(null);
+  const [worktreeWanted, setWorktreeWantedState] = useState(false);
+  const worktreeWantedRef = useRef(false);
+  const setWorktreeWanted = useCallback((wanted: boolean) => {
+    worktreeWantedRef.current = wanted;
+    setWorktreeWantedState(wanted);
+  }, []);
   /** The permission mode the server holds for the chat, from its connect greeting. */
   const [sessionPermission, setSessionPermission] = useState<SessionPermissionState | null>(null);
   // A ref, not state: nothing draws it, and every `turn_started` would redraw the whole chat tab.
@@ -971,6 +984,17 @@ export function useChat(
         break;
       }
 
+      case "session_worktree": {
+        const wt = ev.worktree as SessionWorktree | undefined;
+        if (wt && typeof wt.path === "string") {
+          setWorktree(wt);
+          // Made: later messages of this chat carry no request.
+          worktreeWantedRef.current = false;
+          setWorktreeWantedState(false);
+        }
+        break;
+      }
+
       case "background_tasks": {
         setLiveTasks(Array.isArray(ev.tasks) ? ev.tasks as LiveBackgroundTask[] : []);
         break;
@@ -1559,6 +1583,7 @@ export function useChat(
     setMcpNeedsAuth([]);
     setTurnStop(null);
     setPromptSuggestion(null);
+    setWorktree(null);
     currentTurnIdRef.current = null;
     setEffortStatus(undefined);
     // Clear ephemeral pre-compact expansions on session change
@@ -1798,6 +1823,8 @@ export function useChat(
         ...(turnRefs ? { turnRefs } : {}),
         ...(taskRefs ? { taskRefs } : {}),
         ...turnSettings(),
+        // Asked for once, by the chat's first message; the server ignores it on any later one.
+        ...(worktreeWantedRef.current ? { worktree: newWorktreeName() } : {}),
         // An Assistant session tells the agent what this device shows, with every message.
         ...(isAssistantProject(projectNameRef.current) ? { uiSummary: readUiSummary() } : {}),
       }));
@@ -2100,6 +2127,9 @@ export function useChat(
     mcpNeedsAuth,
     turnStop,
     promptSuggestion,
+    worktree,
+    worktreeWanted,
+    setWorktreeWanted,
     sessionPermission,
     boundPermissionMode,
     statusMessage,

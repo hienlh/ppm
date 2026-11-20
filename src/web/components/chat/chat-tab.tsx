@@ -31,6 +31,7 @@ import { MessageList } from "./message-list";
 import type { ChatTimelineExtension } from "./chat-timeline-extension";
 import { AssistantBackBar } from "@/components/assistant/assistant-back-button";
 import { BackgroundCommandBar } from "./background-command-bar";
+import { WorktreeChip } from "./worktree-chip";
 import { ConnectionChip } from "./connection-chip";
 import { useReconnectIndicator } from "@/hooks/use-reconnect-indicator";
 import { useScrollEdgeFades } from "@/hooks/use-scroll-edge-fades";
@@ -578,6 +579,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     killBackgroundShell,
     liveTasks,
     stopBackgroundTask,
+    worktree,
+    worktreeWanted,
+    setWorktreeWanted,
   } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt, replyTransportOptions);
 
   // The chat's stored mode replaces whatever this tab carries, so the chip shows the mode the
@@ -1570,6 +1574,14 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
               liveTasks={liveTasks}
               onStopTask={stopBackgroundTask}
             />
+            {!minimalMode && !assistant && (
+              <WorktreeChip
+                worktree={worktree}
+                canChoose={providerId === "claude" && !designSlug && !messagesLoading && messages.length === 0}
+                wanted={worktreeWanted}
+                onWantedChange={setWorktreeWanted}
+              />
+            )}
             {!minimalMode && !assistant && <SessionChangesChip
               yieldNarrow={!!tasksSummary}
               files={sessionChanges.files}

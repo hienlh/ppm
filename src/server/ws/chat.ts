@@ -38,6 +38,8 @@ import {
   type BackgroundTaskState,
 } from "./chat-background-tasks.ts";
 import type { LiveBackgroundTask } from "../../shared/background-tasks.ts";
+import { WORKTREE_NAME_RE, type SessionWorktree } from "../../shared/session-worktree.ts";
+import { getSessionWorktree } from "../../services/session-worktree.service.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
 import { connectedServerNames, needsAuthServerNames, serversThatLostSignIn } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
 import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
@@ -339,6 +341,10 @@ export function chatSocketData(sessionId: string, projectName: string, query: UR
 
 export interface SessionEntry extends BackgroundTaskState {
   providerId: string;
+  /** A new Claude chat's first message asked to run in a worktree with this name. */
+  worktreeRequest?: string;
+  /** The worktree the chat's CLI reported working in. */
+  worktree?: SessionWorktree;
   clients: Set<ChatWsSocket>;
   projectPath?: string;
   projectName?: string;
@@ -1857,7 +1863,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), ...(clientMessageId && { clientMessageId }), ...(uiSummary && { uiSummary }), ...(channel && { channel }), ...(watchEvents?.length && { watchEvents }), ...(wakeNews?.length && { wakeNews }), origin })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), ...(clientMessageId && { clientMessageId }), ...(entry.worktreeRequest && { worktree: entry.worktreeRequest }), ...(uiSummary && { uiSummary }), ...(channel && { channel }), ...(watchEvents?.length && { watchEvents }), ...(wakeNews?.length && { wakeNews }), origin })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -1918,6 +1924,13 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           entry.compactStatus = null;
           log.debug(`session=${sessionId} compact_status=done (via compact_boundary)`);
           broadcast(sessionId, { type: "compact_status", status: "done" });
+        } else if (sub === "worktree") {
+          const worktree = (ev as any).worktree as SessionWorktree | undefined;
+          entry.worktreeRequest = undefined;
+          if (worktree) {
+            entry.worktree = worktree;
+            broadcast(sessionId, { type: "session_worktree", sessionId, worktree });
+          }
         } else if (sub === "background_tasks_changed") {
           entry.liveTasks = ((ev as any).tasks as LiveBackgroundTask[] | undefined) ?? [];
           broadcastLiveTasks(sessionId, entry);
@@ -3790,6 +3803,11 @@ export const chatWebSocket = {
       if (entry.liveTasks?.length) {
         ws.send(JSON.stringify({ type: "background_tasks", sessionId, tasks: entry.liveTasks }));
       }
+      const worktree = entry.worktree ?? getSessionWorktree(sessionId);
+      if (worktree) {
+        entry.worktree = { name: worktree.name, path: worktree.path, branch: worktree.branch };
+        ws.send(JSON.stringify({ type: "session_worktree", sessionId, worktree: entry.worktree }));
+      }
       return;
     }
 
@@ -3821,6 +3839,11 @@ export const chatWebSocket = {
       }
 
       // Store permission mode — sticky for this session
+      // A new Claude chat that should run in a worktree of its own; the provider honours it only
+      // on the session's first turn, so a stale request on an old chat does nothing.
+      if (typeof parsed.worktree === "string" && WORKTREE_NAME_RE.test(parsed.worktree) && entry.providerId === "claude" && !entry.worktree) {
+        entry.worktreeRequest = parsed.worktree;
+      }
       if (parsed.permissionMode) {
         entry.permissionMode = parsed.permissionMode;
         // Every chat keeps the mode the user picked, rather than this socket alone: a design

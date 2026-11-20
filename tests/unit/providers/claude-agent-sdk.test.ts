@@ -784,6 +784,28 @@ describe("ClaudeAgentSdkProvider", () => {
           tasks: [{ taskId: "b1", taskType: "local_bash", description: "Run sleep 300" }],
         }]);
       });
+
+      it("starts a new chat in the worktree it asked for, and reports the worktree the CLI runs in", async () => {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([
+          { type: "system", subtype: "init", session_id: "x", cwd: "/tmp/my-project/.claude/worktrees/chat-1" } as any,
+          { type: "result" } as any,
+        ]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        const events: any[] = [];
+        for await (const ev of provider.sendMessage(session.id, "hi", { permissionMode: "default", worktree: "chat-1" })) events.push(ev);
+        expect(mockQueryFn.mock.calls[0]![0].options.extraArgs?.worktree).toBe("chat-1");
+        expect(events.filter((e) => e.subtype === "worktree")).toEqual([{
+          type: "system", subtype: "worktree",
+          worktree: { name: "chat-1", path: "/tmp/my-project/.claude/worktrees/chat-1", branch: "worktree-chat-1" },
+        }]);
+      });
+
+      it("refuses a worktree name that is not one PPM makes", async () => {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" } as any]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "default", worktree: "../escape" })) { /* consume */ }
+        expect(mockQueryFn.mock.calls[0]![0].options.extraArgs?.worktree).toBeUndefined();
+      });
     });
 
     describe("design session", () => {

@@ -789,6 +789,25 @@ in full, one line per tool call with its status — never thinking and never too
 bodies (`turn-markdown.ts` over `readAllSessionTurns`, the turn reader that also serves
 `read_session_turns`, 20 turns a read against one scan).
 
+### Worktree per chat
+
+Before a new Claude chat's first message, the footer's **Worktree** chip (`worktree-chip.tsx`) is a
+switch; on, the first message carries `worktree: chat-YYMMDD-HHMM-xxxx` (`newWorktreeName`, checked
+against `WORKTREE_NAME_RE` on the server) and the provider passes it to the CLI as `--worktree`
+(`extraArgs`), on the session's first spawn only. The CLI itself creates
+`<project>/.claude/worktrees/<name>` on branch `worktree-<name>`, runs the chat there, and on every
+later resume with the project as cwd goes back into it — PPM never runs `git worktree` itself. The
+CLI's `init` reports that cwd; `worktreeOfCwd` accepts only a direct child of the project's worktree
+folder, and the provider records it in `session_worktrees` (created on first use;
+`session-worktree.service.ts`), adds `/.claude/worktrees/` to the repository's `info/exclude` so
+the worktrees stay out of Source Control, and yields `system/worktree`; `chat.ts` sends
+`session_worktree` (also on every `ready`), and the chip then names the branch and copies the path.
+Two consequences: the transcript lives under the **worktree's** slug in `~/.claude/projects`, so
+`pinClaudeSessionDir` (`session-ownership.ts`) falls back to the recorded worktree — only when it was
+recorded for the same project and lies inside its worktree folder; and the session list finds such
+chats through the SDK's `listSessions` (`includeWorktrees` is on by default). Leaving the worktree
+behind when the chat is deleted is deliberate: it may hold the only copy of the chat's work.
+
 ## Voice messages
 
 The chat mic records a voice message instead of dictating, once the install has said yes to the `voice-messages-2026-11` feature intro (config `voice_message.enabled`; Settings → Voice Input has the same switch). Off, the mic dictates exactly as before.

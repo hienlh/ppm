@@ -9,6 +9,7 @@ import { managerChats } from "./assistant-managers/manager-chats.service.ts";
 import { MANAGER_PROVIDER_ID } from "../shared/assistant-managers.ts";
 import { sessionTitleWithoutContext } from "../shared/provider-context.ts";
 import { getSessionArchiveStates } from "./session-archive.service.ts";
+import { getSessionWorktrees } from "./session-worktree.service.ts";
 
 /**
  * A project's chat list and chat search, as `GET /chat/sessions` and `GET /chat/search` answer
@@ -68,11 +69,12 @@ export async function listProjectSessions(projectPath: string, opts: ListProject
   const designSlugs = getSessionDesignSlugs(deduped.map((s) => s.id));
   const spawnLinks = sessionSpawnLinks(deduped.map((s) => s.id));
   const archiveStates = getSessionArchiveStates(deduped.map((s) => s.id));
+  const worktrees = getSessionWorktrees(deduped.map((s) => s.id));
   // A creator with no title of PPM's own is still named when it is on this page.
   const pageTitles = new Map(deduped.map((s) => [s.id, s.title]));
   const enriched = deduped.map((s) => ({
     ...s, pinned: pinnedIds.has(s.id), ...(s.id === managerId ? { manager: true as const } : {}),
-    tag: tagMap[s.id] ?? null, designSlug: designSlugs[s.id] ?? null, archive: archiveStates.get(s.id) ?? null,
+    tag: tagMap[s.id] ?? null, designSlug: designSlugs[s.id] ?? null, archive: archiveStates.get(s.id) ?? null, worktree: worktrees.get(s.id) ?? null,
     spawnedBy: spawnLinks[s.id]?.spawnedBy ?? null,
     parentTitle: spawnLinks[s.id] ? spawnLinks[s.id]!.parentTitle ?? pageTitles.get(spawnLinks[s.id]!.spawnedBy) ?? null : null,
   }));

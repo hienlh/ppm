@@ -12,6 +12,11 @@ export interface SendMessageOpts {
   imagePaths?: string[];
   /** Per-session model override; falls back to provider config model when absent */
   model?: string;
+  /**
+   * Claude only, honoured on a new session's first turn: run the chat in a git worktree of its
+   * own with this name (`--worktree`; `src/shared/session-worktree.ts`).
+   */
+  worktree?: string;
   /** Override the provider's 1M-context setting for this call (false = never add the
    *  [1m] suffix). Used by lightweight calls (e.g. the group-chat router) whose small
    *  model may not support a 1M window. Falls back to provider config when absent. */
@@ -341,6 +346,8 @@ export interface SessionInfo {
   parentTitle?: string | null;
   /** Archived by hand, or `kept` once un-archived (`src/shared/session-archive.ts`). */
   archive?: import("../shared/session-archive").SessionArchiveState | null;
+  /** The git worktree the chat runs in, when it has one of its own (`src/shared/session-worktree.ts`). */
+  worktree?: import("../shared/session-worktree").SessionWorktree | null;
 }
 
 /**
