@@ -229,7 +229,9 @@ async function openVault(width, itemId, opts) {
   await page.goto(`${web}/?openVault=${itemId ?? "all"}`);
   await visible(page.locator('[data-vault-tier="secure"]')).first().waitFor({ timeout: 30000 });
   const bar = visible(page.locator('[aria-label="Settings title bar"]'));
-  if (await bar.count()) { await bar.first().dblclick(); await page.waitForTimeout(400); }
+  // Double-click the title's own text: the middle of a narrow window's bar is one of its buttons
+  // (picture-in-picture at 768 px), which would take Settings out of the page.
+  if (await bar.count()) { await bar.first().dblclick({ position: { x: 60, y: 12 } }); await page.waitForTimeout(400); }
   return page;
 }
 
