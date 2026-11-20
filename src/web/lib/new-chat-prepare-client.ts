@@ -28,7 +28,7 @@ import type { ChatPreparationSettings } from "../../shared/chat-preparation-sett
 import type { UsageInfo } from "../../types/chat";
 
 export interface PickedAccount { id: string; label: string | null }
-export type PrepareDraft = { content: string; attachments: string; updatedAt: string } | null;
+export type PrepareDraft = { content: string; attachments: string; voice?: unknown; updatedAt: string } | null;
 
 export interface PreparedChat {
   resolvedProviderId: string;

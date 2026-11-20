@@ -89,6 +89,8 @@ export function useVoiceMessageComposer(options: VoiceComposerOptions) {
     autoSendReady: shouldAutoSend(gate, { reviewBeforeSend, cleaned }),
     micBlockedReason,
     remove: draftApi.remove,
+    restore: draftApi.restore,
+    detach: draftApi.detach,
     retry: draftApi.retry,
     setText: draftApi.setText,
     voicePart,
@@ -96,7 +98,7 @@ export function useVoiceMessageComposer(options: VoiceComposerOptions) {
     whisperDialogOpen,
     closeWhisperDialog: () => setWhisperDialogOpen(false),
   }), [enabled, reviewBeforeSend, recording, recorder.session, stopRecording, recorder.cancel, toggle, draft,
-    gate, decide, transcriptBlank, cleaned, micBlockedReason, draftApi.remove, draftApi.retry, draftApi.setText, voicePart, sent,
+    gate, decide, transcriptBlank, cleaned, micBlockedReason, draftApi.remove, draftApi.restore, draftApi.detach, draftApi.retry, draftApi.setText, voicePart, sent,
     whisperDialogOpen]);
 }
 

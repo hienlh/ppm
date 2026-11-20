@@ -15,7 +15,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 76;
+export const CURRENT_SCHEMA_VERSION = 77;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1615,6 +1615,14 @@ export function runMigrations(database: Database): void {
       database.exec("CREATE INDEX IF NOT EXISTS idx_schedules_task ON schedules(task_id)");
     }
     database.exec(`PRAGMA user_version = 76;`);
+  }
+
+  if (current < 77) {
+    // The composer's voice message kept in its chat draft (`src/shared/voice-draft.ts`): JSON, or
+    // NULL for none. A column rather than a part of `attachments`, so a bundle from before this
+    // reads its attachments exactly as it did and never sees the voice. Only adds a column.
+    addColumnIfMissing(database, "chat_drafts", "voice", "TEXT");
+    database.exec(`PRAGMA user_version = 77;`);
   }
 }
 

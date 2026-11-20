@@ -1,12 +1,23 @@
 /**
  * The voice message waiting in the composer, as a chip in the attachment row beside any image:
- * play the local recording, its length, and × to drop it (the transcript block goes with it).
+ * play the recording, its length, and × to drop it (the transcript block goes with it).
  */
 import { AlertTriangle, Loader2, X } from "@/lib/icons";
 import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
 import { cn } from "@/lib/utils";
 import type { VoiceDraft } from "@/hooks/use-voice-message-draft";
+import { loadUploadedAudioUrl } from "@/lib/voice-upload-audio";
 import { VoiceAudioPlayer } from "./voice-audio-player";
+
+/**
+ * The recording in this browser when there is one; a draft that came back from storage (a reload,
+ * another device) has only the uploaded copy, fetched with the token on the first play.
+ */
+function draftAudioSource(draft: VoiceDraft): string | (() => Promise<string>) {
+  if (draft.localUrl) return draft.localUrl;
+  const remote = draft.remoteSrc;
+  return remote ? () => loadUploadedAudioUrl(remote) : () => Promise.reject(new Error("No recording"));
+}
 
 export function VoiceMessageChip({ draft, onRemove }: { draft: VoiceDraft; onRemove: () => void }) {
   const coarse = usePrefersCoarsePointer();
@@ -21,7 +32,7 @@ export function VoiceMessageChip({ draft, onRemove }: { draft: VoiceDraft; onRem
       )}
       onClick={(e) => e.stopPropagation()}
     >
-      <VoiceAudioPlayer src={draft.localUrl} durationSec={draft.durationSec} bars={12} size="sm" seed={draft.id} />
+      <VoiceAudioPlayer src={draftAudioSource(draft)} durationSec={draft.durationSec} bars={12} size="sm" seed={draft.id} />
       {failed ? (
         <AlertTriangle className="size-3 shrink-0 text-warning" aria-label="Something failed, see below" />
       ) : busy ? (

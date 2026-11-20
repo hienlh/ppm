@@ -54,9 +54,12 @@ export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, on
         </div>
       )}
 
-      {transcript.status === "error" && (
+      {transcript.status === "error" && (transcript.interrupted ? (
+        // Restored from the chat's draft with no transcript: the recording is uploaded, so it can run again.
+        <FailureNotice message={transcript.error ?? "Not transcribed yet."} retryLabel="Transcribe again" onRetry={onRetry} onRemove={onRemove} />
+      ) : (
         <FailureNotice message={`Couldn't transcribe: ${transcript.error ?? "unknown error"}`} onRetry={onRetry} onRemove={onRemove} />
-      )}
+      ))}
 
       {transcript.status === "ready" && (
         <>
@@ -66,7 +69,7 @@ export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, on
           {upload.status === "error" && (
             <FailureNotice message="The recording could not be uploaded, so it cannot be sent yet." onRetry={onRetry} onRemove={onRemove} />
           )}
-          <TranscriptEditor key={`${draft.id}:${seed?.n ?? 0}`} initial={seed?.text ?? transcript.shown} onChange={onTextChange} onSubmit={onSubmit} disabled={disabled} />
+          <TranscriptEditor key={`${draft.id}:${seed?.n ?? 0}`} initial={seed?.text ?? transcript.initialText ?? transcript.shown} onChange={onTextChange} onSubmit={onSubmit} disabled={disabled} />
           <VoiceTimingLine
             timings={transcript.timings}
             next={reviewBeforeSend || !(transcript.cleaned || transcript.cleanupSkipped) ? "read it, then send" : "sending when ready"}
@@ -130,13 +133,15 @@ function Notice({ children, className }: { children: ReactNode; className?: stri
   );
 }
 
-function FailureNotice({ message, onRetry, onRemove }: { message: string; onRetry: () => void; onRemove: () => void }) {
+function FailureNotice({ message, retryLabel = "Retry", onRetry, onRemove }: {
+  message: string; retryLabel?: string; onRetry: () => void; onRemove: () => void;
+}) {
   return (
     <Notice>
       <p>{message}</p>
       <div className="mt-1.5 flex gap-2">
         <button type="button" onClick={onRetry} className="inline-flex min-h-11 items-center gap-1 rounded-md px-2 font-medium text-primary can-hover:hover:bg-surface-hover md:min-h-8">
-          <RotateCw className="size-3.5" />Retry
+          <RotateCw className="size-3.5" />{retryLabel}
         </button>
         <button type="button" onClick={onRemove} className="inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-text-2 can-hover:hover:bg-surface-hover md:min-h-8">
           <Trash2 className="size-3.5" />Remove

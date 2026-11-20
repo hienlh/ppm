@@ -4,6 +4,7 @@ import type { ReplyReference } from "../../shared/chat-reply";
 import type { TurnReference } from "../../shared/chat-turn-ref";
 import { decodeMessageBlocks, encodeMessageBlocks } from "../../shared/chat-message-blocks";
 import { getPrepare } from "@/lib/new-chat-prepare-client";
+import { parseStoredVoiceDraft, type StoredVoiceDraft } from "../../shared/voice-draft";
 
 export interface DraftAttachment {
   name: string;
@@ -16,12 +17,15 @@ interface DraftState {
   replyTo: ReplyReference | null;
   /** The composer's resolved turn chips, kept as the message's own block in the stored text. */
   turnRefs: TurnReference[] | null;
+  /** The composer's voice message: its uploaded recording and, once it was there, its transcript. */
+  voice: StoredVoiceDraft | null;
 }
 
 /** What a draft keeps besides its text: the same blocks the message will carry. */
 export interface DraftBlocks {
   replyTo?: ReplyReference | null;
   turnRefs?: readonly TurnReference[] | null;
+  voice?: StoredVoiceDraft | null;
 }
 
 /**
@@ -34,6 +38,8 @@ const GATE_RELEASE_MS = 3_000;
 interface DraftResult {
   content: string;
   attachments: string; // JSON string
+  /** Absent from a server older than voice drafts; checked again here, as user data from any device. */
+  voice?: unknown;
   updatedAt: string;
 }
 
@@ -49,7 +55,7 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
       if (typeof value?.content !== "string" || !Array.isArray(value.attachments)) return null;
       return { ...decodeMessageBlocks(value.content), attachments: value.attachments.filter(
         (a: DraftAttachment) => typeof a?.name === "string" && typeof a?.path === "string",
-      ) };
+      ), voice: parseStoredVoiceDraft(value.voice) };
     } catch { return null; }
   };
   const [recoveredDraft] = useState<DraftState | null>(() => readLocalDraft(localKey));
@@ -105,7 +111,7 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
         if (data) {
           let attachments: DraftAttachment[] = [];
           try { attachments = JSON.parse(data.attachments); } catch { /* ignore */ }
-          setDraft({ ...decodeMessageBlocks(data.content), attachments });
+          setDraft({ ...decodeMessageBlocks(data.content), attachments, voice: parseStoredVoiceDraft(data.voice) });
         } else {
           setDraft(null);
         }
@@ -122,11 +128,13 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
   const save = useCallback(
     (content: string, attachments?: DraftAttachment[], blocks?: DraftBlocks) => {
       const storedContent = encodeMessageBlocks(content, { replyTo: blocks?.replyTo, turnRefs: blocks?.turnRefs?.length ? blocks.turnRefs : null });
+      // Always sent, null included: a PUT with no voice key keeps the stored one (older bundles).
+      const voice = blocks?.voice ?? null;
       ++editRevision.current;
       recoveryRef.current.draft = null;
       if (!projectName) return;
       try {
-        sessionStorage.setItem(localKeyRef.current, JSON.stringify({ content: storedContent, attachments: attachments ?? [] }));
+        sessionStorage.setItem(localKeyRef.current, JSON.stringify({ content: storedContent, attachments: attachments ?? [], voice }));
       } catch { /* Storage may be unavailable; the server draft still applies. */ }
       if (timerRef.current) clearTimeout(timerRef.current);
       const id = sessionRef.current ?? "__new__";
@@ -134,7 +142,7 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
         api
           .put(
             `${projectUrl(projectName)}/chat/drafts/${encodeURIComponent(id)}`,
-            { content: storedContent, attachments: JSON.stringify(attachments ?? []) },
+            { content: storedContent, attachments: JSON.stringify(attachments ?? []), voice },
           )
           .catch(() => {});
       }, 1000);

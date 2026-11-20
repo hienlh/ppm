@@ -38,6 +38,8 @@ import type { ComposerTurnChip } from "@/hooks/use-composer-turn-refs";
 import type { ParsedTurnLink } from "@/lib/turn-link";
 import type { TurnReference } from "../../../shared/chat-turn-ref";
 import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
+import type { StoredVoiceDraft } from "../../../shared/voice-draft";
+import { uploadPreviewUrl } from "./message-media";
 import { insertLikeTyping, pasteWithoutTurnLinks } from "./composer-turn-link-paste";
 import { PromptCacheChip } from "./prompt-cache-chip";
 import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
@@ -142,6 +144,10 @@ interface MessageInputProps {
   /** Pre-fill input value (e.g. from command palette "Ask AI") */
   initialValue?: string;
   initialAttachments?: Array<{ name: string; path: string }>;
+  /** The voice message the chat's draft kept: applied once, when the draft has loaded. */
+  initialVoice?: StoredVoiceDraft | null;
+  /** The voice message changed in a way the draft keeps (null: removed). Not called for a send. */
+  onVoiceDraftChange?: (voice: StoredVoiceDraft | null) => void;
   /** Bumping this counter clears the textarea (e.g. parent cancels an edit). */
   clearSignal?: number;
   /**
@@ -231,6 +237,8 @@ export const MessageInput = memo(function MessageInput({
   onExternalPathsConsumed,
   initialValue,
   initialAttachments,
+  initialVoice,
+  onVoiceDraftChange,
   clearSignal,
   restore,
   onContentChange,
@@ -402,6 +410,7 @@ export const MessageInput = memo(function MessageInput({
   // and tidies on the host instead of dictating into the box. Off, nothing below changes.
   const voiceMsg = useVoiceMessageComposer({
     project: projectName, sessionId, providerId, getTyped: () => valueRef.current, uploadFile, discardUpload,
+    onPersist: onVoiceDraftChange,
   });
   // Store pre-voice text so voice appends to existing input
   const preVoiceTextRef = useRef("");
@@ -507,6 +516,15 @@ export const MessageInput = memo(function MessageInput({
     setAttachments((previous) => [...restored, ...previous]);
   }, [draftReady, initialAttachments]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The draft's voice comes back once, like its attachments. This browser holds no recording of
+  // it, so the chip plays (and "Transcribe again" reads) the uploaded copy.
+  const draftVoiceApplied = useRef(false);
+  useEffect(() => {
+    if (!draftReady || draftVoiceApplied.current || initialVoice === undefined) return;
+    draftVoiceApplied.current = true;
+    if (initialVoice) voiceMsg.restore(initialVoice, uploadPreviewUrl(initialVoice.path, projectName));
+  }, [draftReady, initialVoice]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Apply initialValue when it changes (e.g. "Ask AI" from command palette).
   // A restored draft can land after the input is already on screen, so never
   // write over text that is already there — what was typed wins.
@@ -546,10 +564,13 @@ export const MessageInput = memo(function MessageInput({
     if (clearSignal) {
       writeTextareas("");
       draftAttachmentsApplied.current = false;
+      draftVoiceApplied.current = false;
       for (const attachment of attachments) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       setAttachments([]);
       setAgentTag(null);
-      voiceMsg.remove();
+      // Let go of the voice without deleting it: the chat it belongs to may be the one left, and its
+      // draft still names the upload. One no draft holds yet is deleted, as before.
+      voiceMsg.detach();
     }
   }, [clearSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
