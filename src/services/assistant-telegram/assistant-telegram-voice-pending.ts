@@ -42,6 +42,13 @@ export interface VoiceJob {
   transcript: string;
   label: "cleaned" | "raw" | "replaced" | "plain";
   reason?: string;
+  /** An audio file (mp3, m4a…) rather than a voice note: its file extension, for the stored copy. */
+  audioExt?: string;
+  /** What the clean-up replaced and how long each step took, for the card. */
+  fixes?: Array<{ from: string; to: string }>;
+  timing?: { whisperMs: number; haikuMs?: number };
+  /** Words self-learning learned from this message's clean-up, for the "Sent" note. */
+  learned?: Array<{ word: string; from: string }>;
   markup?: InlineKeyboardMarkup;
   expiresAt: number;
   /** Wakes the sweep when this card's day is up; cleared when the job ends any other way. */

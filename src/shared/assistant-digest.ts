@@ -71,6 +71,21 @@ export const DIGEST_RESURFACED_HEADING = "Back from snooze today";
 /** Most tasks the section lists; the rest are counted. */
 export const DIGEST_RESURFACED_MAX = 20;
 
+/** A word voice self-learning added this past week (Monday's digest only). */
+export interface DigestVoiceLearned {
+  word: string;
+  /** What Whisper had written instead. */
+  from: string;
+  /** The project it was learned for ("PPM Assistant" for the Assistant's). */
+  project: string;
+}
+
+/** The heading of the digest's weekly voice section; it informs, and asks nothing. */
+export const digestVoiceLearnedHeading = (count: number) =>
+  `Voice learned ${count} word${count === 1 ? "" : "s"} this week`;
+export const DIGEST_VOICE_LEARNED_HINT = "They are already in use. Undo any of them in PPM → Settings → Voice.";
+export const DIGEST_VOICE_LEARNED_MAX = 30;
+
 /** What a project that did not answer shows on the card. */
 export const DIGEST_NO_ANSWER = "No answer yet (busy)";
 

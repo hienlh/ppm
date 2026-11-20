@@ -50,9 +50,12 @@ const processed: VoiceProcessInput[] = [];
 const learned: Array<{ project: string; before: string; after: string }> = [];
 const holdProcessing = () => { gate = new Promise((resolve) => { openGate = resolve; }); };
 
+let whisperReady = true;
 const voice: TelegramVoiceDeps = {
   enabled: () => enabled,
   reviewBeforeSend: () => review,
+  whisperReady: () => whisperReady,
+  enable: () => { enabled = true; },
   async process(input) {
     processed.push(input);
     await gate;
@@ -90,6 +93,7 @@ afterAll(async () => {
 beforeEach(() => {
   enabled = true;
   review = true;
+  whisperReady = true;
   failure = null;
   gate = Promise.resolve();
   result = { raw: "deploy the hono app", text: "Deploy the Hono app.", cleaned: true, transcribeMs: 5, cleanupMs: 5 };
@@ -114,12 +118,75 @@ const press = (chat: number, messageId: number, label: string) => {
 const since = (from: number) => received.slice(from);
 
 describe("voice messages on the Assistant's Telegram bot", () => {
-  it("is refused as before while the feature is off", async () => {
+  it("says plainly that voice messages are off, and its button turns them on", async () => {
     enabled = false;
     const chat = phone();
+    const before = processed.length;
     fake.pushVoice(chat, chat);
-    await until(() => fake.lastText(chat) === "I can read text and photos only.");
-    expect(processed).toHaveLength(0);
+    const reply = await until(() => fake.sent(chat).find((m) => m.text.includes("Voice messages are turned off in PPM")));
+    expect(reply.text).toContain("nothing was sent");
+    expect(reply.text).not.toContain("text and photos only");
+    expect(processed.length).toBe(before);
+    press(chat, reply.message_id, "Turn on voice messages");
+    await until(() => enabled);
+    expect(enabled).toBe(true);
+  });
+
+  it("offers no button while Whisper is missing, and says where to install it", async () => {
+    enabled = false;
+    whisperReady = false;
+    const chat = phone();
+    fake.pushVoice(chat, chat);
+    const reply = await until(() => fake.sent(chat).find((m) => m.text.includes("Voice messages are turned off in PPM")));
+    expect(reply.text).toContain("Install Whisper");
+    expect(fake.buttons(chat, reply.message_id).flat()).toHaveLength(0);
+  });
+
+  it("reads an audio file like a voice note and keeps it under its own extension", async () => {
+    const chat = phone();
+    const start = received.length;
+    fake.pushAudio(chat, chat, { duration: 20 });
+    const card = await cardOf(chat);
+    expect(card.history[0]).toBe("🎵 Audio file — transcribing…");
+    press(chat, card.message_id, "Send");
+    await until(() => since(start).length === 1);
+    const { voice: part } = splitVoiceMessage(since(start)[0]!.message);
+    expect(part?.durationSec).toBe(20);
+    expect(part?.path.endsWith("-telegram-audio.mp3")).toBe(true);
+  });
+
+  it("refuses an audio file in a format it does not read", async () => {
+    const chat = phone();
+    const before = processed.length;
+    fake.pushAudio(chat, chat, { mime: "audio/x-flac", fileName: "take.flac" });
+    await until(() => fake.lastText(chat)?.includes("audio files in mp3, m4a"));
+    expect(processed.length).toBe(before);
+  });
+
+  it("does not read a forwarded voice message, and says why", async () => {
+    const chat = phone();
+    const before = processed.length;
+    fake.pushVoice(chat, chat, { extra: { forward_origin: { type: "user", date: 1, sender_user: { id: 1, is_bot: false, first_name: "Ann" } } } });
+    await until(() => fake.lastText(chat)?.includes("not forwarded ones"));
+    expect(processed.length).toBe(before);
+  });
+
+  it("shows what the clean-up changed and how long each step took", async () => {
+    result = { ...result, transcribeMs: 4100, cleanupMs: 2600, fixes: [{ from: "BPM", to: "PPM" }] };
+    const chat = phone();
+    fake.pushVoice(chat, chat);
+    const card = await cardOf(chat);
+    expect(card.html).toContain("Fixed: <s>BPM</s> → <b>PPM</b>");
+    expect(card.text).toContain("Whisper 4.1 s · Haiku 2.6 s");
+  });
+
+  it("names a word self-learning picked up on the Sent note", async () => {
+    review = false;
+    result = { ...result, learned: [{ word: "PPM", from: "BPM", at: new Date().toISOString(), source: "cleanup", hits: 3 }] };
+    const chat = phone();
+    fake.pushVoice(chat, chat);
+    const sent = await until(() => fake.sent(chat).find((m) => m.text.startsWith("✅ Sent")));
+    expect(sent.text).toContain("Learned: PPM (heard as BPM). Undo in PPM → Settings → Voice.");
   });
 
   it("shows a review card, and Send delivers one message ending with the voice part", async () => {

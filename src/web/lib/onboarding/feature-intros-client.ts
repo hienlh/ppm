@@ -9,7 +9,7 @@ import type { OnboardingStatus } from "./onboarding-types";
 
 const base = (id: string) => `/api/feature-intros/${encodeURIComponent(id)}`;
 
-const KNOWN_SETTINGS: readonly FeatureIntroSetting[] = ["assistant_permission_mode", "voice_messages"];
+const KNOWN_SETTINGS: readonly FeatureIntroSetting[] = ["assistant_permission_mode", "voice_messages", "voice_self_learning"];
 const isKnownSetting = (value: unknown): value is FeatureIntroSetting =>
   typeof value === "string" && (KNOWN_SETTINGS as readonly string[]).includes(value);
 
@@ -18,7 +18,9 @@ const isKnownSetting = (value: unknown): value is FeatureIntroSetting =>
  * feature made of tool switches is decided in Tools; a feature that is one setting, on its pane.
  */
 export function featureIntroSettingsLink(intro: Pick<FeatureIntro, "setting">): { category: "tools" | "assistant" | "voice"; label: string } {
-  if (intro.setting === "voice_messages") return { category: "voice", label: "Choose in Settings → Voice Input instead" };
+  if (intro.setting === "voice_messages" || intro.setting === "voice_self_learning") {
+    return { category: "voice", label: "Choose in Settings → Voice Input instead" };
+  }
   if (intro.setting === "assistant_permission_mode") return { category: "assistant", label: "Choose in Settings → PPM Assistant instead" };
   return { category: "tools", label: "Change single tools in Settings → Tools" };
 }

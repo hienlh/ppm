@@ -8,8 +8,8 @@ import { Coffee, Hand } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import {
-  DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, DIGEST_RESURFACED_HEADING, digestWaitingSummary, type DigestProject,
-  type DigestResurfacedTask,
+  DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, DIGEST_RESURFACED_HEADING, DIGEST_VOICE_LEARNED_HINT, digestVoiceLearnedHeading,
+  digestWaitingSummary, type DigestProject, type DigestResurfacedTask, type DigestVoiceLearned,
 } from "../../../../shared/assistant-digest";
 import { CardShell } from "./card-shell";
 
@@ -83,6 +83,28 @@ function ResurfacedSection({ tasks }: { tasks: readonly DigestResurfacedTask[] }
   );
 }
 
+/** Monday's voice section: the words learned this week, to know about (undo lives in Settings → Voice). */
+function VoiceLearnedSection({ words }: { words: readonly DigestVoiceLearned[] }) {
+  return (
+    <section className="border-t border-border pt-2" data-digest-voice-learned="">
+      <h4 className="mb-1 flex items-center gap-1.5 text-[13px] font-semibold">
+        <span aria-hidden className="size-2 shrink-0 rounded-full bg-primary" />
+        {digestVoiceLearnedHeading(words.length)}
+      </h4>
+      <p className="text-[13px] leading-relaxed">
+        {words.map((w, i) => (
+          <span key={`${w.project}:${w.word}`}>
+            {i > 0 && <span className="text-text-subtle"> · </span>}
+            <span className="font-medium">{w.word}</span>
+            <span className="text-text-secondary"> ({w.from})</span>
+          </span>
+        ))}
+      </p>
+      <p className="mt-1 text-xs text-text-subtle">{DIGEST_VOICE_LEARNED_HINT}</p>
+    </section>
+  );
+}
+
 /** A digest's sections; one from before PPM put them together was one manager's list. */
 export function digestProjects(card: AssistantCard): DigestProject[] {
   return card.payload.projects
@@ -106,6 +128,7 @@ export function DigestCard({ card }: { card: AssistantCard }) {
       <div className="space-y-2">
         {!!card.payload.resurfaced?.length && <ResurfacedSection tasks={card.payload.resurfaced} />}
         {projects.map((p, i) => <ProjectSection key={`${i}:${p.name}`} project={p} />)}
+        {!!card.payload.voiceLearned?.length && <VoiceLearnedSection words={card.payload.voiceLearned} />}
       </div>
     </CardShell>
   );

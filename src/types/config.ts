@@ -295,7 +295,10 @@ export const DEFAULT_CONFIG: PpmConfig = {
   },
   log_level: DEFAULT_LOG_LEVEL,
   feature_intros: {},
-  voice_message: { review_before_send: true, cleanup_enabled: true, words: [], projects: {} },
+  voice_message: {
+    review_before_send: true, cleanup_enabled: true, learn_auto_vocabulary: true, learn_from_cleanup: true,
+    weekly_summary: true, vietnamese_fixes: true, words: [], projects: {},
+  },
 };
 
 const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;

@@ -37,9 +37,10 @@ export interface FeatureIntro {
 
 /**
  * Settings a feature introduction can stand for. `assistant_permission_mode`: on = Full, off = Ask.
- * `voice_messages`: `voice_message.enabled`.
+ * `voice_messages`: `voice_message.enabled`. `voice_self_learning`: `voice_message.self_learning`,
+ * asked only once voice messages are on (it means nothing without them).
  */
-export type FeatureIntroSetting = "assistant_permission_mode" | "voice_messages";
+export type FeatureIntroSetting = "assistant_permission_mode" | "voice_messages" | "voice_self_learning";
 
 export const FEATURE_INTROS: readonly FeatureIntro[] = [
   {
@@ -89,6 +90,16 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
       + "Claude Haiku using the chat's context, and you read the transcript before it is sent.",
     tools: [],
     setting: "voice_messages",
+    since: "2026-11",
+  },
+  {
+    id: "voice-self-learning-2026-11",
+    title: "Voice messages that learn your words",
+    body: "PPM picks up names and task codes from your projects for Whisper, and learns a word once the clean-up has "
+      + "fixed it the same way a few times — nobody has to edit a transcript. Learned words work at once; see and "
+      + "undo them in Settings → Voice. Everything stays on this machine apart from the clean-up you already use.",
+    tools: [],
+    setting: "voice_self_learning",
     since: "2026-11",
   },
 ];

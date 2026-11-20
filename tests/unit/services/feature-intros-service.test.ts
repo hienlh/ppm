@@ -214,6 +214,11 @@ describe("Voice messages", () => {
       enabled: true,
       review_before_send: false,
       cleanup_enabled: false,
+      // Self-learning's parts take their defaults; self-learning itself stays unchosen.
+      learn_auto_vocabulary: true,
+      learn_from_cleanup: true,
+      weekly_summary: true,
+      vietnamese_fixes: true,
       words: ["Hono"],
       projects: {},
     });
@@ -228,5 +233,32 @@ describe("Voice messages", () => {
     configService.set("voice_message", { enabled: true, review_before_send: true, words: [], projects: {} });
     expect(settleFeaturesDecidedInSettings()).toBe(true);
     expect(readFeatureIntroStates()[VOICE.id]).toMatchObject({ answer: "on", via: "settings" });
+  });
+});
+
+describe("Voice self-learning", () => {
+  const LEARN = FEATURE_INTROS.find((i) => i.id === "voice-self-learning-2026-11")!;
+  const voice = () => configService.get("voice_message") as { enabled?: boolean; self_learning?: boolean; learn_from_cleanup?: boolean };
+  beforeEach(() => configService.set("feature_intros", {}));
+  afterEach(() => configService.set("voice_message", { review_before_send: true, words: [], projects: {} }));
+
+  it("is asked only once voice messages are on: it means nothing without them", () => {
+    configService.set("voice_message", { review_before_send: true, words: [], projects: {} });
+    expect(featureIntrosView().pending.map((i) => i.id)).not.toContain(LEARN.id);
+    configService.set("voice_message", { enabled: true, review_before_send: true, words: [], projects: {} });
+    expect(featureIntrosView().pending.map((i) => i.id)).toContain(LEARN.id);
+  });
+
+  it("Turn on writes voice_message.self_learning and leaves voice messages and the parts alone", () => {
+    configService.set("voice_message", { enabled: true, review_before_send: true, learn_from_cleanup: false, words: [], projects: {} });
+    expect(LEARN.setting).toBe("voice_self_learning");
+    expect(answerFeatureIntro(LEARN.id, "on")).toMatchObject({ ok: true, changed: true });
+    expect(voice()).toMatchObject({ enabled: true, self_learning: true, learn_from_cleanup: false });
+  });
+
+  it("a choice already made in Settings settles the question", () => {
+    configService.set("voice_message", { enabled: true, self_learning: false, review_before_send: true, words: [], projects: {} });
+    expect(settleFeaturesDecidedInSettings()).toBe(true);
+    expect(readFeatureIntroStates()[LEARN.id]).toMatchObject({ answer: "off", via: "settings" });
   });
 });

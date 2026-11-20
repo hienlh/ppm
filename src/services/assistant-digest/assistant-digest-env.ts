@@ -26,6 +26,7 @@ import { projectNameForPath } from "../project-name-for-path.ts";
 import { basename } from "node:path";
 import { formatTaskRef } from "../../shared/ppm-tasks-refs.ts";
 import { digestResurfacedTasks } from "./digest-resurfaced-tasks.ts";
+import { digestVoiceLearned } from "./digest-voice-learned.ts";
 
 const log = createLogger("assistant-digest");
 
@@ -88,6 +89,7 @@ export const digestDeps: DigestDeps = {
     });
   },
   resurfaced: digestResurfacedTasks,
+  voiceLearned: (date) => digestVoiceLearned(date, assistantClock.now()),
 };
 
 /** The process-wide digest. */

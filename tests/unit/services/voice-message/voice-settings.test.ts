@@ -1,18 +1,24 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import "../../../test-setup.ts";
 import { configService } from "../../../../src/services/config.service.ts";
+import { appendLearnedWords } from "../../../../src/services/voice-message/voice-learned-store.ts";
 import {
-  appendLearnedWords, normalizeVoiceConfig, readVoiceSettings, updateVoiceSettings, VOICE_LIMITS, vocabularyOf, voiceMessagesEnabled,
+  normalizeVoiceConfig, readVoiceSettings, updateVoiceSettings, VOICE_LIMITS, vocabularyOf, voiceMessagesEnabled,
 } from "../../../../src/services/voice-message/voice-settings.ts";
 
 const AT = "2026-11-20T10:00:00.000Z";
+/** A row with nothing chosen: every switch at its default, self-learning not chosen. */
+const DEFAULTS = {
+  review_before_send: true, cleanup_enabled: true, learn_auto_vocabulary: true, learn_from_cleanup: true,
+  weekly_summary: true, vietnamese_fixes: true, words: [], projects: {},
+};
 
 afterEach(() => configService.set("voice_message", { review_before_send: true, words: [], projects: {} }));
 
 describe("normalizeVoiceConfig", () => {
   it("gives the defaults for anything that is not an object", () => {
     for (const raw of [undefined, null, "x", 3, []]) {
-      expect(normalizeVoiceConfig(raw)).toEqual({ review_before_send: true, cleanup_enabled: true, words: [], projects: {} });
+      expect(normalizeVoiceConfig(raw)).toEqual(DEFAULTS);
     }
   });
 
@@ -23,7 +29,7 @@ describe("normalizeVoiceConfig", () => {
   });
 
   it("keeps enabled only when it is a boolean, and review on unless it is false", () => {
-    expect(normalizeVoiceConfig({ enabled: "yes", review_before_send: "no" })).toEqual({ review_before_send: true, cleanup_enabled: true, words: [], projects: {} });
+    expect(normalizeVoiceConfig({ enabled: "yes", review_before_send: "no" })).toEqual(DEFAULTS);
     expect(normalizeVoiceConfig({ enabled: false, review_before_send: false })).toMatchObject({ enabled: false, review_before_send: false });
   });
 
@@ -62,7 +68,7 @@ describe("normalizeVoiceConfig", () => {
 describe("reading and writing the row", () => {
   it("reads a hand-broken row safely and treats a missing answer as off", () => {
     configService.set("voice_message", { words: "nope", projects: [] } as never);
-    expect(readVoiceSettings()).toEqual({ review_before_send: true, cleanup_enabled: true, words: [], projects: {} });
+    expect(readVoiceSettings()).toEqual(DEFAULTS);
     expect(voiceMessagesEnabled()).toBe(false);
   });
 

@@ -18,8 +18,8 @@
  */
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import {
-  DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, DIGEST_RESURFACED_HEADING, digestWaitingSummary, type DigestProject,
-  type DigestResurfacedTask,
+  DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, DIGEST_RESURFACED_HEADING, DIGEST_VOICE_LEARNED_HINT, digestVoiceLearnedHeading,
+  digestWaitingSummary, type DigestProject, type DigestResurfacedTask, type DigestVoiceLearned,
 } from "../../shared/assistant-digest.ts";
 import { escapeHiddenCharacters } from "../../shared/reveal-hidden-characters.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
@@ -116,7 +116,18 @@ function digestWaitingLines(p: DigestProject, counter: { hidden: number }, count
  * details stay off the phone shows only how many items it has. Past the room left, the rest is
  * said to be in PPM rather than cut mid-item.
  */
-function digestLines(projects: readonly DigestProject[], counter: { hidden: number }, resurfaced: readonly DigestResurfacedTask[] = []): string[] {
+/** Monday's voice section: the words learned this week, to know about rather than to answer. */
+function digestVoiceLines(words: readonly DigestVoiceLearned[], counter: { hidden: number }): string[] {
+  if (!words.length) return [];
+  const shown = words.slice(0, 20).map((w) => `${clean(oneLine(w.word), counter)} (${clean(oneLine(w.from), counter)})`).join(" · ");
+  const more = words.length > 20 ? ` <i>…and ${words.length - 20} more in PPM.</i>` : "";
+  return [`\n<b>🎙 ${digestVoiceLearnedHeading(words.length)}</b>`, `${shown}${more}`, `<i>${DIGEST_VOICE_LEARNED_HINT}</i>`];
+}
+
+function digestLines(
+  projects: readonly DigestProject[], counter: { hidden: number }, resurfaced: readonly DigestResurfacedTask[] = [],
+  voiceLearned: readonly DigestVoiceLearned[] = [],
+): string[] {
   const out: string[] = [];
   let used = 0;
   // PPM's own section first: short, and what the user put out of mind until today.
@@ -145,6 +156,14 @@ function digestLines(projects: readonly DigestProject[], counter: { hidden: numb
     }
     used += size;
     out.push(...lines);
+  }
+  const voice = digestVoiceLines(voiceLearned, counter);
+  const voiceSize = voice.reduce((n, l) => n + l.length + 1, 0);
+  // Past the budget the section shrinks to its count, rather than the digest being refused for length.
+  if (voice.length && used + voiceSize > DIGEST_TELEGRAM_MAX) {
+    out.push(`\n<b>🎙 ${digestVoiceLearnedHeading(voiceLearned.length)}</b> <i>— the list is on the card in PPM.</i>`);
+  } else {
+    out.push(...voice);
   }
   return out;
 }
@@ -212,7 +231,7 @@ function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boole
     if (full && card.okOffered && !options.length) buttons.push({ text: draft ? "OK, send" : "OK", op: "ok" });
     if (full) lines.push(`<i>${REPLY_HINT}</i>`);
   } else if (card.kind === "digest" && full) {
-    if (card.payload.projects) lines.push(...digestLines(card.payload.projects, counter, card.payload.resurfaced));
+    if (card.payload.projects) lines.push(...digestLines(card.payload.projects, counter, card.payload.resurfaced, card.payload.voiceLearned));
     else for (const item of (card.payload.items ?? []).slice(0, 12)) lines.push(`• ${clean(oneLine(item), counter)}`);
   } else if (card.kind === "rules_note" && full) {
     const added = card.payload.added ?? [];

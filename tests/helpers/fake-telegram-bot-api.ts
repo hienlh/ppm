@@ -73,6 +73,8 @@ export interface FakeTelegram {
   pushPhoto(chatId: number, userId: number, options?: { bytes?: Uint8Array; caption?: string; chatType?: TelegramMessage["chat"]["type"]; extra?: Record<string, unknown> }): TelegramUpdate;
   /** A voice note; its bytes can be fetched with `getFile` + the file URL, as a photo's can. `extra` as for `pushText`. */
   pushVoice(chatId: number, userId: number, options?: { bytes?: Uint8Array; duration?: number; mime?: string; chatType?: TelegramMessage["chat"]["type"]; extra?: Record<string, unknown> }): TelegramUpdate;
+  /** An audio file (`message.audio`, an mp3 or m4a sent as a file) rather than a voice note. */
+  pushAudio(chatId: number, userId: number, options?: { bytes?: Uint8Array; duration?: number; mime?: string; fileName?: string }): TelegramUpdate;
   /**
    * Press a button the bot put under one of its messages; throws if there is no such button.
    * With `stale`, a button the message showed at any point counts, taken away since or not.
@@ -496,6 +498,19 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
         date: Math.floor(Date.now() / 1000),
         voice: { duration, file_id: fileId, file_unique_id: `u-${fileId}`, mime_type: mime, file_size: bytes.byteLength },
         ...extra,
+      } as TelegramMessage;
+      return enqueue({ message });
+    },
+    pushAudio(chatId, userId, { bytes = new Uint8Array([0x49, 0x44, 0x33, 0x04]), duration = 3, mime = "audio/mpeg", fileName = "memo.mp3" } = {}) {
+      const n = nextFile++;
+      const fileId = `audio-${n}`;
+      files.set(fileId, { path: `music/file_${n}.mp3`, bytes });
+      const message: TelegramMessage = {
+        message_id: messageId(chatId),
+        from: userOf(userId),
+        chat: chatOf(chatId, "private"),
+        date: Math.floor(Date.now() / 1000),
+        audio: { duration, file_id: fileId, file_unique_id: `u-${fileId}`, mime_type: mime, file_size: bytes.byteLength, file_name: fileName },
       } as TelegramMessage;
       return enqueue({ message });
     },

@@ -35,7 +35,9 @@ import type { TaskWordsAim, TaskWordsMessage } from "./assistant-telegram-task-m
 import { TelegramVoiceMessages } from "./assistant-telegram-voice.ts";
 import type { TelegramVoiceDeps } from "./assistant-telegram-voice-deps.ts";
 import type { VoiceBundle } from "./assistant-telegram-voice-pending.ts";
-import { VOICE_OLD_TEXT, voiceRefusal } from "./assistant-telegram-voice-card.ts";
+import {
+  AUDIO_FORMAT_TEXT, audioFileExt, VOICE_FORWARDED_TEXT, VOICE_OLD_TEXT, voiceOffHtml, voiceRefusal,
+} from "./assistant-telegram-voice-card.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -263,7 +265,20 @@ export class AssistantTelegramInbound {
 
     // A reply to a voice message's review card replaces its transcript.
     if (this.voice?.replace(chatId, message)) return false;
-    if (message.voice && !from && this.voice && this.deps.voice?.enabled()) return this.voiceMessage(chatId, message, updateId);
+    if ((message.voice || message.audio) && this.voice && this.deps.voice) {
+      // Someone else's voice is not the user's words; with a caption, the caption still goes as text.
+      if (from) {
+        if (!(message.caption ?? "").trim()) {
+          this.reply(chatId, escapeTelegramHtml(VOICE_FORWARDED_TEXT));
+          return false;
+        }
+      } else if (!this.deps.voice.enabled()) {
+        this.voiceOff(chatId, updateId);
+        if (!(message.caption ?? "").trim()) return false;
+      } else {
+        return this.voiceMessage(chatId, message, updateId);
+      }
+    }
 
     // An answer in the user's own words to a chat's question card: a reply to it, or the message
     // after its ✏️ Other. One sent while PPM was off is not: it goes on and is asked about below.
@@ -480,7 +495,10 @@ export class AssistantTelegramInbound {
    * (or starts) the chat's burst and is read off the lane. True: its update is confirmed later.
    */
   private async voiceMessage(chatId: string, message: TelegramMessage, updateId: number): Promise<boolean> {
-    const refusal = this.now() - message.date * 1000 > BACKLOG_AGE_MS ? VOICE_OLD_TEXT : voiceRefusal(message.voice!);
+    const audioExt = message.voice ? undefined : audioFileExt(message.audio!);
+    const refusal = this.now() - message.date * 1000 > BACKLOG_AGE_MS ? VOICE_OLD_TEXT
+      : message.voice ? voiceRefusal(message.voice)
+      : audioExt ? voiceRefusal(message.audio!, "audio file") : AUDIO_FORMAT_TEXT;
     if (refusal) {
       this.reply(chatId, escapeTelegramHtml(refusal));
       return false;
@@ -494,8 +512,18 @@ export class AssistantTelegramInbound {
     gathered.updateIds.push(updateId);
     gathered.quote ??= quote;
     if (lane.timer) { clearTimeout(lane.timer); lane.timer = null; }
-    this.voice!.start(chatId, message, gathered);
+    this.voice!.start(chatId, message, gathered, audioExt ?? undefined);
     return true;
+  }
+
+  /** A voice message while the feature is off: said plainly, with a button to turn it on when Whisper is there. */
+  private voiceOff(chatId: string, updateId: number): void {
+    const ready = this.deps.voice?.whisperReady() ?? false;
+    const markup = ready ? { inline_keyboard: [[{
+      text: "Turn on voice messages",
+      callback_data: this.deps.codes.mint(chatId, `voice_enable:${chatId}:${updateId}`, { kind: "voice_enable" }),
+    }]] } : undefined;
+    this.reply(chatId, voiceOffHtml(ready), markup);
   }
 
   private async deliver(chatId: string, text: string, images: Image[], quote: TelegramQuote | null = null): Promise<void> {
@@ -566,6 +594,17 @@ export class AssistantTelegramInbound {
     this.deps.codes.dropGroup(found.group);
     const messageId = cq.message?.message_id;
     if (messageId) this.removeButtons(chatId, messageId);
+    if (action.kind === "voice_enable") {
+      let toast = "Voice messages are on. Send the voice message again.";
+      try {
+        this.deps.voice?.enable();
+      } catch (e) {
+        log.warn(`Telegram chat ${chatId}: could not turn voice messages on: ${(e as Error).message}`);
+        toast = "Could not turn them on; see PPM's log.";
+      }
+      await this.deps.client.answerCallbackQuery(cq.id, toast);
+      return;
+    }
     if (action.kind === "switch") {
       await this.deps.client.answerCallbackQuery(cq.id, this.deps.switchSession(chatId, action.sessionId));
       return;

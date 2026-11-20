@@ -1,7 +1,9 @@
 // Voice messages, end to end on the production Vite bundle: the composer's recording, the review
 // with a picture and typed text, the edit and the one message sent, the bubble after a reload,
 // learning from the edit, review off, a failed clean-up, the feature off, Settings → Voice Input,
-// and the Telegram bridge's voice messages (scenario E, through the fake Bot API).
+// the Telegram bridge's voice messages (scenario E, through the fake Bot API), and self-learning:
+// Settings' learned words with Undo/Restore (L), and on Telegram the Fixed/timing lines, the answer
+// while voice is off, and an audio file (T).
 //
 // Nothing real runs: Whisper is a fake whisper-cli in a scratch PPM_HOME (it sleeps 2 s and prints one
 // Vietnamese line), Claude Haiku is the fixture's scripted completeOnce, the microphone is Chromium's
@@ -29,6 +31,7 @@ import { current, makeMedia, run, startFixture, until } from "./fixtures/voice-m
 import { runWebScenarios } from "./fixtures/voice-message-steps-web.mjs";
 import { runTelegramScenario } from "./fixtures/voice-message-steps-telegram.mjs";
 import { runIntroScenario } from "./fixtures/voice-message-steps-intro.mjs";
+import { runSelfLearningTelegramScenarios, runSelfLearningWebScenarios } from "./fixtures/voice-message-steps-self-learning.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-voice-e2e-"));
 const shots = resolve(process.env.PPM_VOICE_SHOTS ?? join(sandbox, "shots"));
@@ -114,6 +117,18 @@ try {
     }
   });
 
+  // An install that has had self-learning on for a while: the Settings pane's learned words (L).
+  await kit.scenario("install learn: startup", async () => {
+    const install = await startFixture({
+      sandbox, artifacts: shots, webDir, name: "learn", mode: "web", feature: "on", kit, env: { PPM_VOICE_SELF_LEARNING: "seed" },
+    });
+    try {
+      await runSelfLearningWebScenarios({ kit, browser, install, shots });
+    } finally {
+      await install.stop();
+    }
+  });
+
   // The Telegram install: the Assistant's bot against the fake Bot API, scenario E.
   await kit.scenario("install telegram: startup", async () => {
     const fake = await startFakeTelegram();
@@ -126,11 +141,13 @@ try {
           PPM_ASSISTANT_FAKE_TELEGRAM_TOKEN: token,
           PPM_ASSISTANT_FAKE_TELEGRAM_CHATS: JSON.stringify([["777", "777", "Victor"]]),
           PPM_ASSISTANT_FAKE_TELEGRAM_DEBOUNCE_MS: "300",
+          PPM_VOICE_SELF_LEARNING: "seed",
         },
       });
       try {
         const ogg = readFileSync(media.ogg).toString("base64");
         await runTelegramScenario({ kit, install, control, ogg });
+        await runSelfLearningTelegramScenarios({ kit, browser, install, control, ogg, shots });
       } finally {
         await install.stop();
       }
