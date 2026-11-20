@@ -121,6 +121,9 @@ not look at whether the turn has read outside text: the user chose to trust thei
 the line against injected text is that a turn PPM started never acts. Still asked in Full mode:
 - `git_sync` push, `public_link_set` on, `port_forward_start` over Cloudflare, and
   `chat_answer_approval` (another chat's request, which the user has not seen);
+- a settings change the catalog marks `card` (security, permissions, trusted text, accounts, the
+  Telegram bridge) and every install or removal (`settings_*`, below): the tool passes its reason
+  as the ask's `alwaysAsk`, which `hardLimitReason` honours;
 - `ui_run_command` for an extension's command (`ext:…`), which may post or publish like a user MCP
   tool;
 - `db_query` writes, except on a connection listed in `db_write_connections` (ticked in the same
@@ -984,6 +987,7 @@ writes the database directly, so an open PPM never heard of the change.
 | Chats | (`chat_list_sessions`, `chats_attention`), `chat_changes` | `chat_stop`, `chat_delete`; `chat_organize`, `chat_changes_answer` (see below) |
 | Database connections | (`db_list_connections`), `db_connection_test` | `db_connection_save`, `db_connection_delete` |
 | Manager chats | (`session_status`, the shared context) | `manager_assign`, `manager_unassign` (see "Running the user's chats") |
+| Settings | `settings_get`, `settings_history`, `settings_install_status` | `settings_set`, `settings_undo`, `settings_install` (see [Settings tools](#settings-tools)) |
 
 The connection family (`assistant-db-connection-*.ts`, names in
 `src/shared/assistant-db-connection-tool-names.ts`) reaches only the connection list, one
@@ -1094,7 +1098,11 @@ already proved itself with the session's MCP token — so the allowlist is the w
   key, a body on GET or DELETE. A project segment must be a registered project's exact name, so
   `__assistant__` and unregistered names answer `project_not_found` without reaching the router.
 
-A rule written wrongly still cannot reach `/api/fs` or `/api/settings`: those routers are not
+The settings routers (`/api/settings`, `/api/notifications`, `/api/speech`, `/api/assistant`,
+`/api/accounts`, `/api/lsp`, `/api/remote-desktop`) are mounted for the settings family behind a gate
+of their own: only the exact paths in `settings-tool-routes.ts` get through (the password, UI
+preferences, MCP servers, account sign-ins and exports never do), and `config-key` only for the
+catalog's two keys. A rule written wrongly still cannot reach `/api/fs`: that router is not
 mounted.
 
 **Cards** are built by pure functions (`assistant-approval-summary-{git,schedule,tunnel}.ts`) from
@@ -1167,6 +1175,53 @@ started, PPM's own ports, the database profile, whether login is on), loaded laz
   forwards this PPM started are always listed.
 - The Tailscale Service and the named tunnel are read, never changed: both need a sign-in or an
   admin's approval only the user can give, in Settings → Remote Access.
+
+## Settings tools
+
+`settings_get`, `settings_set`, `settings_history`, `settings_undo`, `settings_install` and
+`settings_install_status` (`src/services/assistant-settings-tools/`, names in
+`src/shared/assistant-settings-tool-names.ts`) let the Assistant change PPM's own Settings instead of
+opening a pane and telling the user what to click (ppm/52). They are offered only while
+`assistant.settings_tools` is true — the "PPM has new features" question
+`assistant-settings-tools-2026-11`, or the switch in Settings → PPM Assistant → **Changes**; absent
+means not chosen, which is off. The endpoint hides them from `tools/list` (`assistantToolOff`) and the
+handlers refuse a call that arrives anyway.
+
+- **The catalog** (`settings-catalog-core.ts`, `settings-catalog-ai.ts`) is the whole list of what may
+  change: a key, the pane's label, a value spec checked strictly, a tier, an in-process read and the
+  pane's own route for the write. A key in no list is "not offered". `settings-catalog-refused.ts` names
+  what the Assistant may only point at, with the reason and a `/?openSettings=<category>` link: every
+  secret (answered as `{ set: true|false }`, never a value — not read, not written), PPM's password,
+  `port`/`host`, MCP servers, account sign-ins, Tailscale and named tunnels, the vault, and the
+  switch itself. `UNCOVERED_CATEGORIES` says why each other pane is out (a test pairs both with the rail).
+- **Tiers**: `direct` changes with no card in Full mode (voice, theme, notifications, model and effort,
+  quiet hours, digest, file filters, log level); `card` asks even in Full mode, its reason on the card
+  (login, every permission switch of the Assistant and of other chats, the Assistant's instructions,
+  persona and manager template, design instructions, account rotation, the Telegram bridge, and the
+  session-trace and query-log limits, since lowering one deletes history Undo cannot bring back). Ask mode asks for everything. A turn PPM started is refused as for every write.
+- **Writes** go through the settings family's route caller, so validation, logs and `settings:changed`
+  (now also `voice`, `assistant`, `design`) are the pane's; the internal app mounts the broadcast
+  middleware too. One card covers a call of up to 10 changes; after Allow every value is read again and
+  a moved one makes the call `stale`, writing nothing. `PUT /api/assistant/settings` replaces the
+  object, so a write sends the required fields as stored and leaves out every key the route keeps by
+  itself unless the change touched it.
+- **The change log** (`assistant_setting_changes`, migration 79, 90 days): one row per change, install
+  and undo, with before and after as JSON and as text, where the turn was typed and how it was allowed
+  (`full`, `card`, or the user's own `user` Undo). No secret reaches it. Undo
+  (`undoSettingChange`) is compare-and-set: refused when the value moved since, claimed before it
+  writes (two presses at once undo once), and an undo row is not itself undoable. The user's Undo needs no card — from the chat card (`settings-tool-card.tsx`), the
+  Changes tab (`/api/assistant/settings-changes`) or Telegram; the agent's `settings_undo` asks like
+  `settings_set` would. `assistant:settings_changes_changed` refreshes open Changes tabs.
+- **Installs** (`settings-installs.ts`): Whisper and a model, a language server, a database driver, the
+  WebRTC relay — always a card naming the pinned download and where it goes. Whisper and the relay run
+  in the background: the chat card polls their status route, and a Telegram turn gets one message
+  edited in place (`settings-install-watch.ts`). Removal keeps no old copy.
+- **Telegram** (`assistant-telegram-settings-changes.ts`): the changes a Telegram turn made come back
+  when the turn ends as one card, before → after and how it was allowed, with an Undo per setting and
+  Open in PPM (`/?openSettings=assistant:changes`); a long value is shown as its start and length,
+  so the card stays under Telegram's message limit. A `card`-tier change is the ordinary Telegram
+  approval card. Browser-only preferences (`voiceEngine`, `lspEnabled`, Remote Desktop's) are not in
+  the catalog.
 
 ## Server-side chat control
 

@@ -31,6 +31,8 @@ import { approvalAskerFor } from "./assistant-approval-broker.ts";
 import { callFamilyTool } from "./assistant-tool-family.ts";
 import { assistantTurnProvenance } from "../assistant/assistant-turn-provenance.ts";
 import { ownToolBringsOutsideText } from "../assistant/assistant-outside-text.ts";
+import { SETTINGS_TOOLS } from "../../shared/assistant-settings-tool-names.ts";
+import { getAssistantSettings } from "../assistant/assistant-settings.service.ts";
 
 /**
  * `/api/assistant-mcp` — the PPM Assistant's own tools, for one Assistant session's agent (the
@@ -45,10 +47,21 @@ type ToolCall = (binding: AssistantMcpTokenBinding, name: string, args: Record<s
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
+/**
+ * Why a tool is not offered now, or null: the settings tools only while the user has turned them on
+ * (Settings → PPM Assistant → Changes, or the "PPM has new features" question). Read per request,
+ * so turning them off hides them from the next `tools/list` and refuses a call already planned.
+ */
+export function assistantToolOff(name: string, settingsToolsOn: () => boolean = () => getAssistantSettings().settings_tools === true): string | null {
+  if (!(SETTINGS_TOOLS as readonly string[]).includes(name)) return null;
+  return settingsToolsOn() ? null : "The settings tools are off: the user turns them on in Settings → PPM Assistant → Changes.";
+}
+
 export function createAssistantMcpHandler(deps: {
   resolveToken: (token: string | null) => AssistantMcpTokenBinding | null;
   isAssistant: (sessionId: string) => boolean;
   callTool: ToolCall;
+  unavailable?: (name: string) => string | null;
 }) {
   return createMcpHttpHandler<AssistantMcpTokenBinding>({
     serverName: CLAUDE_ASSISTANT_MCP_SERVER,
@@ -58,6 +71,7 @@ export function createAssistantMcpHandler(deps: {
       return binding && deps.isAssistant(binding.sessionId) ? binding : null;
     },
     tools: ASSISTANT_TOOL_DEFINITIONS,
+    unavailable: (name) => (deps.unavailable ?? assistantToolOff)(name),
     holdOpenSeconds: ASSISTANT_MCP_HOLD_OPEN_SECONDS,
     callTool: (binding, name, args, signal) => deps.callTool(binding, name, isObj(args) ? args : {}, signal),
   });

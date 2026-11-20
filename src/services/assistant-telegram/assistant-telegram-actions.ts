@@ -70,6 +70,15 @@ export interface TaskPress {
   historyId?: number;
 }
 
+/** Undo on a "Changed N settings" card (`assistant-telegram-settings-changes.ts`): the user's own press. */
+export interface SettingsPress {
+  kind: "settings";
+  /** The card held in memory. */
+  ref: string;
+  op: "undo";
+  changeId: number;
+}
+
 export type BridgeAction =
   /** `/sessions`: talk to this session from now on. */
   | { kind: "switch"; sessionId: string }
@@ -83,4 +92,5 @@ export type BridgeAction =
   | { kind: "voice_enable" }
   | CardPress
   | ManagerCardPress
-  | TaskPress;
+  | TaskPress
+  | SettingsPress;

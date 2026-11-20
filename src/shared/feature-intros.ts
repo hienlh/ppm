@@ -39,8 +39,9 @@ export interface FeatureIntro {
  * Settings a feature introduction can stand for. `assistant_permission_mode`: on = Full, off = Ask.
  * `voice_messages`: `voice_message.enabled`. `voice_self_learning`: `voice_message.self_learning`,
  * asked only once voice messages are on (it means nothing without them).
+ * `assistant_settings_tools`: `assistant.settings_tools`.
  */
-export type FeatureIntroSetting = "assistant_permission_mode" | "voice_messages" | "voice_self_learning";
+export type FeatureIntroSetting = "assistant_permission_mode" | "voice_messages" | "voice_self_learning" | "assistant_settings_tools";
 
 export const FEATURE_INTROS: readonly FeatureIntro[] = [
   {
@@ -100,6 +101,17 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
       + "undo them in Settings → Voice. Everything stays on this machine apart from the clean-up you already use.",
     tools: [],
     setting: "voice_self_learning",
+    since: "2026-11",
+  },
+  {
+    id: "assistant-settings-tools-2026-11",
+    title: "PPM Assistant changes settings for you",
+    body: "Ask the Assistant to change PPM's settings — voice, notifications, theme, its own schedule — or to install "
+      + "Whisper or a language server. In Full mode ordinary settings change without a card; security, permissions, "
+      + "accounts and installs always ask, and tokens and passwords are never read. Every change can be undone in "
+      + "Settings → PPM Assistant → Changes. It stays off until you choose.",
+    tools: [],
+    setting: "assistant_settings_tools",
     since: "2026-11",
   },
 ];

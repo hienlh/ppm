@@ -49,7 +49,8 @@ function minutesOrSeconds(ms: number): string {
 }
 
 export type ApprovalVerdict =
-  | { verdict: "approved" }
+  /** `auto`: Full mode answered it with no card shown (`assistant-full-mode.ts`). */
+  | { verdict: "approved"; auto?: true }
   | { verdict: "denied" | "timeout" | "withdrawn" | "unavailable"; reason: string };
 
 /** What a tool asks the user to approve. `summary` is server-built (`assistant-approval-summary.ts`). */
@@ -61,6 +62,8 @@ export interface ApprovalAsk {
   connectionId?: number;
   /** The action reaches a folder PPM keeps private (`assistant-private-paths.ts`). Never shown. */
   touchesPrivate?: boolean;
+  /** Why this card is shown even in Full mode (a setting that changes permissions, an install). */
+  alwaysAsk?: string;
 }
 
 /**
@@ -79,6 +82,7 @@ export const fullModeAutoApprove: AutoApprove = async (sessionId, ask) => {
     tool: ask.tool, input: ask.input,
     ...(ask.connectionId !== undefined ? { connectionId: ask.connectionId } : {}),
     ...(ask.touchesPrivate ? { touchesPrivate: true } : {}),
+    ...(ask.alwaysAsk ? { alwaysAsk: ask.alwaysAsk } : {}),
   });
   return verdict.run;
 };
@@ -243,7 +247,7 @@ export function approvalAskerFor(
 ): AskApproval {
   return async (ask) => {
     if (unattended(sessionId)) return { verdict: "unavailable", reason: UNATTENDED_TURN_REFUSAL };
-    if (await autoApprove(sessionId, ask).catch(() => false)) return { verdict: "approved" };
+    if (await autoApprove(sessionId, ask).catch(() => false)) return { verdict: "approved", auto: true };
     return broker.request(sessionId, ask, signal);
   };
 }

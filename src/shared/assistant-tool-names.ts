@@ -12,6 +12,7 @@ import { CHAT_TOOLS } from "./assistant-chat-tool-names.ts";
 import { DB_CONNECTION_TOOLS } from "./assistant-db-connection-tool-names.ts";
 import { MANAGER_TOOLS } from "./assistant-manager-tool-names.ts";
 import { SYSTEM_TOOLS } from "./assistant-system-tool-names.ts";
+import { SETTINGS_TOOLS } from "./assistant-settings-tool-names.ts";
 
 export const PROJECTS_LIST_TOOL = "projects_list";
 export const PROJECT_ADD_TOOL = "project_add";
@@ -60,7 +61,7 @@ export const ASSISTANT_TOOLS = [
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
   NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,
   ...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...SYSTEM_TOOLS, ...PROJECT_TOOLS, ...CHAT_TOOLS, ...DB_CONNECTION_TOOLS,
-  ...MANAGER_TOOLS, TERMINAL_TYPE_TOOL,
+  ...MANAGER_TOOLS, TERMINAL_TYPE_TOOL, ...SETTINGS_TOOLS,
 ] as const;
 export type AssistantToolName = (typeof ASSISTANT_TOOLS)[number];
 

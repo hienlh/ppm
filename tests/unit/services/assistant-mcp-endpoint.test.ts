@@ -66,7 +66,8 @@ describe("assistant MCP endpoint", () => {
     const init = await (await rpc(token, { jsonrpc: "2.0", id: 1, method: "initialize", params: {} })).json();
     expect(init.result.serverInfo.name).toBe("ppm-assistant");
     const list = await (await rpc(token, { jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
-    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([...ASSISTANT_TOOLS]);
+    // The settings tools are offered only once the user turns them on (off in a fresh install).
+    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([...ASSISTANT_TOOLS].filter((t) => !t.startsWith("settings_")));
     // Every tool reads, except the ones that move the user's screen, which change no data, the
     // ones that may change data once the user approves, and the one running PPM's commands, an
     // extension's among them, which may also reach outside.

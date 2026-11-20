@@ -9,7 +9,7 @@
 import { create } from "zustand";
 import { isSettingsCategoryId, type SettingsCategoryId } from "./settings-categories";
 
-export type AssistantSettingsTabId = "general" | "sessions" | "digest" | "managers" | "notebook";
+export type AssistantSettingsTabId = "general" | "sessions" | "digest" | "managers" | "notebook" | "changes";
 
 export const ASSISTANT_SETTINGS_TABS: { id: AssistantSettingsTabId; label: string }[] = [
   { id: "general", label: "General" },
@@ -17,6 +17,7 @@ export const ASSISTANT_SETTINGS_TABS: { id: AssistantSettingsTabId; label: strin
   { id: "digest", label: "Digest & quiet hours" },
   { id: "managers", label: "Manager chats" },
   { id: "notebook", label: "Notebook" },
+  { id: "changes", label: "Changes" },
 ];
 
 export const useAssistantSettingsTab = create<{

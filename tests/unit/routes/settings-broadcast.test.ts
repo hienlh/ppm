@@ -137,6 +137,7 @@ describe("settingsSectionOf", () => {
     writes.push(
       ["PUT", "/api/notifications/ntfy"], ["DELETE", "/api/notifications/telegram/chats/42"],
       ["DELETE", "/api/accounts/abc"], ["PUT", "/api/codex-accounts/strategy"],
+      ["PUT", "/api/settings/design"], ["PUT", "/api/speech/voice-settings"], ["PUT", "/api/assistant/settings"],
     );
     const seen = new Set(writes.map(([m, p]) => settingsSectionOf(m, p)));
     expect([...seen].sort()).toEqual([...SETTINGS_EVENT_SECTIONS].sort());

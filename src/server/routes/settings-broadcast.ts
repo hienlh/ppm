@@ -4,7 +4,7 @@ import { SETTINGS_CHANGED_EVENT, SETTINGS_CLIENT_HEADER, settingsClientIdFrom, t
 /**
  * Tells every open PPM that a settings section changed, after a write to one of the routes below
  * answers with a 2xx — whoever called it: a screen, the `ppm` CLI or another device. Registered on
- * `/api/settings/*`, `/api/notifications/*`, `/api/accounts/*` and `/api/codex-accounts/*` ahead
+ * `/api/settings/*`, `/api/notifications/*`, `/api/accounts/*`, `/api/codex-accounts/*`, `/api/speech/*` and `/api/assistant/*` ahead
  * of the routers it wraps (`SETTINGS_BROADCAST_MOUNTS`).
  *
  * Only the writes listed in `WRITES` announce, each with its section. Everything else stays quiet
@@ -20,7 +20,7 @@ import { SETTINGS_CHANGED_EVENT, SETTINGS_CLIENT_HEADER, settingsClientIdFrom, t
 export const ANNOUNCE_SETTINGS_ENV_KEY = "announceSettingsChanged";
 
 /** The route prefixes the middleware is registered on (each as `<prefix>/*`). */
-export const SETTINGS_BROADCAST_MOUNTS = ["/api/settings", "/api/notifications", "/api/accounts", "/api/codex-accounts"] as const;
+export const SETTINGS_BROADCAST_MOUNTS = ["/api/settings", "/api/notifications", "/api/accounts", "/api/codex-accounts", "/api/speech", "/api/assistant"] as const;
 
 type Announce = (section: SettingsSection, clientId?: string) => void;
 
@@ -32,6 +32,11 @@ const WRITES: ReadonlyArray<{ method: string; path: RegExp; section: SettingsSec
   { method: "DELETE", path: /^\/api\/settings\/themes\/[^/]+$/, section: "themes" },
   { method: "PUT", path: /^\/api\/settings\/ai$/, section: "ai" },
   { method: "PUT", path: /^\/api\/settings\/keybindings$/, section: "keybindings" },
+  { method: "PUT", path: /^\/api\/settings\/design\/?$/, section: "design" },
+  // Voice messages (the switch, the transcript review, Haiku clean-up, the word lists).
+  { method: "PUT", path: /^\/api\/speech\/voice-settings$/, section: "voice" },
+  // The PPM Assistant's own settings (its permission mode also has its own event).
+  { method: "PUT", path: /^\/api\/assistant\/settings$/, section: "assistant" },
   { method: "PUT", path: /^\/api\/settings\/proxy$/, section: "proxy" },
   { method: "PUT", path: /^\/api\/settings\/query-audit$/, section: "query-audit" },
   { method: "DELETE", path: /^\/api\/settings\/query-audit\/logs$/, section: "query-audit" },

@@ -16,6 +16,7 @@ import { NOTEBOOK_TOOL_DEFINITIONS } from "./assistant-notebook-tool-definitions
 import { TERMINAL_TYPE_TOOL_DEFINITION } from "./assistant-terminal-type-tool-definition.ts";
 import { MANAGER_TOOL_DEFINITIONS } from "./assistant-manager-tool-definitions.ts";
 import { SYSTEM_TOOL_DEFINITIONS } from "./assistant-system-tool-definitions.ts";
+import { SETTINGS_TOOL_DEFINITIONS } from "../assistant-settings-tools/settings-tool-definitions.ts";
 
 /**
  * The tools the Assistant's MCP endpoint serves, and how long a call may take. The names each
@@ -238,4 +239,5 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
   ...DB_CONNECTION_TOOL_DEFINITIONS,
   ...MANAGER_TOOL_DEFINITIONS,
   TERMINAL_TYPE_TOOL_DEFINITION,
+  ...SETTINGS_TOOL_DEFINITIONS,
 ] as const;

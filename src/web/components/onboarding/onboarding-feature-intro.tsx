@@ -9,6 +9,7 @@ import { Sparkles, X } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { openSettings } from "@/components/settings/open-settings";
+import { useAssistantSettingsTab } from "@/components/settings/assistant-settings-tab-store";
 import { featureIntroSteps, useFeatureIntrosStore } from "@/stores/feature-intros-store";
 import { featureIntroSettingsLink, featurePartAllowed } from "@/lib/onboarding/feature-intros-client";
 import type { OnboardingStatus } from "@/lib/onboarding/onboarding-types";
@@ -78,7 +79,11 @@ function FeatureIntroStep({ intro, position, total }: { intro: FeatureIntro; pos
     <Button variant="ghost" className="w-full min-h-11 mt-1" disabled={busy} onClick={() => void later(intro.id)}>Later</Button>
     {/* Deciding there is answering, so this hides the part without counting a skip. A feature that
         is one setting is changed where that setting lives, not among the tools. */}
-    <Button variant="link" className="w-full min-h-11 text-xs" onClick={() => { hide(); openSettings(settingsLink.category); }}>
+    <Button variant="link" className="w-full min-h-11 text-xs" onClick={() => {
+      hide();
+      if (settingsLink.assistantTab) useAssistantSettingsTab.getState().setTab(settingsLink.assistantTab);
+      openSettings(settingsLink.category);
+    }}>
       {settingsLink.label}
     </Button>
   </div>;

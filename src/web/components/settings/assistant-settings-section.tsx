@@ -6,6 +6,7 @@ import { AssistantSessionsTelegramSection } from "./assistant/assistant-sessions
 import { AssistantDigestQuietSection } from "./assistant/assistant-digest-quiet-section";
 import { AssistantManagerChatsSection } from "./assistant/assistant-manager-chats-section";
 import { AssistantNotebookSection } from "./assistant/assistant-notebook-section";
+import { AssistantSettingsChangesSection } from "./assistant/assistant-settings-changes-section";
 
 const PANELS: Record<AssistantSettingsTabId, ComponentType> = {
   general: AssistantGeneralSettings,
@@ -13,11 +14,12 @@ const PANELS: Record<AssistantSettingsTabId, ComponentType> = {
   digest: AssistantDigestQuietSection,
   managers: AssistantManagerChatsSection,
   notebook: AssistantNotebookSection,
+  changes: AssistantSettingsChangesSection,
 };
 
 /**
  * Settings → PPM Assistant, in sub-tabs: General (what sessions run with), Sessions & Telegram,
- * Digest & quiet hours, Manager chats and Notebook. Each panel stays mounted once shown, so
+ * Digest & quiet hours, Manager chats, Notebook and Changes. Each panel stays mounted once shown, so
  * switching away and back keeps an unsaved draft instead of reloading over it.
  *
  * The pane is a container of its own: the manager table and the rows below it pick their layout

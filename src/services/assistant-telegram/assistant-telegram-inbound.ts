@@ -24,7 +24,7 @@ import { fetchPhoto, fetchPhotos } from "./assistant-telegram-photos.ts";
 import { MAX_REPLY_IMAGE_BYTES, REPLY_IMAGE_SIZE_TEXT } from "../assistant-cards/card-reply-images.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
-import type { BridgeAction, ManagerCardPress, TaskPress } from "./assistant-telegram-actions.ts";
+import type { BridgeAction, ManagerCardPress, SettingsPress, TaskPress } from "./assistant-telegram-actions.ts";
 import type { CardReplyMessage } from "./assistant-telegram-card-replies.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import type { TypedAnswerMessage } from "./assistant-telegram-typed-answers.ts";
@@ -83,6 +83,8 @@ export interface InboundDeps {
   pressManagerCard?: (chatId: string, press: ManagerCardPress, group: string) => Promise<string>;
   /** A PPM Tasks button (`/tasks`, a created task, an Undo on a task card): the toast to show, after acting. */
   pressTask?: (chatId: string, press: TaskPress, group: string, cq: TelegramCallbackQuery) => Promise<string>;
+  /** Undo on a settings card the Assistant's settings tools left: the toast to show, after acting. */
+  pressSettings?: (chatId: string, press: SettingsPress, group: string) => Promise<string>;
   /** `/tasks [project]`. */
   showTasks?: (chatId: string, args: string, reply: (html: string) => void) => void;
   /**
@@ -583,6 +585,11 @@ export class AssistantTelegramInbound {
     }
     if (action.kind === "task") {
       const toast = this.deps.pressTask ? await this.deps.pressTask(chatId, action, found.group, cq) : "This button is no longer valid.";
+      await this.deps.client.answerCallbackQuery(cq.id, toast);
+      return;
+    }
+    if (action.kind === "settings") {
+      const toast = this.deps.pressSettings ? await this.deps.pressSettings(chatId, action, found.group) : "This button is no longer valid.";
       await this.deps.client.answerCallbackQuery(cq.id, toast);
       return;
     }

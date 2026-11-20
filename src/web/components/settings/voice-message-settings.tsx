@@ -6,6 +6,7 @@
  * Every change is saved at once; the server answers with the whole state, which replaces ours.
  */
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 import { toast } from "sonner";
 import { ChevronDown } from "@/lib/icons";
 import { SwitchRow } from "./settings-rows";
@@ -28,6 +29,11 @@ export function VoiceMessageSettings({ onEnabledChange }: { onEnabledChange?: (e
   const [unavailable, setUnavailable] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // …and when the server says they changed elsewhere (another device, the Assistant's settings
+  // tools). Not on this pane's own save event, which would read back over the answer it just got.
+  const [reloads, setReloads] = useState(0);
+  useSettingsChanged("voice", () => setReloads((n) => n + 1));
+
   // Read again when the "PPM has new features" question is answered while this pane is open.
   useEffect(() => {
     let live = true;
@@ -37,7 +43,7 @@ export function VoiceMessageSettings({ onEnabledChange }: { onEnabledChange?: (e
     void read();
     window.addEventListener(FEATURE_INTROS_CHANGED_EVENT, read);
     return () => { live = false; window.removeEventListener(FEATURE_INTROS_CHANGED_EVENT, read); };
-  }, [project]);
+  }, [project, reloads]);
 
   useEffect(() => { if (view) onEnabledChange?.(view.enabled); }, [view, onEnabledChange]);
 

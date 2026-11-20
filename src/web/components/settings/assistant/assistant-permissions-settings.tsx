@@ -9,6 +9,7 @@
  * (`assistant-mode-button.tsx`) changes the same mode and this pane follows it.
  */
 import { useEffect, useState } from "react";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 import { toast } from "sonner";
 import { Hand, Loader2, ShieldCheck, Zap } from "@/lib/icons";
 import { Switch } from "@/components/ui/switch";
@@ -58,13 +59,17 @@ export function AssistantPermissionsSettings() {
   const [confirming, setConfirming] = useState<"act_on_own" | "full" | null>(null);
   const { mode, setMode, saving: savingMode } = useAssistantPermissionMode();
 
+  // Read again when the Assistant's settings change elsewhere (its settings tools, another device).
+  const [reloads, setReloads] = useState(0);
+  useSettingsChanged("assistant", () => setReloads((n) => n + 1));
+
   useEffect(() => {
     let live = true;
     getAssistantSettings()
       .then((res) => { if (live) setSaved(switchesFrom(res)); })
       .catch((e: Error) => { if (live) setError(e.message || "Could not load the Assistant's settings"); });
     return () => { live = false; };
-  }, []);
+  }, [reloads]);
 
   if (error) return <p className="text-xs text-error" role="alert">{error}</p>;
   if (!saved || mode === null) return <div className="flex justify-center py-6 text-muted-foreground"><Loader2 className="size-4 animate-spin" /></div>;

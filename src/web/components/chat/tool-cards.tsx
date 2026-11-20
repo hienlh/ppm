@@ -121,6 +121,8 @@ import { SessionCollabToolCard } from "./session-collab-tool-card";
 import { sessionCollabToolCall } from "@/lib/session-collab-tool-call";
 import { VaultToolCard } from "./vault-tool-card";
 import { vaultToolCall } from "@/lib/vault-tool-call";
+import { SettingsToolCard } from "./settings-tool-card";
+import { settingsToolCall } from "@/lib/settings-tool-call";
 import { DeviceToolDetails, DeviceToolSummary } from "./device-tool-card";
 import { deviceToolCall, deviceToolOf, tabToolCall } from "@/lib/tab-tool-call";
 import { DbToolSummary, DbToolDetails } from "./db-tool-card";
@@ -284,6 +286,15 @@ export function ToolCard({
   if (vaultCall) {
     return (
       <VaultToolCard call={vaultCall} toolUseId={toolUseId} output={hasResult ? String((result as any).output ?? "") : undefined}
+        isError={isError} done={!!isDone} />
+    );
+  }
+
+  // The PPM Assistant's settings tools: before → after per setting, how it was allowed, and Undo.
+  const settingsCall = tool.type === "tool_use" ? settingsToolCall(toolName, input) : null;
+  if (settingsCall) {
+    return (
+      <SettingsToolCard call={settingsCall} toolUseId={toolUseId} output={hasResult ? String((result as any).output ?? "") : undefined}
         isError={isError} done={!!isDone} />
     );
   }

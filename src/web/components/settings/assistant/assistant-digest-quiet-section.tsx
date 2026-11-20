@@ -4,6 +4,7 @@
  * browser's IANA zone, and the zone the times are read in is shown as plain text under them.
  */
 import { useEffect, useState } from "react";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 import { toast } from "sonner";
 import { Coffee, Loader2, RotateCcw } from "@/lib/icons";
 import { Input } from "@/components/ui/input";
@@ -58,13 +59,17 @@ export function AssistantDigestQuietSection() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // Read again when the Assistant's settings change elsewhere (its settings tools, another device).
+  const [reloads, setReloads] = useState(0);
+  useSettingsChanged("assistant", () => setReloads((n) => n + 1));
+
   useEffect(() => {
     let live = true;
     getAssistantSettings()
       .then((res) => { if (live) setSaved(savedFrom(res)); })
       .catch((e: Error) => { if (live) setError(e.message || "Could not load the Assistant's settings"); });
     return () => { live = false; };
-  }, []);
+  }, [reloads]);
 
   if (error) return <p className="text-xs text-error" role="alert">{error}</p>;
   if (!saved) return <div className="flex justify-center py-8 text-muted-foreground"><Loader2 className="size-4 animate-spin" /></div>;

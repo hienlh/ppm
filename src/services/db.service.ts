@@ -15,7 +15,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 78;
+export const CURRENT_SCHEMA_VERSION = 79;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1647,6 +1647,35 @@ export function runMigrations(database: Database): void {
     `);
     database.exec(`CREATE INDEX IF NOT EXISTS idx_vault_attachments_item ON vault_attachments(item_id)`);
     database.exec(`PRAGMA user_version = 78;`);
+  }
+
+  if (current < 79) {
+    // Settings the PPM Assistant changed (`src/services/assistant-settings-tools/`), so each can
+    // be undone from the chat, Telegram or Settings → PPM Assistant → Changes. Values are JSON as
+    // the catalog reads them; a secret never reaches this table (the catalog refuses them). Rows
+    // older than 90 days are pruned on write.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS assistant_setting_changes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at INTEGER NOT NULL,
+        session_id TEXT,
+        origin TEXT NOT NULL CHECK (origin IN ('ppm', 'telegram')),
+        approval TEXT NOT NULL CHECK (approval IN ('full', 'card', 'user')),
+        kind TEXT NOT NULL CHECK (kind IN ('setting', 'install', 'uninstall')),
+        key TEXT NOT NULL,
+        label TEXT NOT NULL,
+        before_json TEXT,
+        after_json TEXT,
+        before_text TEXT,
+        after_text TEXT,
+        note TEXT,
+        undoes INTEGER,
+        undone_at INTEGER,
+        undone_by INTEGER
+      )
+    `);
+    database.exec(`CREATE INDEX IF NOT EXISTS idx_assistant_setting_changes_at ON assistant_setting_changes(at)`);
+    database.exec(`PRAGMA user_version = 79;`);
   }
 }
 

@@ -122,6 +122,12 @@ export interface AssistantSettings {
   permission_mode?: AssistantPermissionMode;
   /** Ids of saved database connections the Assistant may write to without a card in Full mode. */
   db_write_connections: number[];
+  /**
+   * "Let the Assistant change settings": the `settings_*` tools are offered. Absent means the user
+   * has not chosen yet, which is off until the "PPM has new features" question or Settings →
+   * PPM Assistant → Changes decides.
+   */
+  settings_tools?: boolean;
 }
 
 /** See {@link AssistantSettings.permission_mode}. */
@@ -327,6 +333,11 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
   const timezone = readTimeZone(raw.timezone, errors);
   const permissionMode = readPermissionMode(raw.permission_mode, errors);
   const dbWriteConnections = readConnectionIds(raw.db_write_connections, errors);
+  let settingsTools: boolean | undefined;
+  if (raw.settings_tools !== undefined && raw.settings_tools !== null) {
+    if (typeof raw.settings_tools === "boolean") settingsTools = raw.settings_tools;
+    else errors.push("settings_tools must be true or false");
+  }
   return {
     value: {
       default_provider: defaultProvider, providers: readProviders(raw.providers, errors), instructions,
@@ -343,6 +354,7 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
       act_on_own: actOnOwn,
       ...(permissionMode ? { permission_mode: permissionMode } : {}),
       db_write_connections: dbWriteConnections,
+      ...(settingsTools !== undefined ? { settings_tools: settingsTools } : {}),
     },
     errors,
   };

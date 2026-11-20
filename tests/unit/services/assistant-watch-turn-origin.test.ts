@@ -120,7 +120,7 @@ describe("Full mode at the asker", () => {
     const broker = createApprovalBroker({ deliver: () => { delivered++; return 1; } });
     const seen: unknown[] = [];
     const ask = approvalAskerFor("asst", undefined, broker, () => false, async (_s, a) => { seen.push(a.connectionId); return true; });
-    expect(await ask({ tool: "db_query", input: {}, summary: { title: "x" } as never, connectionId: 4 })).toEqual({ verdict: "approved" });
+    expect(await ask({ tool: "db_query", input: {}, summary: { title: "x" } as never, connectionId: 4 })).toEqual({ verdict: "approved", auto: true });
     expect(delivered).toBe(0);
     expect(seen).toEqual([4]);
   });

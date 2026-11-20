@@ -4,6 +4,7 @@ import { resolveAssistantProject } from "./assistant-project-scope.ts";
 import {
   ROUTE_METHODS, type CallPpmRoute, type RouteCallResult, type RouteMethod, type RouteRule,
 } from "./assistant-route-rules.ts";
+import { CONFIG_KEY_WRITES, isSettingsFamilyPath } from "../assistant-settings-tools/settings-tool-routes.ts";
 
 /**
  * The Assistant's tools calling PPM's own HTTP routes in-process — the routes the UI calls — so a
@@ -37,7 +38,9 @@ let appPromise: Promise<RouteApp> | null = null;
 /**
  * The routers the tool families may reach, mounted at the paths and in the order
  * `src/server/index.ts` mounts them, and nothing else — no auth, CORS or gzip, and none of the
- * server's other routers, so even a rule written wrongly cannot reach `/api/fs` or `/api/settings`.
+ * server's other routers, so even a rule written wrongly cannot reach `/api/fs`. The Settings routers
+ * are mounted for the settings family, each behind the gate below that lets only that family's
+ * exact paths through.
  * `projectScopedRouter` is reused as it is, so its own refusals (an unregistered project, the
  * Assistant's virtual project off the chat path) still apply.
  *
@@ -57,7 +60,40 @@ export function internalRouteApp(): Promise<RouteApp> {
       import("../../server/routes/projects.ts"),
       import("../../server/routes/database.ts"),
     ]);
+    const [settings, configKey, designSettings, notifications, speech, assistantSettings, accounts, lsp, remoteDesktop, broadcast] = await Promise.all([
+      import("../../server/routes/settings.ts"),
+      import("../../server/routes/settings-config-key.ts"),
+      import("../../server/routes/design-settings.ts"),
+      import("../../server/routes/notifications.ts"),
+      import("../../server/routes/speech.ts"),
+      import("../../server/routes/assistant-settings.ts"),
+      import("../../server/routes/accounts.ts"),
+      import("../../server/routes/lsp.ts"),
+      import("../../server/routes/remote-desktop.ts"),
+      import("../../server/routes/settings-broadcast.ts"),
+    ]);
     const app = new Hono();
+    // The settings tools reach the Settings panes' own writes and the installers, and nothing else
+    // of those routers (the password, the access token, account sign-ins and exports, MCP servers,
+    // UI preferences, a transcription): the exact paths are listed in `settings-tool-routes.ts`.
+    // `config-key` stores any plain key a person may set, so a tool may send it only the catalog's.
+    for (const prefix of SETTINGS_FAMILY_PREFIXES) {
+      app.use(`${prefix}/*`, async (c, next) => {
+        const pathname = new URL(c.req.url).pathname;
+        if (!isSettingsFamilyPath(pathname)) {
+          return c.json({ ok: false, error: "Only the Settings panes' own writes and the installers are reachable here", code: ROUTE_NOT_ALLOWED }, 403);
+        }
+        if (pathname === "/api/settings/config-key") {
+          const body = await c.req.json().catch(() => null) as { key?: unknown } | null;
+          if (!body || typeof body.key !== "string" || !CONFIG_KEY_WRITES.has(body.key)) {
+            return c.json({ ok: false, error: "That key is not one the settings tools change", code: ROUTE_NOT_ALLOWED }, 403);
+          }
+        }
+        await next();
+      });
+    }
+    // A change a tool makes is announced like one made in a pane, so every open PPM reads it again.
+    for (const mount of broadcast.SETTINGS_BROADCAST_MOUNTS) app.use(`${mount}/*`, broadcast.announceSettingsChanges);
     // `projectScopedRouter` also carries the file, workspace, LSP and design routes and the rest
     // of the chat routes, and no tool needs any of them: past the project's name only `git/`, one
     // chat session with its pin, tag and read marks and its change review, and the tag list are let
@@ -80,7 +116,8 @@ export function internalRouteApp(): Promise<RouteApp> {
     // chat's write approvals; only the connection list, one connection, its password-free config
     // and its Test are reachable here.
     app.use("/api/db/*", async (c, next) => {
-      if (!isDbConnectionPath(new URL(c.req.url).pathname)) {
+      const pathname = new URL(c.req.url).pathname;
+      if (!isDbConnectionPath(pathname) && !isSettingsFamilyPath(pathname)) {
         return c.json({ ok: false, error: "Only the connection list, a connection, its config and its test are reachable here", code: ROUTE_NOT_ALLOWED }, 403);
       }
       await next();
@@ -93,6 +130,15 @@ export function internalRouteApp(): Promise<RouteApp> {
     app.route("/api/tailscale", tailscale.tailscaleRoutes);
     app.route("/api/project/:projectName", scoped.projectScopedRouter);
     app.route("/api/schedules", schedules.schedulesRoutes);
+    app.route("/api/settings", settings.settingsRoutes);
+    app.route("/api/settings", configKey.settingsConfigKeyRoutes);
+    app.route("/api/settings/design", designSettings.designSettingsRoutes);
+    app.route("/api/notifications", notifications.notificationRoutes);
+    app.route("/api/speech", speech.speechRoutes);
+    app.route("/api/assistant", assistantSettings.assistantSettingsRoutes);
+    app.route("/api/accounts", accounts.accountsRoutes);
+    app.route("/api/lsp", lsp.lspGlobalRoutes);
+    app.route("/api/remote-desktop", remoteDesktop.remoteDesktopRoutes);
     return app;
   })().catch((e: unknown) => {
     // A failed import is retried by the next call rather than remembered.
@@ -101,6 +147,9 @@ export function internalRouteApp(): Promise<RouteApp> {
   });
   return appPromise;
 }
+
+/** The prefixes whose routers the settings tools reach (the database router has its own gate above). */
+const SETTINGS_FAMILY_PREFIXES = ["/api/settings", "/api/notifications", "/api/speech", "/api/assistant", "/api/accounts", "/api/lsp", "/api/remote-desktop"] as const;
 
 /** Literal paths of the chat router at the session id's place, which an id must never stand for. */
 const CHAT_SESSION_LITERALS: ReadonlySet<string> = new Set(["running", "unread", "bulk-tag"]);
@@ -188,7 +237,9 @@ export function ruleProblem(rule: RouteRule): string | null {
   if (segments[1] === "project" && segments[2] !== ":project") return "a project route names its project with :project";
   if (segments[1] === "project" && !isProjectFamilyPath(rule.path)) return "a project route may only reach the project's git, chat-session and tag routes";
   if (segments[1] === "projects" && !isProjectListPath(rule.path)) return "a project list route may only reach the list, a project and its colour";
-  if (segments[1] === "db" && !isDbConnectionPath(rule.path, true)) return "a database route may only reach the connection list, a connection, its config and its test";
+  if (segments[1] === "db" && !isDbConnectionPath(rule.path, true) && !isSettingsFamilyPath(rule.path, true)) {
+    return "a database route may only reach the connection list, a connection, its config and its test, or a driver's install";
+  }
   const keys = new Set<string>();
   for (const key of rule.query) {
     if (!QUERY_KEY.test(key) || keys.has(key)) return `bad or repeated query key "${key}"`;

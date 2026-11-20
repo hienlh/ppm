@@ -81,6 +81,11 @@ assistantSettingsRoutes.put("/settings", async (c) => {
       broadcastGlobalEvent(event);
       if (settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
     }
+    // So does the settings tools' switch (Settings → PPM Assistant → Changes).
+    if (!named && typeof body === "object" && body !== null && "settings_tools" in body) {
+      log.info(`Settings tools: ${result.settings.settings_tools === true ? "on" : result.settings.settings_tools === false ? "off" : "not chosen"}`);
+      if (settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
+    }
     return c.json(ok(payload()));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
