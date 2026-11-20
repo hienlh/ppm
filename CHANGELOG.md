@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.26.20] - 2026-11-20
+
+### Added
+
+- **Other on a chat's question card**: in the Assistant window the Needs your answer card is now the chat's own question form, Other field included; on Telegram each question has an Other button and your next message (or a reply to the card) answers it.
+
+### Fixed
+
+- **A question with no choices can be answered from the Assistant and Telegram** instead of being sent back to the chat; a reply Telegram cannot take still goes to the chat word for word.
+
 ## [0.26.19] - 2026-11-20
 
 ### Added
