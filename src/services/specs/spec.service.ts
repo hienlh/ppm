@@ -89,7 +89,7 @@ export async function loadSpec(projectPath: string, slug: string): Promise<SpecC
 const baselineRuns = new Set<string>();
 const suiteRuns = new Set<string>();
 /** Task test runs in flight, by spec then task id: the panel shows them, and a second call waits its turn. */
-const taskTestRuns = new Map<string, Map<string, { kind: "red" | "green"; startedAt: string }>>();
+const taskTestRuns = new Map<string, Map<string, { kind: "red" | "green" | "suite"; startedAt: string }>>();
 const runKey = (projectPath: string, slug: string) => `${projectPath}\0${slug}`;
 
 export function toView(ctx: SpecContext): SpecView {
@@ -554,8 +554,22 @@ export async function taskGreen(projectPath: string, slug: string, id: string, s
   if ("deferSuite" in result && result.deferSuite) {
     return { ok: true, view: result.view, message: `${result.message} The whole suite is checked when the tasks running beside it finish.` };
   }
-  const suite = await checkSuite(projectPath, slug, signal);
-  return { ok: true, view: suite.view, message: `${result.message} ${suite.message}`, suite: suite.message };
+  // The task already shows green while its call is still running the whole suite, which can take
+  // minutes: show that run on the task, or its chat sits on a spinning task_green under a green task.
+  const key = runKey(projectPath, slug);
+  let runs = taskTestRuns.get(key);
+  if (!runs) taskTestRuns.set(key, (runs = new Map()));
+  runs.set(id, { kind: "suite", startedAt: new Date().toISOString() });
+  let suite: Awaited<ReturnType<typeof checkSuite>>;
+  try {
+    suite = await checkSuite(projectPath, slug, signal);
+  } finally {
+    runs.delete(id);
+    if (runs.size === 0) taskTestRuns.delete(key);
+    emitSpecEvent({ type: "spec:changed", projectPath, slug });
+  }
+  const view = await getSpec(projectPath, slug);
+  return { ok: true, view, message: `${result.message} ${suite.message}`, suite: suite.message };
 }
 
 /** Puts a task back to not started (Stop, or the user restarting it). Test locks are dropped. */

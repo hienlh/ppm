@@ -133,6 +133,28 @@ describe.skipIf(process.platform === "win32")("stopping a test run", () => {
     }
   }, 30_000);
 
+  it("a lone task's green shows the whole-suite run on the task until its call answers", async () => {
+    await approvedSlowSpec();
+    // The task's own tests pass once slow.ts exists; the suite (no files) blocks until released.
+    write("run.sh", "#!/bin/sh\nif [ $# -gt 0 ]; then sh \"$1\"; exit $?; fi\ntouch started\nwhile [ ! -f release ]; do sleep 0.05; done\nexit 0\n");
+    expect((await svc.startTask(project, "slow", "1")).ok).toBe(true);
+    write("slow.test.sh", "test -f slow.ts\n");
+    expect((await svc.taskRed(project, "slow", "1")).ok).toBe(true);
+    write("slow.ts", "export {};\n");
+
+    const green = svc.taskGreen(project, "slow", "1");
+    await until(() => existsSync(join(project, "started")));
+    const during = (await svc.getSpec(project, "slow")).tasks[0];
+    expect(during.done).toBe(true);
+    expect(during.testing?.kind).toBe("suite");
+
+    write("release", "");
+    const r = await green;
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("no new failures");
+    expect(r.view.tasks[0].testing).toBeNull();
+  }, 30_000);
+
   it("a stopped red records nothing, shows the run while it lasts, and a second call meanwhile is refused", async () => {
     await approvedSlowSpec();
 

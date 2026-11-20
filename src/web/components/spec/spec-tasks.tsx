@@ -169,7 +169,7 @@ function TaskRow({ spec, task: t, why, busy, projectName, onStart, onReset }: {
       </div>
       <div className="flex flex-col items-end gap-1.5">
         {t.testing ? <TestingPill kind={t.testing.kind} since={t.testing.startedAt} />
-          : t.done ? <Pill tone="green">{t.run?.green ? `Green · ${t.run.green.passed ?? 0} pass` : "Done"}</Pill>
+          : t.done ? <Pill tone="green">{t.run?.green ? (t.run.green.passed != null ? `Green · ${t.run.green.passed} pass` : "Green") : "Done"}</Pill>
           : t.status === "red" ? <Pill tone="red">Red · writing code</Pill>
           : t.status === "running" ? <Pill tone="accent">{spec.checks === "thorough" && !t.noTest ? "Writing tests" : "Running"}</Pill>
           : t.status === "failed" ? <Pill tone="red">Failed</Pill>
@@ -205,7 +205,7 @@ function StateDot({ task: t, thorough }: { task: SpecTaskView; thorough: boolean
 }
 
 /** PPM is running this task's tests now: which check, and for how long (a VM test can take minutes). */
-function TestingPill({ kind, since }: { kind: "red" | "green"; since: string }) {
+function TestingPill({ kind, since }: { kind: "red" | "green" | "suite"; since: string }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -214,8 +214,8 @@ function TestingPill({ kind, since }: { kind: "red" | "green"; since: string }) 
   const s = Math.max(0, Math.floor((now - Date.parse(since)) / 1000));
   const elapsed = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
   return (
-    <span data-task-testing={kind} title="PPM is running this task's tests">
-      <Pill tone="accent"><Loader2 className="size-3 animate-spin" />Testing {kind === "red" ? "red" : "green"} · {elapsed}</Pill>
+    <span data-task-testing={kind} title={kind === "suite" ? "This task is green; PPM is running the whole suite before its task_green call answers" : "PPM is running this task's tests"}>
+      <Pill tone="accent"><Loader2 className="size-3 animate-spin" />{kind === "suite" ? "Green · checking whole suite" : `Testing ${kind}`} · {elapsed}</Pill>
     </span>
   );
 }
