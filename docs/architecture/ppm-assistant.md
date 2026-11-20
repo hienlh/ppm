@@ -1295,13 +1295,11 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   card (`src/shared/assistant-limits.ts`).
 - **Answering.** `POST /api/assistant/cards/:id/answer` answers the exact request an approval or
   question card mirrors, through `chatControl().answerApproval` with origin `assistant_card`; Allow
-  is refused when the card does not show everything that would run. A question card is answered on
-  the card whatever its number of questions: each option is a lettered tile (A, B, C…) with its
-  whole description and a "Recommended" tag taken from "(Recommended)" in its label, the user picks
-  one per question (several where allowed) and sends them together. A question that takes typed
-  text (every Claude question, a Codex one marked "other") also has an "Other" field, as the chat's
-  own form does; the words go out alone in place of the tiles, and a question with no options is
-  answered by that field. Only a secret is answered in the chat (`cards/question-options.tsx`). `POST …/reply` may carry
+  is refused when the card does not show everything that would run. A question card is answered with
+  the chat's own question form (`chat/question-card.tsx`, drawn inside the card): the same options,
+  "Other" field, several choices, tabs, Submit and Skip, so a question looks and answers the same in
+  the chat and outside it; Skip declines it as Skip in the chat does. Only the card's frame (who
+  asked, Open chat) is its own, and a secret is answered in the chat. `POST …/reply` may carry
   `images` (at most five PNG/JPEG/GIF/WebP as base64, each at most 5,000,000 base64 characters,
   the composer's inline cap, and under 2000 px on its longer side): the server checks the type
   against the bytes and the pixel size, writes its own copy under the uploads folder and forwards
