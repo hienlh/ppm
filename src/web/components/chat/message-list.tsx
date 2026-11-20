@@ -764,7 +764,7 @@ export function MessageList({
             <div className={cn("px-4 pt-4 pb-3 flex flex-col gap-4 select-none", dockApproval && "max-md:mt-auto")} data-chat-trailing="">
               {liveApproval && (
                 <div className="max-md:order-last" data-live-approval="">
-                  <PendingApprovalCard approval={liveApproval} onRespond={onApprovalResponse} />
+                  <PendingApprovalCard approval={liveApproval} onRespond={onApprovalResponse} projectName={projectName} />
                 </div>
               )}
               {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}

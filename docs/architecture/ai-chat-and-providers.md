@@ -762,6 +762,17 @@ stop first, since a shell's id is its task id, and falls back to asking the mode
 only when no live CLI holds it. PPM does not declare `perTaskStopAffordance`, so the chat's Stop
 still ends background tasks along with the turn.
 
+### Plan review with comments
+
+An `ExitPlanMode` call in plan mode reaches the person through the PreToolUse approval like any
+other tool (it is never offered as an "allow for this chat" rule), and `PendingApprovalCard` draws
+it as `PlanApprovalCard` instead of raw JSON: the plan line by line, each line's number opening a
+comment under it, *Preview* for the rendered Markdown, and a box for anything else. *Approve plan*
+allows the call; *Send feedback* (or *Keep planning* with nothing written) denies it with
+`formatPlanComments` as the deny message — each commented line quoted with its number and the
+comment under it — which the provider hands Claude as "said what to do instead", so it revises the
+plan and presents it again.
+
 ### Bookmarks and Markdown export
 
 A **bookmark** marks a turn, never a message: the turn id is the one name of a place in a chat that
