@@ -64,6 +64,26 @@ describe("processVoiceMessage", () => {
     expect(seen.context[0]).toMatchObject({ project: "demo", projectPath: dir, sessionId: "s", providerId: "claude", typed: "ảnh" });
   });
 
+  it("with the clean-up turned off, never reads context nor asks Haiku, and says it was skipped, not failed", async () => {
+    updateVoiceSettings({ cleanupEnabled: false, project: "demo", projectWords: ["Hono"] });
+    const { d, seen } = deps();
+    const result = await processVoiceMessage({ audio: wav(1), project: "demo", sessionId: "s", providerId: "claude" }, d);
+    expect(result).toMatchObject({ raw: "sửa rao hồ nô", text: "sửa rao hồ nô", cleaned: false, cleanupSkipped: true, cleanupMs: 0 });
+    expect(result.cleanupError).toBeUndefined();
+    expect(seen.asks).toBe(0);
+    expect(seen.context).toHaveLength(0);
+    // The word lists still help Whisper.
+    expect(seen.transcribe[0]!.prompt).toBe("Hono");
+  });
+
+  it("learns nothing, and asks nothing, with the clean-up turned off", async () => {
+    updateVoiceSettings({ cleanupEnabled: false });
+    let asks = 0;
+    const learned = await learnFromEdit({ project: "demo", before: "sửa hô nô", after: "sửa Hono" }, async () => { asks++; return '{"pairs":[{"from":"hô nô","to":"Hono"}]}'; });
+    expect(learned).toEqual([]);
+    expect(asks).toBe(0);
+  });
+
   it("keeps the raw transcript with the reason when the clean-up fails", async () => {
     const { d } = deps({ ask: async () => { throw new Error("No Claude account"); } });
     const result = await processVoiceMessage({ audio: wav(1), project: "demo", lang: "../x" }, d);

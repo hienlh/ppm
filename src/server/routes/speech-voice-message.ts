@@ -49,6 +49,7 @@ function settingsView(project: string | undefined, whisperReady: boolean) {
   return {
     enabled: config.enabled === true,
     reviewBeforeSend: config.review_before_send,
+    cleanupEnabled: config.cleanup_enabled,
     words: config.words,
     projectWords: own.words,
     projectLearned: own.learned,
@@ -61,7 +62,7 @@ function parsePatch(body: unknown): VoiceSettingsPatch | string {
   if (!body || typeof body !== "object" || Array.isArray(body)) return "Expected a JSON object";
   const b = body as Record<string, unknown>;
   const patch: VoiceSettingsPatch = {};
-  for (const key of ["enabled", "reviewBeforeSend"] as const) {
+  for (const key of ["enabled", "reviewBeforeSend", "cleanupEnabled"] as const) {
     const value = b[key];
     if (value === undefined) continue;
     if (typeof value !== "boolean") return `${key} must be true or false`;

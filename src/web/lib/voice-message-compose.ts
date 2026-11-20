@@ -93,10 +93,13 @@ export function composeVoiceContent(typed: string, voice: VoicePart | null): str
 }
 
 /** Whether the user changed the transcript before sending. Whitespace alone is not a change. */
-export function transcriptWasEdited(shown: string, sent: string): boolean {
+export function transcriptWasEdited(shown: string, sent: string, raw?: string): boolean {
   const norm = (text: string) => text.replace(/\s+/g, " ").trim();
   const a = norm(shown);
   const b = norm(sent);
+  // Sending Whisper's own text ("Use the original") is not a correction: learning from it would
+  // record the misheard words as the right ones.
+  if (raw !== undefined && norm(raw) === b) return false;
   return a.length > 0 && b.length > 0 && a !== b;
 }
 

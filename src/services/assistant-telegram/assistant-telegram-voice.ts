@@ -145,10 +145,11 @@ export class TelegramVoiceMessages {
     this.host.release(job.chatId, job.bundle);
     job.proposed = result.text.trim();
     job.transcript = job.proposed;
-    job.label = result.cleaned ? "cleaned" : "raw";
+    job.label = result.cleaned ? "cleaned" : result.cleanupSkipped ? "plain" : "raw";
     if (result.cleanupError) job.reason = result.cleanupError;
     // A transcript Haiku could not tidy is always read first: it may be wrong in ways nobody fixed.
-    if (result.cleaned && !this.host.deps.reviewBeforeSend()) return this.send(job);
+    // One the user chose not to have tidied follows the review setting like a tidied one.
+    if ((result.cleaned || result.cleanupSkipped) && !this.host.deps.reviewBeforeSend()) return this.send(job);
     job.state = "review";
     const group = `voice:${job.id}`;
     job.markup = { inline_keyboard: [[

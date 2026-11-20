@@ -20,7 +20,11 @@ export interface VoiceDraft {
     startedAt: number;
     /** The text PPM put in the box (tidied, or raw when the clean-up failed). */
     shown: string;
+    /** Whisper's own text, before the clean-up: for the user to compare, never sent. */
+    raw?: string;
     cleaned: boolean;
+    /** The clean-up is off in Settings: the raw text is the intended one, not a failure. */
+    cleanupSkipped?: boolean;
     cleanupError?: string;
     transcribeMs: number;
     cleanupMs: number;
@@ -112,7 +116,7 @@ export function useVoiceMessageDraft(deps: VoiceDraftDeps) {
       const timings: VoiceTimings = {
         browserConvertMs: requestStarted - convertStarted, requestMs: performance.now() - requestStarted,
         serverMs: result.serverMs, receiveMs: result.receiveMs, convertMs: result.convertMs,
-        transcribeMs: result.transcribeMs, cleanupMs: result.cleanupMs, cleaned: result.cleaned,
+        transcribeMs: result.transcribeMs, cleanupMs: result.cleanupMs, cleaned: result.cleaned, cleanupSkipped: result.cleanupSkipped,
       };
       if (draftRef.current?.id !== id) return;
       if (!result.text.trim()) {
@@ -125,7 +129,8 @@ export function useVoiceMessageDraft(deps: VoiceDraftDeps) {
       patch(id, (d) => ({
         ...d,
         transcript: {
-          status: "ready", startedAt: d.transcript.startedAt, shown: result.text, cleaned: result.cleaned,
+          status: "ready", startedAt: d.transcript.startedAt, shown: result.text, raw: result.raw, cleaned: result.cleaned,
+          cleanupSkipped: result.cleanupSkipped,
           cleanupError: result.cleanupError, transcribeMs: result.transcribeMs, cleanupMs: result.cleanupMs,
           timings, reviewBeforeSend: result.reviewBeforeSend,
         },

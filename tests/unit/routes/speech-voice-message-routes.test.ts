@@ -66,8 +66,14 @@ describe("/voice-settings", () => {
     ready = false;
     const res = await app().request("/speech/voice-settings?project=demo");
     expect((await json(res)).data).toEqual({
-      enabled: false, reviewBeforeSend: true, words: [], projectWords: [], projectLearned: [], whisperReady: false,
+      enabled: false, reviewBeforeSend: true, cleanupEnabled: true, words: [], projectWords: [], projectLearned: [], whisperReady: false,
     });
+  });
+
+  it("saves the Haiku clean-up switch and refuses a value that is not a boolean", async () => {
+    expect((await json(await put({ cleanupEnabled: false }))).data).toMatchObject({ cleanupEnabled: false });
+    expect((await put({ cleanupEnabled: "off" })).status).toBe(400);
+    expect((await json(await put({ cleanupEnabled: true }))).data).toMatchObject({ cleanupEnabled: true });
   });
 
   it("saves lists and the review switch", async () => {

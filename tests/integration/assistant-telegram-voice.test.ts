@@ -177,6 +177,28 @@ describe("voice messages on the Assistant's Telegram bot", () => {
     expect(fake.sent(chat).some((m) => m.text.includes("Transcript ·"))).toBe(false);
   });
 
+  it("with the clean-up turned off, sends Whisper's text by itself when review is off, with no warning", async () => {
+    review = false;
+    result = { raw: "deploy the hono app", text: "deploy the hono app", cleaned: false, cleanupSkipped: true, transcribeMs: 5, cleanupMs: 0 };
+    const chat = phone();
+    const start = received.length;
+    fake.pushVoice(chat, chat);
+    await until(() => since(start).length === 1);
+    expect(splitVoiceMessage(since(start)[0]!.message).voice?.transcript).toBe("deploy the hono app");
+    expect(fake.sent(chat).some((m) => m.text.includes("raw") || m.text.includes("Could not tidy"))).toBe(false);
+  });
+
+  it("with the clean-up turned off and review on, shows a plain card, not a warning", async () => {
+    review = true;
+    result = { raw: "deploy the hono app", text: "deploy the hono app", cleaned: false, cleanupSkipped: true, transcribeMs: 5, cleanupMs: 0 };
+    const chat = phone();
+    fake.pushVoice(chat, chat);
+    const card = await until(() => fake.sent(chat).find((m) => m.text.includes("Transcript") && fake.buttons(chat, m.message_id).length));
+    expect(card.text).not.toContain("Transcript ·");
+    expect(card.text).not.toContain("raw");
+    expect(card.text).not.toContain("Could not tidy");
+  });
+
   it("keeps the gather open while the voice is read: a photo sent meanwhile goes in the same message", async () => {
     review = false;
     holdProcessing();

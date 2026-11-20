@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { timingRows, timingSummary, totalMs, uploadMs, type VoiceTimings } from "../../../src/web/lib/voice-message-timings";
+import { originalToShow, timingRows, timingSummary, totalMs, uploadMs, type VoiceTimings } from "../../../src/web/lib/voice-message-timings";
 
 /** A 59-second dictation as measured on the dev instance: 12.5 s of Whisper, 4.9 s of Haiku. */
 const LONG: VoiceTimings = {
@@ -46,6 +46,20 @@ describe("voice message step timings", () => {
       { label: "Claude Haiku (tidy-up)", value: "4.9s" },
       { label: "Total", value: "19.0s" },
     ]);
+  });
+
+  it("says the clean-up is off rather than failed when Settings turned it off", () => {
+    const off = { ...LONG, cleaned: false, cleanupSkipped: true, cleanupMs: 0 };
+    expect(timingSummary(off)).toBe("19.0s · Whisper 12.5s · Haiku off");
+    expect(timingRows(off).find((r) => r.label.startsWith("Claude Haiku"))?.value).toBe("off in Settings");
+  });
+
+  it("offers Whisper's original only when Haiku changed it", () => {
+    expect(originalToShow({ cleaned: true, raw: "sửa hô nô", shown: "Sửa Hono." })).toBe("sửa hô nô");
+    expect(originalToShow({ cleaned: true, raw: "Sửa Hono.", shown: " Sửa Hono. " })).toBeNull();
+    // Off or failed: the box already holds Whisper's text.
+    expect(originalToShow({ cleaned: false, raw: "sửa hô nô", shown: "sửa hô nô" })).toBeNull();
+    expect(originalToShow({ cleaned: true, raw: "", shown: "Sửa Hono." })).toBeNull();
   });
 
   it("marks the host conversion as unknown from an older server", () => {

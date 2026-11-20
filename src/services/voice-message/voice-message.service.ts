@@ -45,6 +45,11 @@ export interface ProcessVoiceResult {
   text: string;
   cleaned: boolean;
   cleanupError?: string;
+  /**
+   * The user turned the Haiku clean-up off: `text` is Whisper's own, by choice rather than failure,
+   * so it neither warns nor forces a review.
+   */
+  cleanupSkipped?: true;
   /** Turning the recording into Whisper's WAV on the host (0 when it already was one). */
   convertMs: number;
   transcribeMs: number;
@@ -96,9 +101,12 @@ export async function processVoiceMessage(
   }
 
   const lang = input.lang && /^(auto|[a-z]{2})$/.test(input.lang) ? input.lang : "vi";
-  const words = vocabularyOf(readVoiceSettings(), input.project);
+  const settings = readVoiceSettings();
+  const words = vocabularyOf(settings, input.project);
+  // Clean-up off: no context is read and Haiku is never asked; the word lists still help Whisper.
+  const cleanupOn = settings.cleanup_enabled;
   // Read while Whisper runs: the chat, the docs and the file index cost nothing on the critical path.
-  const context = deps.gatherContext({
+  const context = !cleanupOn ? null : deps.gatherContext({
     project: input.project, projectPath, sessionId: input.sessionId, providerId: input.providerId, typed: input.typed, words,
   }).catch((e): VoiceContext => {
     log.warn(`voice context failed, cleaning up without it: ${(e as Error).message}`);
@@ -115,6 +123,7 @@ export async function processVoiceMessage(
   }
   const raw = transcript.text.trim();
   if (!raw) return { raw: "", text: "", cleaned: false, convertMs, transcribeMs: transcript.ms, cleanupMs: 0 };
+  if (!context) return { raw, text: raw, cleaned: false, cleanupSkipped: true, convertMs, transcribeMs: transcript.ms, cleanupMs: 0 };
 
   const started = Date.now();
   const cleanup = await cleanupTranscript(raw, await context, deps.ask);
@@ -140,7 +149,10 @@ export interface LearnFromEditInput {
  */
 export async function learnFromEdit(input: LearnFromEditInput, ask: VoiceAsk = askClaudeHaiku): Promise<LearnedWord[]> {
   requireProject(input.project);
-  const known = vocabularyOf(readVoiceSettings(), input.project);
+  const settings = readVoiceSettings();
+  // Learning asks Haiku too: with the clean-up off, Haiku is not called at all.
+  if (!settings.cleanup_enabled) return [];
+  const known = vocabularyOf(settings, input.project);
   let learned: LearnedWord[];
   try {
     learned = await extractLearnedWords(input.before, input.after, known, ask);

@@ -18,6 +18,8 @@ export interface VoiceTimings {
   cleanupMs: number;
   /** Whether the clean-up gave the text: false when it failed, timed out or was refused. */
   cleaned: boolean;
+  /** The clean-up is turned off in Settings, so Haiku never ran. */
+  cleanupSkipped?: boolean;
 }
 
 export interface TimingRow { label: string; value: string }
@@ -37,8 +39,17 @@ export function totalMs(t: VoiceTimings): number {
 
 /** The short line: total, then the two steps that usually dominate. Fits a 390 px phone. */
 export function timingSummary(t: VoiceTimings): string {
-  const haiku = t.cleaned ? `Haiku ${secs(t.cleanupMs)}` : "Haiku didn't tidy";
+  const haiku = t.cleaned ? `Haiku ${secs(t.cleanupMs)}` : t.cleanupSkipped ? "Haiku off" : "Haiku didn't tidy";
   return `${secs(totalMs(t))} · Whisper ${secs(t.transcribeMs)} · ${haiku}`;
+}
+
+/**
+ * Whisper's own text when the clean-up changed it, for the details to show; null when there is
+ * nothing to compare (the clean-up was off or failed, so the box already holds Whisper's text).
+ */
+export function originalToShow(t: { cleaned: boolean; raw?: string; shown: string }): string | null {
+  const raw = t.raw?.trim();
+  return t.cleaned && raw && raw !== t.shown.trim() ? raw : null;
 }
 
 /** Every step with its seconds, for the details that open under the line. */
@@ -48,7 +59,7 @@ export function timingRows(t: VoiceTimings): TimingRow[] {
     { label: "Upload and reply", value: secs(uploadMs(t)) },
     { label: "Convert on the host", value: t.convertMs === undefined ? "—" : secs(t.convertMs) },
     { label: "Whisper (speech to text)", value: secs(t.transcribeMs) },
-    { label: "Claude Haiku (tidy-up)", value: t.cleaned ? secs(t.cleanupMs) : `didn't tidy after ${secs(t.cleanupMs)}` },
+    { label: "Claude Haiku (tidy-up)", value: t.cleaned ? secs(t.cleanupMs) : t.cleanupSkipped ? "off in Settings" : `didn't tidy after ${secs(t.cleanupMs)}` },
     { label: "Total", value: secs(totalMs(t)) },
   ];
 }

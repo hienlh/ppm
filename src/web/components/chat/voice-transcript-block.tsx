@@ -8,6 +8,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle, Loader2, Mic, RotateCw, Trash2 } from "@/lib/icons";
 import { transcriptFooter } from "@/lib/voice-message-compose";
 import { VoiceTimingLine } from "./voice-timing-line";
+import { originalToShow } from "@/lib/voice-message-timings";
 import type { VoiceDraft } from "@/hooks/use-voice-message-draft";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +25,9 @@ interface VoiceTranscriptBlockProps {
 
 export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, onRetry, onRemove, onSubmit, disabled }: VoiceTranscriptBlockProps) {
   const { transcript, upload } = draft;
+  // "Use the original" puts Whisper's text in the box: a new editor key re-seeds the uncontrolled box.
+  const [seed, setSeed] = useState<{ n: number; text: string } | null>(null);
+  const original = originalToShow(transcript);
   return (
     <div
       data-voice-transcript=""
@@ -55,11 +59,13 @@ export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, on
           {upload.status === "error" && (
             <FailureNotice message="The recording could not be uploaded, so it cannot be sent yet." onRetry={onRetry} onRemove={onRemove} />
           )}
-          <TranscriptEditor key={draft.id} initial={transcript.shown} onChange={onTextChange} onSubmit={onSubmit} disabled={disabled} />
+          <TranscriptEditor key={`${draft.id}:${seed?.n ?? 0}`} initial={seed?.text ?? transcript.shown} onChange={onTextChange} onSubmit={onSubmit} disabled={disabled} />
           <VoiceTimingLine
             timings={transcript.timings}
-            next={reviewBeforeSend || !transcript.cleaned ? "read it, then send" : "sending when ready"}
+            next={reviewBeforeSend || !(transcript.cleaned || transcript.cleanupSkipped) ? "read it, then send" : "sending when ready"}
             fallback={transcriptFooter({ ...transcript, reviewBeforeSend })}
+            original={original}
+            onUseOriginal={original ? () => { setSeed((s) => ({ n: (s?.n ?? 0) + 1, text: original })); onTextChange(original); } : undefined}
           />
         </>
       )}

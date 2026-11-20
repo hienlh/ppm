@@ -22,6 +22,8 @@ export interface VoiceProcessResult {
   text: string;
   cleaned: boolean;
   cleanupError?: string;
+  /** The Haiku clean-up is turned off: Whisper's text, by choice. */
+  cleanupSkipped?: true;
   transcribeMs: number;
   cleanupMs: number;
 }

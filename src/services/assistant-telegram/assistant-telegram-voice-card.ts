@@ -48,14 +48,14 @@ export function withItText(images: number, hasText: boolean): string | null {
 
 export interface VoiceCardView {
   transcript: string;
-  /** cleaned: Haiku tidied it; raw: it could not (see `reason`); replaced: the user's own words. */
-  label: "cleaned" | "raw" | "replaced";
+  /** cleaned: Haiku tidied it; raw: it could not (see `reason`); replaced: the user's own words; plain: the clean-up is off. */
+  label: "cleaned" | "raw" | "replaced" | "plain";
   reason?: string;
   withIt: string | null;
 }
 
 export function voiceCardHtml(v: VoiceCardView): string {
-  const head = v.label === "raw" ? "⚠️ <b>Transcript · raw</b>" : v.label === "replaced" ? "✏️ <b>Transcript · replaced</b>" : "🎙 <b>Transcript · cleaned</b>";
+  const head = v.label === "raw" ? "⚠️ <b>Transcript · raw</b>" : v.label === "replaced" ? "✏️ <b>Transcript · replaced</b>" : v.label === "plain" ? "🎙 <b>Transcript</b>" : "🎙 <b>Transcript · cleaned</b>";
   const lines = [head];
   if (v.label === "raw") lines.push(`Could not tidy it${v.reason ? `: ${escapeTelegramHtml(v.reason)}` : "."}`);
   lines.push(quote(v.transcript));

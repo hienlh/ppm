@@ -26,6 +26,11 @@ export interface VoiceMessageConfig {
   enabled?: boolean;
   /** Wait for the user to read the transcript before sending. A failed clean-up always waits. */
   review_before_send: boolean;
+  /**
+   * Tidy the transcript with Claude Haiku (and learn from edits to it). Off: Whisper's text is used
+   * as it is and Haiku is never called. A row written before the switch existed has none: on.
+   */
+  cleanup_enabled: boolean;
   /** Words for every project. */
   words: string[];
   /** Keyed by project name; `__assistant__` for the PPM Assistant. */

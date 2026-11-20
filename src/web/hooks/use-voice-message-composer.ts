@@ -31,7 +31,9 @@ export function useVoiceMessageComposer(options: VoiceComposerOptions) {
   // The plain setting (the server's answer is fresher than the one read at mount). A raw
   // transcript's hold comes from `cleaned`, never from this flag.
   const reviewBeforeSend = draft?.transcript.reviewBeforeSend ?? (view?.reviewBeforeSend !== false);
-  const cleaned = draft?.transcript.cleaned ?? false;
+  // A transcript the user chose not to have tidied is as good as a tidied one for sending: only a
+  // failed clean-up forces a review.
+  const cleaned = (draft?.transcript.cleaned || draft?.transcript.cleanupSkipped) ?? false;
   const transcriptBlank = draft?.transcript.status === "ready" && draftApi.blank;
   const gate = voiceGate(draft
     ? { transcript: draft.transcript.status, upload: draft.upload.status, cleaned }
@@ -60,7 +62,7 @@ export function useVoiceMessageComposer(options: VoiceComposerOptions) {
     const final = voicePart()?.transcript ?? "";
     const project = options.project;
     draftSent();
-    if (!project || !transcriptWasEdited(shown, final)) return;
+    if (!project || !transcriptWasEdited(shown, final, draft?.transcript.raw)) return;
     void postVoiceLearn({ project, before: shown, after: final })
       .then((learned) => {
         if (learned.length === 0) return;

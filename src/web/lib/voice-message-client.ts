@@ -8,6 +8,8 @@ import type { LearnedWord } from "../../shared/voice-message";
 export interface VoiceSettingsView {
   enabled: boolean;
   reviewBeforeSend: boolean;
+  /** Tidy the transcript with Claude Haiku; off: Whisper's text as it is. */
+  cleanupEnabled: boolean;
   words: string[];
   projectWords: string[];
   projectLearned: LearnedWord[];
@@ -17,6 +19,7 @@ export interface VoiceSettingsView {
 export interface VoiceSettingsPatch {
   enabled?: boolean;
   reviewBeforeSend?: boolean;
+  cleanupEnabled?: boolean;
   words?: string[];
   project?: string;
   projectWords?: string[];
@@ -31,6 +34,8 @@ export interface VoiceTranscript {
   transcribeMs: number;
   cleanupMs: number;
   reviewBeforeSend: boolean;
+  /** The user turned the clean-up off: Whisper's text, by choice, not a failure. */
+  cleanupSkipped: boolean;
   /** The server's step timings, when it sends them. */
   convertMs?: number;
   receiveMs?: number;
@@ -60,6 +65,7 @@ export function parseVoiceSettings(raw: unknown): VoiceSettingsView {
   return {
     enabled: v.enabled === true,
     reviewBeforeSend: v.reviewBeforeSend !== false,
+    cleanupEnabled: v.cleanupEnabled !== false,
     words: strings(v.words),
     projectWords: strings(v.projectWords),
     projectLearned: learned,
@@ -119,6 +125,7 @@ export async function postVoiceMessage(input: {
     transcribeMs: Number(d.transcribeMs) || 0,
     cleanupMs: Number(d.cleanupMs) || 0,
     reviewBeforeSend: d.reviewBeforeSend !== false,
+    cleanupSkipped: d.cleanupSkipped === true,
     ...(Number.isFinite(Number(d.convertMs)) && d.convertMs !== undefined && { convertMs: Number(d.convertMs) }),
     ...(Number.isFinite(Number(d.receiveMs)) && d.receiveMs !== undefined && { receiveMs: Number(d.receiveMs) }),
     ...(Number.isFinite(Number(d.serverMs)) && d.serverMs !== undefined && { serverMs: Number(d.serverMs) }),

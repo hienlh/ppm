@@ -117,6 +117,9 @@ describe("voice draft details", () => {
     expect(transcriptWasEdited("sửa hô nô đi", "sửa Hono đi")).toBe(true);
     expect(transcriptWasEdited("sửa Hono đi", " sửa  Hono đi\n")).toBe(false);
     expect(transcriptWasEdited("sửa Hono đi", "")).toBe(false);
+    // Sending Whisper's original back is not a correction to learn from.
+    expect(transcriptWasEdited("sửa Hono đi", "sửa hô nô đi", "sửa hô nô đi")).toBe(false);
+    expect(transcriptWasEdited("sửa Hono đi", "sửa Hono nhé", "sửa hô nô đi")).toBe(true);
   });
 
   it("names the upload after the recorder's format", () => {
@@ -136,7 +139,7 @@ describe("voice draft details", () => {
 
   it("reads a settings answer with anything missing as off", () => {
     expect(parseVoiceSettings(null)).toEqual({
-      enabled: false, reviewBeforeSend: true, words: [], projectWords: [], projectLearned: [], whisperReady: false,
+      enabled: false, reviewBeforeSend: true, cleanupEnabled: true, words: [], projectWords: [], projectLearned: [], whisperReady: false,
     });
     const view = parseVoiceSettings({ enabled: true, reviewBeforeSend: false, words: ["PPM", 3], projectLearned: [{ word: "Hono", from: "hô nô", at: "x" }, { word: 1 }] });
     expect(view.enabled).toBe(true);

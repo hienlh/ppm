@@ -12,12 +12,18 @@ afterEach(() => configService.set("voice_message", { review_before_send: true, w
 describe("normalizeVoiceConfig", () => {
   it("gives the defaults for anything that is not an object", () => {
     for (const raw of [undefined, null, "x", 3, []]) {
-      expect(normalizeVoiceConfig(raw)).toEqual({ review_before_send: true, words: [], projects: {} });
+      expect(normalizeVoiceConfig(raw)).toEqual({ review_before_send: true, cleanup_enabled: true, words: [], projects: {} });
     }
   });
 
+  it("keeps the Haiku clean-up on for a row written before the switch existed, off only when it says false", () => {
+    expect(normalizeVoiceConfig({ review_before_send: true, words: [], projects: {} }).cleanup_enabled).toBe(true);
+    expect(normalizeVoiceConfig({ cleanup_enabled: "no" }).cleanup_enabled).toBe(true);
+    expect(normalizeVoiceConfig({ cleanup_enabled: false }).cleanup_enabled).toBe(false);
+  });
+
   it("keeps enabled only when it is a boolean, and review on unless it is false", () => {
-    expect(normalizeVoiceConfig({ enabled: "yes", review_before_send: "no" })).toEqual({ review_before_send: true, words: [], projects: {} });
+    expect(normalizeVoiceConfig({ enabled: "yes", review_before_send: "no" })).toEqual({ review_before_send: true, cleanup_enabled: true, words: [], projects: {} });
     expect(normalizeVoiceConfig({ enabled: false, review_before_send: false })).toMatchObject({ enabled: false, review_before_send: false });
   });
 
@@ -56,7 +62,7 @@ describe("normalizeVoiceConfig", () => {
 describe("reading and writing the row", () => {
   it("reads a hand-broken row safely and treats a missing answer as off", () => {
     configService.set("voice_message", { words: "nope", projects: [] } as never);
-    expect(readVoiceSettings()).toEqual({ review_before_send: true, words: [], projects: {} });
+    expect(readVoiceSettings()).toEqual({ review_before_send: true, cleanup_enabled: true, words: [], projects: {} });
     expect(voiceMessagesEnabled()).toBe(false);
   });
 

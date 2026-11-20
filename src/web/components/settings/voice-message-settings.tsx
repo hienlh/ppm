@@ -69,15 +69,18 @@ export function VoiceMessageSettings({ onEnabledChange }: { onEnabledChange?: (e
           <>
             <SwitchRow
               label="Read the transcript before it is sent"
-              note="Off: the tidied transcript goes to the AI as soon as it is ready. When the clean-up fails it always waits for you."
+              note="Off: the transcript goes to the AI as soon as it is ready. When the clean-up fails it always waits for you."
               checked={view.reviewBeforeSend}
               disabled={busy}
               onChange={(reviewBeforeSend) => void save({ reviewBeforeSend })}
             />
-            <InfoRow label="Clean-up">
-              Claude Haiku on your Claude account, one call per message. Reads the last 8 messages, memory and CLAUDE.md,
-              file names and your word lists. Fixes misheard words and punctuation only.
-            </InfoRow>
+            <SwitchRow
+              label="Tidy the transcript with Claude Haiku"
+              note="One call per message on your Claude account. Reads the last 8 messages, memory and CLAUDE.md, file names and your word lists, and fixes misheard words and punctuation only. It also learns words from your edits. Off: Whisper's transcript is used as it is and Haiku is never called; your word lists still help Whisper."
+              checked={view.cleanupEnabled}
+              disabled={busy}
+              onChange={(cleanupEnabled) => void save({ cleanupEnabled })}
+            />
             <InfoRow label="Longest recording" value={formatVoiceDuration(VOICE_MAX_SECONDS)} />
             {!view.whisperReady && <InfoRow label="Whisper">Not installed on this host yet. Install it below; until then the mic offers the install.</InfoRow>}
           </>

@@ -81,6 +81,7 @@ export function normalizeVoiceConfig(raw: unknown): VoiceMessageConfig {
   const value = isObj(raw) ? raw : {};
   const config: VoiceMessageConfig = {
     review_before_send: value.review_before_send !== false,
+    cleanup_enabled: value.cleanup_enabled !== false,
     words: cleanWordList(value.words, VOICE_LIMITS.globalWords),
     projects: cleanProjects(value.projects),
   };
@@ -112,6 +113,7 @@ export function vocabularyOf(config: VoiceMessageConfig, project: string): strin
 export interface VoiceSettingsPatch {
   enabled?: boolean;
   reviewBeforeSend?: boolean;
+  cleanupEnabled?: boolean;
   words?: string[];
   /** Required for `projectWords` and `removeLearned`. */
   project?: string;
@@ -124,6 +126,7 @@ export function updateVoiceSettings(patch: VoiceSettingsPatch): VoiceMessageConf
   const config = readVoiceSettings();
   if (typeof patch.enabled === "boolean") config.enabled = patch.enabled;
   if (typeof patch.reviewBeforeSend === "boolean") config.review_before_send = patch.reviewBeforeSend;
+  if (typeof patch.cleanupEnabled === "boolean") config.cleanup_enabled = patch.cleanupEnabled;
   if (patch.words) config.words = cleanWordList(patch.words, VOICE_LIMITS.globalWords);
   const project = patch.project;
   if (project && (patch.projectWords || patch.removeLearned)) {

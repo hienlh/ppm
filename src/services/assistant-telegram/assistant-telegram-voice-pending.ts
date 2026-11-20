@@ -40,7 +40,7 @@ export interface VoiceJob {
   /** What the pipeline returned (cleaned, or raw when it could not be), for telling an edit apart. */
   proposed: string;
   transcript: string;
-  label: "cleaned" | "raw" | "replaced";
+  label: "cleaned" | "raw" | "replaced" | "plain";
   reason?: string;
   markup?: InlineKeyboardMarkup;
   expiresAt: number;
