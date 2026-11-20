@@ -140,7 +140,7 @@ export function registerSpecCommands(program: Command): void {
     .option("--project <name>", "Project name")
     .option("--provider <id>", "Provider for the task chats (default: the spec chat's)")
     .action(async (slug: string, o: { project?: string; provider?: string }) => {
-      const r = await api<{ message: string }>("POST", `${base(await projectName(o.project))}/${encodeURIComponent(slug)}/run`, o.provider ? { providerId: o.provider } : {});
+      const r = await api<{ message: string }>("POST", `${base(await projectName(o.project))}/${encodeURIComponent(slug)}/run`, { mode: "sessions", ...(o.provider ? { providerId: o.provider } : {}) });
       console.log(`${C.green}✓${C.reset} ${r.message}`);
     });
 

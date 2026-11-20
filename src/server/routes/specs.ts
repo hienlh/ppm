@@ -6,9 +6,9 @@ import {
   setChecks, startTask, submitPhase, taskDone, taskGreen, taskRed,
 } from "../../services/specs/spec.service.ts";
 import { isSpecChecks, isSpecKind, isSpecPhase, isSpecWorkflow, phaseFileName, type SpecPhase } from "../../shared/spec-types.ts";
-import { startRun, stopRun } from "../../services/specs/spec-scheduler.ts";
+import { isRunning, runAllBlocker, startRun, stopRun } from "../../services/specs/spec-scheduler.ts";
 import { tellSpecChat } from "../ws/spec-run-env.ts";
-import { approvalMessage } from "../../services/specs/spec-approval-message.ts";
+import { approvalMessage, runAllMessage } from "../../services/specs/spec-approval-message.ts";
 import { resolve } from "node:path";
 import { getSessionProvider, sessionIdAliases } from "../../services/db.service.ts";
 import { specForSession } from "../../services/specs/spec-store.ts";
@@ -186,6 +186,16 @@ specRoutes.post("/:slug/run", async (c) => {
   const body = (await jsonBody(c)) ?? {};
   try {
     const view = await getSpec(projectPath, slug);
+    // Run all hands the tasks to the spec's own chat, which gives each one a subagent; a run in
+    // new chats per task is `mode: "sessions"` (the CLI, and the chat's spec_run_sessions).
+    if (body.mode !== "sessions") {
+      if (isRunning(projectPath, slug)) return c.json(err("The tasks are already running in task chats; stop that run first."), 409);
+      const blocked = runAllBlocker(view);
+      if (blocked) return c.json(err(blocked), 409);
+      if (!view.sessionId) return c.json(err("This spec has no chat to run the tasks in."), 409);
+      const told = await tellSpecChat(projectPath, view.sessionId, runAllMessage(view));
+      return told ? c.json(ok({ message: "The tasks were handed to the spec's chat.", spec: view })) : c.json(err("The spec's chat could not take the tasks."), 409);
+    }
     // Each task chat runs on the provider named, else the spec chat's, else the default one.
     const named = str(body.providerId);
     const providerId = named ?? (view.sessionId ? getSessionProvider(view.sessionId) : null) ?? providerRegistry.getDefault()?.id;

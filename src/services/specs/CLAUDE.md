@@ -9,7 +9,7 @@ Spec mode: a chat writes `requirements.md` (or `bugfix.md`) → `design.md` → 
 - `spec.service.ts` — the one door for every change, one lock per spec. Emits `spec:changed` (`spec-events.ts`, relayed by `ws/global.ts` with the project name).
 - `spec-mcp-endpoint.ts` + `spec-mcp-tools.ts` + `spec-mcp-tokens.ts` — the `ppm-specs` tools on `/api/specs-mcp`, mounted before auth like `/api/tab-tools-mcp`. Cursor has no MCP here: it gets `PPM_SPEC_URL` / `PPM_SPEC_TOKEN` and calls `ppm spec call <tool>`.
 - `spec-context.ts` — the `<ppm_spec_state>` block `chatService.prepareSendOptions` appends to the shared context of a bound chat (rules, where the spec stands, the next step).
-- `spec-scheduler.ts` — Run all; its server hooks (create a task chat, deliver a message, turn state) are set in `src/server/ws/spec-run-env.ts`.
+- `spec-scheduler.ts` — the run in task chats (`spec_run_sessions`, `ppm spec run`; the pane's Run all hands the tasks to the spec's own chat instead, `runAllMessage`); its server hooks (create a task chat, deliver a message, turn state) are set in `src/server/ws/spec-run-env.ts`.
 - `test-runner.ts` + `test-judge.ts` — Thorough's red/green: run design.md's approved `ppm-test` command, decide fail vs broken vs pass.
 - `spec-design-link.ts` — `UI: yes` specs get a PPM Design; its file hash is approved like a document.
 - Routes `src/server/routes/specs.ts` (`/api/project/:name/specs`), `POST /chat/sessions` takes `spec` to start a chat in Spec mode. CLI `src/cli/commands/spec-cmd.ts`. UI `src/web/components/spec/`, `src/web/hooks/use-spec.ts`, `src/web/lib/api-specs.ts`.

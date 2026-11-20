@@ -42,3 +42,20 @@ export function approvalMessage(view: ApprovalView, phase: SpecPhase | "drawing"
   }
   return lines.join(" ");
 }
+
+/**
+ * What the spec's chat is told when the user presses Run all: run every open task itself, one
+ * subagent per task, in this chat. New PPM chats per task (`spec_run_sessions`) only when the user
+ * asks for them — a run in task chats loses the conversation the spec was written in.
+ */
+export function runAllMessage(view: Pick<SpecView, "checks">): string {
+  const steps = view.checks === "thorough"
+    ? "task_start, write the task's tests, task_red, write the code, task_green"
+    : "task_start, do the work, task_done with a one-line summary";
+  return [
+    "Run all: run every open task of this spec, here in this chat, in tasks.md order — wave by wave, a task only once its _Deps:_ are done.",
+    `Hand each task to a subagent of its own (your Agent tool) with the task's full text and this spec's rules; the subagent does ${steps}, then reports back.`,
+    "Tasks of one wave that share no _Files:_ may run as parallel subagents. Check each result before moving on, and stop to tell me when a task fails twice or needs a decision of mine.",
+    "If you have no subagent tool, do the tasks yourself, one at a time. Do not open new PPM chats for them (spec_run_sessions) unless I ask for that.",
+  ].join("\n");
+}

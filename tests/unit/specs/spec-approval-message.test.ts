@@ -12,7 +12,7 @@ const home = mkdtempSync(join(tmpdir(), "ppm-spec-msg-home-"));
 process.env.PPM_HOME = home;
 
 const svc = await import("../../../src/services/specs/spec.service.ts");
-const { approvalMessage } = await import("../../../src/services/specs/spec-approval-message.ts");
+const { approvalMessage, runAllMessage } = await import("../../../src/services/specs/spec-approval-message.ts");
 const { resetSpecSessionsCache } = await import("../../../src/services/specs/spec-store.ts");
 
 const REQ = "# Requirements: Sum\n\nUI: no\n\n### Requirement 1: Add numbers\n\n#### Acceptance Criteria\n\n1. WHEN two numbers are given THE SYSTEM SHALL return their sum\n";
@@ -69,5 +69,18 @@ describe("approval message", () => {
     const msg = await approve("requirements");
     expect(msg).toContain("specs/sum/tasks.md is still approved as written.");
     expect(msg).toContain("specs/sum/design.md changed since I approved it: check it, then submit it again.");
+  });
+});
+
+describe("Run all message", () => {
+  it("keeps the tasks in the spec's chat, a subagent each, and new chats only on request", () => {
+    const standard = runAllMessage({ checks: "standard" });
+    expect(standard).toMatch(/here in this chat/);
+    expect(standard).toMatch(/subagent of its own/);
+    expect(standard).toMatch(/task_done/);
+    expect(standard).toMatch(/spec_run_sessions\) unless I ask/);
+    const thorough = runAllMessage({ checks: "thorough" });
+    expect(thorough).toMatch(/task_red.*task_green/);
+    expect(thorough).not.toMatch(/task_done/);
   });
 });

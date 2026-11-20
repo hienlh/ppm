@@ -195,6 +195,10 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Check the suite",
     note: "Thorough checks: runs the whole test suite again after fixing failures it reported.",
   },
+  spec_run_sessions: {
+    label: "Run the tasks in new chats",
+    note: "Only when you ask for it: PPM opens a chat per task, up to three at a time. Run all otherwise hands the tasks to the spec's own chat.",
+  },
 };
 
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [

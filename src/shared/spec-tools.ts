@@ -11,10 +11,11 @@ export const TASK_RED_TOOL = "task_red";
 export const TASK_GREEN_TOOL = "task_green";
 export const SUITE_CHECK_TOOL = "suite_check";
 export const SPEC_OPEN_DESIGN_TOOL = "spec_open_design";
+export const SPEC_RUN_SESSIONS_TOOL = "spec_run_sessions";
 
 export const SPEC_TOOLS = [
   SPEC_STATUS_TOOL, SPEC_CREATE_TOOL, SPEC_SUBMIT_TOOL, SPEC_OPEN_DESIGN_TOOL,
-  TASK_START_TOOL, TASK_DONE_TOOL, TASK_RED_TOOL, TASK_GREEN_TOOL, SUITE_CHECK_TOOL,
+  TASK_START_TOOL, TASK_DONE_TOOL, TASK_RED_TOOL, TASK_GREEN_TOOL, SUITE_CHECK_TOOL, SPEC_RUN_SESSIONS_TOOL,
 ] as const;
 export type SpecTool = (typeof SPEC_TOOLS)[number];
 export const isSpecTool = (name: unknown): name is SpecTool => (SPEC_TOOLS as readonly unknown[]).includes(name);

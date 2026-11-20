@@ -1,6 +1,6 @@
 import {
   SPEC_OPEN_DESIGN_TOOL, SPEC_CREATE_TOOL, SPEC_STATUS_TOOL, SPEC_SUBMIT_TOOL, SUITE_CHECK_TOOL,
-  TASK_DONE_TOOL, TASK_GREEN_TOOL, TASK_RED_TOOL, TASK_START_TOOL,
+  SPEC_RUN_SESSIONS_TOOL, TASK_DONE_TOOL, TASK_GREEN_TOOL, TASK_RED_TOOL, TASK_START_TOOL,
 } from "../../shared/spec-tools.ts";
 
 /**
@@ -98,6 +98,13 @@ export const SPEC_TOOL_DEFINITIONS = [
     name: SUITE_CHECK_TOOL,
     title: "Check the whole suite",
     description: "Thorough: run the whole test suite again after fixing failures it reported. New failures since the baseline hold every further task.",
+    inputSchema: none,
+    annotations: { readOnlyHint: false, openWorldHint: false },
+  },
+  {
+    name: SPEC_RUN_SESSIONS_TOOL,
+    title: "Run the tasks in new chats",
+    description: "Only when the user asks for the tasks to run in new or separate chats: PPM opens a chat of its own for each open task, up to three at a time, wave by wave, and runs them while this chat waits. Never call it on your own — by default you run the tasks here, one subagent per task. Refused from a task chat.",
     inputSchema: none,
     annotations: { readOnlyHint: false, openWorldHint: false },
   },

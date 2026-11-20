@@ -81,7 +81,8 @@ describe("Run all", () => {
   it("runs every task, three at a time, a dependent one after its wave", async () => {
     await approved();
     expect((await sched.startRun(project, "s", { providerId: "claude" })).ok).toBe(true);
-    await until(async () => !sched.isRunning(project, "s"));
+    // `finish` drops the run before it writes `active: false`; wait for both.
+    await until(async () => !sched.isRunning(project, "s") && !(await svc.getSpec(project, "s")).run?.active);
     const v = await svc.getSpec(project, "s");
     expect(v.tasks.every((t) => t.done)).toBe(true);
     expect(maxAtOnce).toBeLessThanOrEqual(sched.MAX_PARALLEL_TASKS);

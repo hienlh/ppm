@@ -1218,7 +1218,7 @@ Settings → Tools (`tools-settings-section.tsx`) turns each of PPM's own AI too
 `list_session_turns`, `read_session_turns`, `db_query`, `open_query`, `db_execute`,
 `create_session`, `send_to_session`, `session_status`, `session_schedule_create`,
 `session_schedule_list`, `session_schedule_delete`, `session_schedule_set_enabled`,
-`session_schedule_propose_script` and the nine [Spec mode](#spec-mode) tools, in the groups Tabs,
+`session_schedule_propose_script` and the ten [Spec mode](#spec-mode) tools, in the groups Tabs,
 Terminal, Session history, Database, Session collaboration (whose limits and "Ask before creating
 sessions" sit under its switches), Schedules (with "Hide Claude's built-in cron tools" under it)
 and Spec mode, plus the `ppm_task_*` tools in the group Tasks
@@ -1642,14 +1642,19 @@ approved on its own and hashed like a document, so changing it reopens Design.
 **Running tasks.** The AI decides the order when it writes the plan: `_Deps:_` says what a task
 waits for and `_Files:_` what it touches. PPM checks the plan and groups it into waves of tasks
 that neither depend on nor share files with each other. A task can be started from the pane
-(the spec chat is asked to run it), or **Run all** runs the plan wave by wave, each task in a
-child chat of its own (linked to the spec chat, at most 3 at once). A child that goes idle
-without finishing marks its task failed; the rest of its wave finishes and later waves wait.
+(the spec chat is asked to run it), or **Run all** hands every open task to the spec chat
+itself (`runAllMessage`): it keeps the conversation the spec was written in and gives each task a
+subagent of its own, in wave order, parallel within a wave when the tasks share no files — or does
+them one by one when its provider has no subagents. Only when the user asks for it does the chat
+call `spec_run_sessions` (the CLI's `ppm spec run` does the same), which runs the plan wave by
+wave, each task in a child chat of its own (linked to the spec chat, at most 3 at once). A child
+that goes idle without finishing marks its task failed; the rest of its wave finishes and later
+waves wait.
 
 **Providers.** Claude, Codex and Antigravity get the tools from the `ppm-specs` MCP server
 (`/api/specs-mcp`, a token per chat). Cursor gets `PPM_SPEC_URL` / `PPM_SPEC_TOKEN` and calls
 `ppm spec call <tool> '<json>'`. Every provider is told the rules and where the spec stands in a
-`<ppm_spec_state>` block in front of each message. The nine tools are switches in Settings →
+`<ppm_spec_state>` block in front of each message. The ten tools are switches in Settings →
 Tools → Spec mode, on by default.
 
 **CLI.** `ppm spec list|status|new|approve|checks|run|stop` drives the same service;

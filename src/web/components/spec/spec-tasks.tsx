@@ -56,7 +56,7 @@ export function SpecRunControls({ spec, projectName, onUpdate }: { spec: SpecVie
           disabled={busy !== null}
           onClick={() => void act("run", () => specsApi.runAll(projectName, spec.slug))}
           className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2.5 font-medium text-primary-foreground disabled:opacity-50"
-          title="Each wave's tasks run side by side, each in a chat of its own (at most 3 at once)"
+          title="The spec's chat runs every open task, one subagent per task. Ask it in the chat to use a new chat per task instead."
         >
           {busy === "run" ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}Run all
         </button>

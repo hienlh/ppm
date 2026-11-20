@@ -11,12 +11,13 @@ import {
 } from "./spec.service.ts";
 import { isSpecChecks, isSpecKind, isSpecPhase, isSpecWorkflow } from "../../shared/spec-types.ts";
 import {
-  SPEC_CREATE_TOOL, SPEC_OPEN_DESIGN_TOOL, SPEC_STATUS_TOOL, SPEC_SUBMIT_TOOL, SUITE_CHECK_TOOL, TASK_DONE_TOOL, TASK_GREEN_TOOL,
-  TASK_RED_TOOL, TASK_START_TOOL,
+  SPEC_CREATE_TOOL, SPEC_OPEN_DESIGN_TOOL, SPEC_RUN_SESSIONS_TOOL, SPEC_STATUS_TOOL, SPEC_SUBMIT_TOOL, SUITE_CHECK_TOOL, TASK_DONE_TOOL,
+  TASK_GREEN_TOOL, TASK_RED_TOOL, TASK_START_TOOL,
 } from "../../shared/spec-tools.ts";
+import { startRun } from "./spec-scheduler.ts";
 import { ppmToolOffMessage, ppmToolOn } from "../../shared/ppm-tools.ts";
 import { configService } from "../config.service.ts";
-import { getSessionProjectPath, resolveMigratedSession, sessionIdAliases } from "../db.service.ts";
+import { getSessionProjectPath, getSessionProvider, resolveMigratedSession, sessionIdAliases } from "../db.service.ts";
 
 /**
  * `/api/specs-mcp` — Spec mode's tools for one chat's own agent (plumbing in
@@ -137,6 +138,14 @@ export async function callSpecTool(deps: Pick<SpecToolDeps, "canonical" | "alias
     case SUITE_CHECK_TOOL: {
       const r = await checkSuite(projectPath, slug, signal);
       return textResult(r.message, !r.ok);
+    }
+    case SPEC_RUN_SESSIONS_TOOL: {
+      if (taskId) return textResult("A task chat does not start a run; the spec's own chat does.", true);
+      // Each task chat runs on this chat's provider, as the Run all of the old pane did.
+      const providerId = getSessionProvider(deps.canonical(sessionId)) ?? getSessionProvider(sessionId);
+      if (!providerId) return textResult("PPM cannot tell which provider this chat runs on.", true);
+      const r = await startRun(projectPath, slug, { providerId });
+      return textResult(r.ok ? `${r.message} PPM opens a chat per task and finishes them wave by wave; the Spec pane shows each one. Wait for the run instead of working on the tasks here.` : r.message, !r.ok);
     }
     default:
       return textResult(`Unknown tool ${name}`, true);

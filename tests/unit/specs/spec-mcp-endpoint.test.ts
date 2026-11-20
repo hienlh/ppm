@@ -96,6 +96,14 @@ describe("spec tools over MCP", () => {
     expect((await call("child", "task_done", { summary: "did it" })).error).toBe(false);
     expect((await call("child", "spec_submit", { phase: "tasks" })).error).toBe(true);
     expect((await svc.getSpec(project, "s")).tasks[0]!.done).toBe(true);
+    expect((await call("child", "spec_run_sessions")).text).toMatch(/task chat does not start a run/);
+  });
+
+  it("spec_run_sessions needs the spec chat's provider to run the task chats on", async () => {
+    await svc.createSpec(project, { title: "R", slug: "r", sessionId: "run-chat" });
+    const r = await call("run-chat", "spec_run_sessions");
+    expect(r.error).toBe(true);
+    expect(r.text).toMatch(/which provider/);
   });
 
   it("finds a spec bound before the chat's id migrated", async () => {

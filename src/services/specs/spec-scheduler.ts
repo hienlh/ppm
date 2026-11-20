@@ -84,6 +84,18 @@ function currentWave(v: SpecView): number {
   return -1;
 }
 
+/**
+ * Why Run all cannot start now, or null. Asked both by the run in task chats and by the default
+ * Run all, which hands the tasks to the spec's own chat.
+ */
+export function runAllBlocker(v: SpecView): string | null {
+  if (v.current !== "execution") return `Approve ${v.current} first.`;
+  if (v.waves.issues.some((i) => i.severity === "error")) return v.waves.issues[0]!.message;
+  if (currentWave(v) < 0) return "Every required task is already done.";
+  if (v.suite?.newFailures.length) return "The whole suite has new failures; fix them and check the suite first.";
+  return null;
+}
+
 export type RunResult = { ok: true; message: string } | { ok: false; message: string };
 
 export async function startRun(projectPath: string, slug: string, opts: { providerId: string; permissionMode?: string }): Promise<RunResult> {
@@ -91,11 +103,9 @@ export async function startRun(projectPath: string, slug: string, opts: { provid
   const key = keyOf(projectPath, slug);
   if (runs.has(key)) return { ok: false, message: "The tasks are already running." };
   const v = await getSpec(projectPath, slug);
-  if (v.current !== "execution") return { ok: false, message: `Approve ${v.current} first.` };
-  if (v.waves.issues.some((i) => i.severity === "error")) return { ok: false, message: v.waves.issues[0]!.message };
+  const blocked = runAllBlocker(v);
+  if (blocked) return { ok: false, message: blocked };
   const wave = currentWave(v);
-  if (wave < 0) return { ok: false, message: "Every required task is already done." };
-  if (v.suite?.newFailures.length) return { ok: false, message: "The whole suite has new failures; fix them and check the suite first." };
 
   const ctl: RunControl = {
     projectPath, slug, providerId: opts.providerId, permissionMode: opts.permissionMode,
