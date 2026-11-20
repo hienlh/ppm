@@ -638,6 +638,16 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
   tree resets its state whenever it mounts; it then expands the parents (and a folder itself),
   focuses and selects the row, and answers. A path the tree leaves out (`.git`) is reported, not
   claimed as shown.
+  `ui_open_file_browser` is the OS file browser's counterpart: any folder on this machine's
+  drives, in a project or not, in the File Explorer window on a desktop and the full-screen sheet
+  on a phone; a file opens its folder with the file selected. The server resolves the path with
+  `resolveFileBrowserTarget` (`src/services/file-browser-target.ts`) — absolute only, PPM's own
+  folder and `~/.cloudflared` refused (`tabReadRefusal`), the private stores refused, autofs roots
+  (`/net`, `/Network`) refused, every disk call held to a deadline, and a dangling link judged by
+  where it points so the answer never says which keys exist — and hands the device the folder and
+  file it resolved (`assistant-open-file-browser.ts` on both sides). The same resolver serves a
+  `/files?path=` link (`use-url-sync.ts`) and the paths in a rendered answer
+  (`POST /api/fs/locate`, `markdown-local-paths.tsx`; Telegram through `telegram-path-links.ts`).
 - **Ask first**: `db_query` for anything not proven to read, `chat_answer_approval` (always — even
   to deny, since a denial changes what that chat does next),
   `ui_run_command` for a command declared `changesData` and for every extension command,

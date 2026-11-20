@@ -1048,6 +1048,15 @@ Every `/api/fs` route — including `docx-html`, `read`, `raw` — and the datab
 | POST | `/api/fs/copy` \| `/move` \| `/rename` \| `/touch` \| `/mkdir` | Mutations, collision (`EEXIST`)/self-nesting (`EINVAL`) reported for the client to resolve |
 | DELETE | `/api/fs/delete` \| `/rmdir` | `{permanent?}` — OS trash (Recycle Bin / Trash / gio) by default, permanent on request |
 | POST/GET | `/api/fs/download/token` / `/api/fs/raw` | Single-use, path-bound download |
+| POST | `/api/fs/locate` | `{ paths, project? }` → where the file browser opens for each path (`dir`, `select`), under `resolveFileBrowserTarget`'s stricter rules (private stores and autofs roots refused, each disk call on a deadline). Used by `/files?path=` links and by the paths in a rendered AI answer, which become links only once checked |
+
+**Reaching a folder by path.** On desktop the toolbar's pencil turns the breadcrumb into a path
+field; on a phone tapping the sheet's title does the same, with the path as a row of chips under
+it. Both go through `use-typed-path.ts` (`/api/fs/stat`, the user's own rules): a file opens its
+folder with the file selected, a link is followed, a relative path is read from the folder on
+screen, and a bad path is answered in plain words. Two pinned places sharing a name say where each
+sits (`place-labels.ts`). From outside the window: `/files?path=…`, the Assistant's
+`ui_open_file_browser`, `open_file` on a folder, and a folder or file path in an AI answer.
 | GET/POST | `/api/db/connections/file/*?path=&project=` | A `.db` opened from a file tree or the editor — the saved-connection routes under the id `file`, the file named and checked on every request. A path relative to `project` must stay inside it; an absolute one returns at most 1,000 rows of typed SQL; the PPM dir is refused, symlinks followed (`src/services/database/file-database.ts`) |
 
 `host-info.service.ts` orchestrates three OS-specific provider sets (`src/services/host-info/`)
