@@ -290,6 +290,7 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `POST   /api/fs/touch`
 - `DELETE /api/fs/delete`
 - `DELETE /api/fs/rmdir`
+- `POST   /api/fs/locate`
 - `PUT    /api/fs/upload`
 
 ## /api/group-chat
@@ -888,4 +889,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.20 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.21 -->
