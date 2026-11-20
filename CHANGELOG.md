@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.26.19] - 2026-11-20
+
+### Added
+
+- **PPM Assistant Full mode**: in turns you start (in PPM or on Telegram) the Assistant does what you asked without its own approval cards, like a bypass chat. Sending anything off the machine, PPM's own turns (watches, digest, schedules), Secure/Sealed secrets, database writes outside the connections you tick, and more than 10 actions a turn or 30 an hour still ask.
+- **Full/Ask switch** in Settings → PPM Assistant → Permissions and at the top of the Assistant window; Full asks to confirm, Ask is one tap. New installs stay on Ask until the "PPM has new features" question is answered.
+
+### Changed
+
+- **An open Assistant chat restarts when idle after its mode changes**, so the new permissions apply on its next turn.
+
 ## [0.26.18] - 2026-11-19
 
 ### Fixed
