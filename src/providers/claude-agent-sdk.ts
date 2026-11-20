@@ -30,6 +30,7 @@ import { APPROVAL_WAKE, ApprovalQueue } from "./claude-approval-queue.ts";
 import { EFFORT_ENV_VAR, effortStatusFromCli, estimateEffortStatus, userSettingsFile, type EffortSettingsQuery } from "./claude-effort-status.ts";
 import type { EffortStatus } from "../shared/effort-status.ts";
 import { toContextUsageView, type ContextUsageAnswer, type ContextUsageView } from "../shared/context-usage.ts";
+import { allowForChat, approvalChoiceFrom, approvalRuleFor, chatAllows } from "../services/chat-approval-rules.ts";
 import { withTimeout } from "../services/mcp-oauth/mcp-control-query.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
@@ -1350,13 +1351,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     /**
      * Helper: send approval request to FE and wait for response.
      */
-    const waitForApproval = (toolName: string, input: unknown): Promise<{ approved: boolean; data?: unknown }> => {
+    const waitForApproval = (toolName: string, input: unknown, rule?: { label: string }): Promise<{ approved: boolean; data?: unknown }> => {
       const requestId = crypto.randomUUID();
       // No timeout — approval waits indefinitely until user responds or session cleanup resolves it.
       const promise = new Promise<{ approved: boolean; data?: unknown }>((resolve) => {
         this.pendingApprovals.set(requestId, { resolve, sessionId });
       });
-      approvals.push({ type: "approval_request", requestId, tool: toolName, input });
+      approvals.push({ type: "approval_request", requestId, tool: toolName, input, ...(rule ? { rule } : {}) });
       return promise;
     };
 
@@ -1445,10 +1446,27 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         return {};
       }
 
-      // Non-bypass mode: ask FE for approval on write/execute tools
-      const result = await waitForApproval(toolName, hookInput?.tool_input);
-      if (result.approved) return preToolUseDecision("allow");
-      return preToolUseDecision("deny", "User denied tool execution");
+      // Non-bypass mode: ask FE for approval on write/execute tools — unless the person already
+      // allowed calls like this one for this chat from an earlier card. The Assistant's and a
+      // design chat's cards stay per call: their policies are the boundary.
+      const toolInput = hookInput?.tool_input;
+      const ruled = !assistantPolicy && !designPolicy;
+      if (ruled) {
+        if (chatAllows(sessionId, toolName, toolInput)) {
+          log.info(`session=${sessionId} ${toolName} allowed by a rule saved for this chat`);
+          return preToolUseDecision("allow");
+        }
+      }
+      const rule = ruled ? approvalRuleFor(toolName, toolInput) : null;
+      const result = await waitForApproval(toolName, toolInput, rule ? { label: rule.label } : undefined);
+      const choice = approvalChoiceFrom(result.data);
+      if (result.approved) {
+        if (rule && choice.scope === "chat") allowForChat(sessionId, rule.key);
+        return preToolUseDecision("allow");
+      }
+      return preToolUseDecision("deny", choice.message
+        ? `User denied tool execution and said what to do instead: ${choice.message}`
+        : "User denied tool execution");
     };
 
     /**

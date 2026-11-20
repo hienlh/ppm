@@ -37,6 +37,8 @@ export interface PendingApprovalEvent {
   questions?: NormalizedQuestion[];
   /** What the card offers to remember, worked out by PPM (never taken from the provider). */
   remember?: CardRememberOffer;
+  /** A Claude tool card: what "Allow for this chat" would allow. */
+  rule?: { label: string };
 }
 
 /** Where a session keeps its cards: the one shown and those queued behind it. */

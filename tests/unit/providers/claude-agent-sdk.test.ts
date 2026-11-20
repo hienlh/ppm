@@ -670,6 +670,62 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(passedMcpServers(design)?.["ppm-tabs"]).toBeUndefined();
     });
 
+    describe("rules saved from an approval card", () => {
+      const allow = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } };
+      async function askTurn() {
+        mockQueryFn.mockClear();
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) { /* consume */ }
+        return { hook: permissionHook(mockQueryFn.mock.calls[0]![0].options), sessionId: session.id };
+      }
+      /** Calls the hook and answers the card it raises with `approved` and `data`. */
+      async function answered(hook: (i: unknown) => Promise<unknown>, input: unknown, approved: boolean, data?: unknown) {
+        const pending = (provider as any).pendingApprovals as Map<string, unknown>;
+        const before = new Set(pending.keys());
+        const verdict = hook(input);
+        await new Promise((r) => setTimeout(r, 0));
+        const requestId = [...pending.keys()].find((k) => !before.has(k));
+        if (!requestId) return verdict; // allowed without asking
+        provider.resolveApproval(requestId, approved, data);
+        return verdict;
+      }
+
+      it("Allow for this chat lets later calls of the same command run without a card, in that chat only", async () => {
+        const { hook } = await askTurn();
+        const gitStatus = { tool_name: "Bash", tool_input: { command: "git status" } };
+        expect(await answered(hook, gitStatus, true, { scope: "chat" })).toEqual(allow);
+        const pending = (provider as any).pendingApprovals as Map<string, unknown>;
+        const size = pending.size;
+        expect(await hook({ tool_name: "Bash", tool_input: { command: "git status --short" } })).toEqual(allow);
+        expect(pending.size).toBe(size);
+        // A chained command is never covered by a prefix rule.
+        const chained = hook({ tool_name: "Bash", tool_input: { command: "git status; rm -rf /tmp/x" } });
+        await new Promise((r) => setTimeout(r, 0));
+        expect(pending.size).toBe(size + 1);
+        provider.resolveApproval([...pending.keys()].at(-1)!, false);
+        await chained;
+        // Another chat still asks.
+        const other = await askTurn();
+        const asked = other.hook(gitStatus);
+        await new Promise((r) => setTimeout(r, 0));
+        expect(pending.size).toBe(size + 1);
+        provider.resolveApproval([...pending.keys()].at(-1)!, false);
+        await asked;
+      });
+
+      it("a denial carries what the person typed to Claude", async () => {
+        const { hook } = await askTurn();
+        expect(await answered(hook, { tool_name: "Bash", tool_input: { command: "npm install" } }, false, { message: "use bun install" })).toEqual({
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse", permissionDecision: "deny",
+            permissionDecisionReason: "User denied tool execution and said what to do instead: use bun install",
+          },
+        });
+      });
+
+    });
+
     describe("design session", () => {
       const designOpts = { designSession: true, designInstructions: "# Design mode", permissionMode: "acceptEdits" };
 

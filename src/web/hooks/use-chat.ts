@@ -209,7 +209,7 @@ interface UseChatReturn {
    */
   currentTurnIdRef: { readonly current: string | null };
   /** `answersById` answers a question card by question id; the server converts it for the provider. */
-  respondToApproval: (requestId: string, approved: boolean, answersById?: AnswersById, remember?: boolean) => void;
+  respondToApproval: (requestId: string, approved: boolean, answersById?: AnswersById, choice?: { scope?: "chat"; message?: string }, remember?: boolean) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
   refetchMessages: () => void;
@@ -1811,7 +1811,7 @@ export function useChat(
   );
 
   const respondToApproval = useCallback(
-    (requestId: string, approved: boolean, answersById?: AnswersById, remember?: boolean) => {
+    (requestId: string, approved: boolean, answersById?: AnswersById, choice?: { scope?: "chat"; message?: string }, remember?: boolean) => {
       send(
         JSON.stringify({
           type: "approval_response",
@@ -1820,6 +1820,8 @@ export function useChat(
           ...(answersById ? { answersById } : {}),
           // "Allow & remember": the server works out what is remembered from the card itself.
           ...(remember && approved ? { remember: true } : {}),
+          // A tool card's "for this chat" or a denial's instructions.
+          ...(choice ? { data: choice } : {}),
         }),
       );
 

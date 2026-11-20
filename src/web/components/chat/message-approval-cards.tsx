@@ -16,7 +16,7 @@ import { vaultCardInput } from "@/lib/vault-tool-call";
 import { VaultUnlockCard } from "./vault-unlock-card";
 
 /** A question card answers by question id; every other card only says yes or no. */
-type Respond = (requestId: string, approved: boolean, answersById?: AnswersById, remember?: boolean) => void;
+type Respond = (requestId: string, approved: boolean, answersById?: AnswersById, choice?: { scope?: "chat"; message?: string }, remember?: boolean) => void;
 
 /** The card a waiting call needs: the question form, a database change to approve, or Allow/Deny. */
 export function PendingApprovalCard({ approval, onRespond }: { approval: ApprovalRequest; onRespond: Respond }) {
@@ -28,7 +28,7 @@ export function PendingApprovalCard({ approval, onRespond }: { approval: Approva
   if (collab) return <CollabApprovalCard requestId={approval.requestId} input={collab} {...(approval.remember ? { remember: approval.remember } : {})} />;
   const vault = vaultCardInput(approval.tool, approval.input);
   if (vault) return <VaultUnlockCard requestId={approval.requestId} input={vault} />;
-  return <ApprovalCard approval={approval} onRespond={(id, approved, remember) => onRespond(id, approved, undefined, remember)} />;
+  return <ApprovalCard approval={approval} onRespond={(id, approved, choice, remember) => onRespond(id, approved, undefined, choice, remember)} />;
 }
 
 /** Interactive quiz form for AskUserQuestion — renders questions with selectable options + Other */
