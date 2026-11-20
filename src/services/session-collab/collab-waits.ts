@@ -1,14 +1,24 @@
 import { resolveMigratedSession } from "../db.service.ts";
-import type { SessionDelivery, SessionWaitOutcome, WaitingCard } from "../../shared/session-collab.ts";
+import {
+  waitInterruptedNote, type SessionDelivery, type SessionWaitOutcome, type WaitingCard, type WaitInterruption,
+} from "../../shared/session-collab.ts";
 
 /**
  * Calls made with `wait: true`, each waiting for one other session to answer. A wait holds only
  * ids, a timer and a promise — never transcript text.
  *
  * Whatever ends a wait ends it once: the first of a reply, the target's turn ending, the timeout,
- * or a cancellation settles it, and every later one finds nothing to settle. A reply that finds no
- * wait (it came after the timeout, or after the waiter was stopped) is the caller's to deliver as a
- * new message; this module never drops or delivers anything itself.
+ * an interruption or a cancellation settles it, and every later one finds nothing to settle. A
+ * reply that finds no wait (it came after the timeout, after the wait was interrupted, or after the
+ * waiter was stopped) is the caller's to deliver as a new message; this module never drops or
+ * delivers anything itself.
+ *
+ * A waiting AI stands still inside one tool call and reads nothing sent to it until the call
+ * returns, so any message that reaches the waiting session ends its waits as `interrupted`
+ * ({@link CollabWaits.interruptWaiter}): the user's, another chat's, the PPM Assistant's, PPM's own.
+ * Every door into a chat calls it — the chat socket's `deliverMessage`, `deliverToSession`,
+ * `deliverUserWords`, and the schedule and wake queues that find the chat mid-turn — so a message
+ * never sits behind a wait for its whole timeout.
  *
  * "The turn ended without a reply" must mean the turn that read the message. A provider names that
  * turn (`turn_started` with the message's client id, {@link CollabWaits.turnBound}); the first turn
@@ -162,6 +172,26 @@ export function createCollabWaits(deps: {
   }
 
   /**
+   * A message reached `waiter` (or the user pressed Stop waiting): its waits end now as
+   * `interrupted`, naming who wrote. The waiting AI stands still inside the tool call and reads
+   * nothing until the call returns, so a wait left running would hold that message back for as long
+   * as the wait lasts. `target` narrows it to the one wait on that session (Stop waiting on a card).
+   * The reply the wait was for is never lost: arriving with no wait to take it, it is delivered as
+   * an ordinary message.
+   */
+  function interruptWaiter(waiter: string, by: WaitInterruption, target?: string): number {
+    let n = 0;
+    const note = waitInterruptedNote(by);
+    for (const w of [...waits]) {
+      if (!same(w.waiter, waiter)) continue;
+      if (target !== undefined && !same(w.target, target)) continue;
+      w.settle({ replied: false, reason: "interrupted", by, note });
+      n++;
+    }
+    return n;
+  }
+
+  /**
    * A provider named the turn a delivered message went into. It can do so before the delivery has
    * returned to its wait, so recent names are kept for `attach` to find.
    */
@@ -222,7 +252,7 @@ export function createCollabWaits(deps: {
   }
 
   return {
-    begin, claimReply, cancelWaiter, turnBound, turnEnded, targetWaitingForUser,
+    begin, claimReply, cancelWaiter, interruptWaiter, turnBound, turnEnded, targetWaitingForUser,
     isWaiting: (waiter: string, target: string): boolean => [...waits].some((w) => same(w.waiter, waiter) && same(w.target, target)),
     /** Every session `waiter` is waiting for now. */
     targetsOf: (waiter: string): string[] => [...waits].filter((w) => same(w.waiter, waiter)).map((w) => w.target),

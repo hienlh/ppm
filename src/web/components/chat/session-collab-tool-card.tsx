@@ -1,16 +1,17 @@
 /**
  * The card for the `ppm-sessions` tools: which session was created or messaged, whether the AI is
- * still waiting for it to answer, the answer once it came (or why none did), and an Open button
+ * still waiting for it to answer (with Stop waiting, which lets the chat go on), the answer once it
+ * came or why none did, a hand-off nobody waits on as "sent · awaiting reply", and an Open button
  * that takes the user to that session. `session_status` lists each session it asked about.
  */
 import { useState } from "react";
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Loader2, MessageSquare, Search, UserPlus, XCircle } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { useSessionListStore } from "@/stores/session-list-store";
-import { openLinkedSession, providerLabel } from "@/lib/session-collab-client";
+import { openLinkedSession, providerLabel, stopWaiting } from "@/lib/session-collab-client";
 import {
-  sessionCollabCardState, sessionCollabToolResult, sessionStatusText, stoppedCallText, waitEndedText, withLiveStatus,
-  type SessionCollabToolCall,
+  sentAwaitingReply, sessionCollabCardState, sessionCollabToolResult, sessionStatusText, stoppedCallText, waitEndedText,
+  withLiveStatus, type SessionCollabToolCall,
 } from "@/lib/session-collab-tool-call";
 import { useLinkedSessionStatus } from "@/hooks/use-linked-sessions";
 import { tabToolResultText } from "@/lib/tab-tool-call";
@@ -56,6 +57,8 @@ export function SessionCollabToolCard({ call, toolUseId, output, isError, done, 
   const stopped = state === "stopped";
   const stoppedWait = stopped && call.tool !== "session_status" && call.wait;
   const reply = result?.reply;
+  const sent = sentAwaitingReply(call, result);
+  const interrupted = reply && !reply.replied && reply.reason === "interrupted";
 
   const verb = call.tool === "create_session" ? "Created" : call.tool === "send_to_session" ? "Message to" : "Session status";
   const Icon = call.tool === "create_session" ? UserPlus : call.tool === "send_to_session" ? MessageSquare : Search;
@@ -87,13 +90,17 @@ export function SessionCollabToolCard({ call, toolUseId, output, isError, done, 
             )}
           </span>
           <span className="ml-auto flex items-center gap-2 shrink-0">
-            {waiting && <span className="text-[10px] text-primary" data-collab-waiting="">waiting for reply…</span>}
-            {reply?.replied && <span className="text-[10px] text-success">replied</span>}
-            {reply && !reply.replied && <span className="text-[10px] text-warning">no reply</span>}
-            {stopped && <span className="text-[10px] text-warning">{stoppedWait ? "wait cancelled" : "stopped"}</span>}
+            {/* Below md the header has no room for a label beside the title and badge (it ran over
+                the badge): each state says itself in the line under the header there instead. */}
+            {sent && <span className="text-[10px] text-text-subtle max-md:hidden" data-collab-sent="">sent · awaiting reply</span>}
+            {reply?.replied && <span className="text-[10px] text-success max-md:hidden">replied</span>}
+            {interrupted && <span className="text-[10px] text-text-subtle max-md:hidden">stopped waiting</span>}
+            {reply && !reply.replied && !interrupted && <span className="text-[10px] text-warning max-md:hidden">no reply</span>}
+            {stopped && <span className="text-[10px] text-warning max-md:hidden">{stoppedWait ? "wait cancelled" : "stopped"}</span>}
             {state === "error"
               ? <XCircle className="size-3.5 text-error" />
               : stopped ? <AlertCircle className="size-3.5 text-warning" />
+              : sent || interrupted ? <CheckCircle2 className="size-3.5 text-text-3" />
               : state === "answered" ? <CheckCircle2 className="size-3.5 text-success" /> : <Loader2 className="size-3.5 text-primary animate-spin" />}
             {expanded ? <ChevronDown className="size-3 text-text-3" /> : <ChevronRight className="size-3 text-text-3" />}
           </span>
@@ -109,6 +116,13 @@ export function SessionCollabToolCard({ call, toolUseId, output, isError, done, 
           </button>
         )}
       </div>
+      {waiting && (
+        <WaitingLine
+          // A create's new session is not known until it answers: Stop waiting then ends every wait of this chat.
+          onStop={chat?.sessionId && project ? () => stopWaiting(project, chat.sessionId, call.tool === "send_to_session" ? call.sessionId : undefined) : undefined}
+        />
+      )}
+      {sent && <p className="md:hidden px-2.5 pb-2 text-text-subtle">Sent · awaiting reply. Its answer comes in as a message.</p>}
       {isError && rawText && <p className="px-2.5 pb-2 text-error whitespace-pre-wrap break-words select-text">{rawText}</p>}
       {reply && !reply.replied && <p className="px-2.5 pb-2 text-text-subtle" data-collab-no-reply={reply.reason}>{waitEndedText(reply)}</p>}
       {stopped && (
@@ -130,6 +144,46 @@ export function SessionCollabToolCard({ call, toolUseId, output, isError, done, 
           ))}
           {!result && !isError && rawText && <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words font-mono text-text-subtle">{rawText}</pre>}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A wait in flight: the chat reads nothing else until it ends, so the user can let it go on. Any
+ * message sent to the chat ends the wait too; the other session keeps working either way.
+ */
+function WaitingLine({ onStop }: { onStop?: () => Promise<number> }) {
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const stop = async () => {
+    if (!onStop || busy) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      // Once a wait ended, the call's answer replaces this line; 0 means there was none to end yet
+      // (the call is still behind a card PPM asked the user first) or it was already over.
+      if ((await onStop()) === 0) setNotice("Nothing to stop yet: the call is still waiting for a card to be answered.");
+    } catch {
+      setNotice("Could not stop the wait; try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex items-center gap-2 px-2.5 pb-2">
+      <p className="flex-1 min-w-0 text-text-subtle" data-collab-waiting="">
+        {notice ?? "Waiting for its reply. A message to this chat also ends the wait."}
+      </p>
+      {onStop && (
+        <button
+          type="button"
+          onClick={() => void stop()}
+          disabled={busy}
+          className="shrink-0 px-2.5 h-7 rounded-md border border-border text-text font-medium can-hover:hover:bg-panel-2 disabled:opacity-60 transition-colors max-md:h-11 max-md:min-w-11 pointer-coarse:h-11 pointer-coarse:min-w-11"
+        >
+          Stop waiting
+        </button>
       )}
     </div>
   );

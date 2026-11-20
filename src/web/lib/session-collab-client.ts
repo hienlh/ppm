@@ -58,6 +58,19 @@ export async function stopChildSessions(projectName: string, sessionId: string):
   await api.post(`${projectUrl(projectName)}/chat/sessions/${encodeURIComponent(sessionId)}/stop-children`);
 }
 
+/**
+ * Stop waiting: the session's `wait: true` call on `target` returns now and its turn goes on (every
+ * wait of the session when no target is named, as for a create whose new session is not known yet).
+ * Nothing is stopped; the other session's reply comes in later as a message. Answers how many waits
+ * ended, 0 when the wait was already over.
+ */
+export async function stopWaiting(projectName: string, sessionId: string, target?: string): Promise<number> {
+  const out = await api.post<{ stopped: number }>(
+    `${projectUrl(projectName)}/chat/sessions/${encodeURIComponent(sessionId)}/stop-waiting`, target ? { target } : {},
+  );
+  return out.stopped;
+}
+
 export interface LinkedSessionTarget {
   projectName: string;
   providerId: string;

@@ -2,13 +2,17 @@
  * The session-collaboration fixture's own routes (`/__collab-test/*`): what the e2e arranges and
  * reads on the server side — the scripted turns' plans, the MCP calls they made and the turns each
  * session ran, releasing held turns, a chain of created sessions for the depth limit, the
- * notifications the fake ntfy server received, and the cards waiting now. None exist in a real PPM.
+ * notifications the fake ntfy server received, the cards waiting now, a message PPM sends into a
+ * chat (a task notice's door) and the user's words forwarded from a card answered on Telegram.
+ * None exist in a real PPM.
  */
 import { calls, plans, releaseHolds, sends, type TurnPlan } from "./session-collab-scripted-providers";
 import { recordSpawn } from "../../../src/services/session-collab/session-links.service";
 import { collabApprovalBroker } from "../../../src/services/session-collab/collab-approval-broker";
 import { resolveMigratedSession, setSessionTitle } from "../../../src/services/db.service";
 import { collabLiveState } from "../../../src/server/ws/chat";
+import { deliverUserWords } from "../../../src/server/ws/chat-user-words";
+import { chatControl } from "../../../src/services/chat-control/chat-control";
 
 interface Ctx { alpha: string; ntfyPublished: () => Array<Record<string, unknown>> }
 const json = (body: unknown, status = 200) => Response.json(body, { status });
@@ -37,6 +41,19 @@ export async function testRoute(req: Request, url: URL, ctx: Ctx): Promise<Respo
     // What renaming a chat stores: the title every list and every from-session header shows.
     setSessionTitle(String(body.sessionId), String(body.title));
     return json({ ok: true });
+  }
+  if (path === "/user-message" && req.method === "POST") {
+    // A message PPM itself sends into a chat, starting its turn (the door task notices take).
+    const result = await chatControl()!.sendUserMessage(String(body.sessionId), String(body.text), { origin: "ppm_ui", projectName: "alpha", providerId: "claude" });
+    return json(result);
+  }
+  if (path === "/user-words" && req.method === "POST") {
+    // The user's answer to a card, typed on Telegram and forwarded into the chat word for word.
+    const result = await deliverUserWords({
+      targetSessionId: String(body.sessionId), providerId: "claude", projectName: "alpha", projectPath: ctx.alpha,
+      text: String(body.text), userWords: { channel: "telegram", at: new Date().toISOString() }, supersede: false,
+    });
+    return json(result);
   }
   if (path === "/ntfy") return json({ published: ctx.ntfyPublished() });
   if (path === "/pending-cards") return json({ count: collabApprovalBroker.pendingCount() });

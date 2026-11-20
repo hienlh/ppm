@@ -59,13 +59,22 @@ export interface SessionCollabMcpAccess {
 const WAIT = {
   type: "boolean",
   description:
-    "Block until the other session calls send_to_session back to you, its turn ends without replying, or the "
-    + "wait times out (the user's setting, 10 minutes unless changed). The result carries the reply and the "
-    + "session's status. Without it the call returns at once, and a later reply arrives as a new message. "
-    + "A session showing the user a card (a question or an approval) cannot read your message or answer until "
-    + "the user does, so the wait ends at once with reply.reason \"waiting_for_user\" and reply.card naming that "
-    + "card. Your message is not lost: that session goes on with it once the user has answered, so do not send it "
-    + "again unless the user stops that session instead. Tell the user which card in which session is waiting for them.",
+    "Leave it out to hand work off: the call returns at once, you go on with other work (and you read the user's "
+    + "messages as they come), and the other session's reply arrives later as a new message from it, so ask for "
+    + "the answer back through send_to_session in your message; one that only finishes its turn shows its answer "
+    + "in session_status. Set it only "
+    + "when your very next step cannot start without the answer: a short question, or a Design chat (which answers "
+    + "only in its reply). Then the call blocks until the other session calls send_to_session back to you, its turn "
+    + "ends without replying, or the wait times out (the user's setting, 10 minutes unless changed); the result "
+    + "carries the reply and the session's status. While you wait you read nothing else, so any message sent to you "
+    + "ends the wait at once with reply.reason \"interrupted\": the user writing or pressing Stop waiting, another "
+    + "chat, the PPM Assistant, or PPM (a schedule, news). Read the new message first; reply.note says where the "
+    + "other session's answer will be (it was not stopped), so do not wait again. \"cancelled\" means your "
+    + "call was stopped. A session showing the user a card (a question or an approval) cannot read your message or "
+    + "answer until the user does, so the wait ends at once with reply.reason \"waiting_for_user\" and reply.card "
+    + "naming that card. Your message is not lost: that session goes on with it once the user has answered, so do "
+    + "not send it again unless the user stops that session instead. Tell the user which card in which session is "
+    + "waiting for them.",
 };
 
 export function sessionCollabToolDefinitions() {
@@ -80,8 +89,9 @@ export function sessionCollabToolDefinitions() {
         + "part), or work that needs its own long context. Write the task so it stands on its own: the new session "
         + "sees your session and current turn as a link it can read with read_session_turns, but nothing else of "
         + "this conversation. It runs with your permission mode, never more. Unless the user switched it off, PPM "
-        + "asks them before the session is created. Prefer wait: true when you need the result before going on; "
-        + "the session replies by calling send_to_session. With `design` it opens a Design chat for an existing design "
+        + "asks them before the session is created. Hand the work off without waiting: the session replies by "
+        + "calling send_to_session, and its reply reaches you as a new message while you go on. Wait only when the "
+        + "next step needs its answer at once. With `design` it opens a Design chat for an existing design "
         + "of the project instead (the chat the user gets from that design's tab, with its design instructions and canvas "
         + "check): give it the brief as `task`. A Design chat cannot call these tools, so its answer to your message is its "
         + "reply: use wait: true, and send follow-ups with send_to_session.",
@@ -125,7 +135,8 @@ export function sessionCollabToolDefinitions() {
         + "session the user pointed you at. Use it to reply to a session that messaged you (a reply reaches the "
         + "other AI only through this tool: your final answer is not forwarded), to ask a session that already "
         + "holds the context, or to hand a running session more to do. A running session reads the message at its "
-        + "next step; an idle one starts a turn. The user sees every message in both sessions. Sending to a session "
+        + "next step; an idle one starts a turn. To give a session work, send without waiting and go on, asking it to "
+        + "answer through send_to_session: its reply comes back to you as a new message. The user sees every message in both sessions. Sending to a session "
         + "with more permissions than yours, and sending many messages back and forth, asks the user first. A Design "
         + "chat answers in its reply instead of calling this tool: send to it with wait: true to get that answer. The PPM "
         + "Assistant may message a chat of any registered project: a project's manager chat without asking (within "

@@ -48,14 +48,18 @@ function harness(quiet = false) {
     listLive: () => [],
   };
   let isQuiet = quiet;
-  const queue = new AssistantWakeQueue({ control: () => control, lifecycle, now: () => clock, provider: () => "claude", quiet: () => isQuiet, tickMs: 3_600_000, retryDelayMs: 0 });
+  const interrupted: string[] = [];
+  const queue = new AssistantWakeQueue({
+    control: () => control, lifecycle, now: () => clock, provider: () => "claude", quiet: () => isQuiet, tickMs: 3_600_000, retryDelayMs: 0,
+    interruptWaits: (id) => { interrupted.push(id); },
+  });
   queue.start();
   queues.push(queue);
   const settle = () => new Promise((r) => setTimeout(r, 5));
   const endTurn = (finalText = "Noted.", cancelledBy?: "ws") => lifecycle.emit("turn_ended", {
     sessionId: MAIN, outcome: cancelledBy ? "stopped" : "done", finalText, projectName: "", providerId: "claude", ...(cancelledBy ? { cancelledBy } : {}),
   });
-  return { queue, sent, live, settle, endTurn, advance: (ms: number) => { clock += ms; }, setQuiet: (q: boolean) => { isQuiet = q; } };
+  return { queue, sent, live, interrupted, settle, endTurn, advance: (ms: number) => { clock += ms; }, setQuiet: (q: boolean) => { isQuiet = q; } };
 }
 
 let queues: AssistantWakeQueue[] = [];
@@ -114,6 +118,23 @@ describe("the wake queue", () => {
     h.queue.tick();
     await h.settle();
     expect(h.sent).toHaveLength(1);
+  });
+
+  it("ends a session-tool wait the Assistant stands in when news finds it mid-turn, never when a card holds it", async () => {
+    const h = harness();
+    const cards = fakeSource("cards");
+    h.queue.addSource(cards.source);
+    h.live.set(MAIN, { running: true, phase: "streaming" });
+    cards.add();
+    h.queue.schedule(MAIN);
+    await h.settle();
+    expect(h.sent).toHaveLength(0);
+    expect(h.interrupted).toEqual([MAIN]);
+    h.interrupted.length = 0;
+    h.live.set(MAIN, { running: false, card: true } as Partial<LiveChatState>);
+    h.queue.schedule(MAIN);
+    await h.settle();
+    expect(h.interrupted).toEqual([]);
   });
 
   it("starts nothing during quiet hours unless something urgent waits", async () => {

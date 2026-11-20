@@ -1,8 +1,9 @@
 /**
  * A script schedule posts into a chat through the chat socket handler with `ws.data.origin` set
  * (`schedule-script/chat-loopback.ts`). That is not the person writing: it must not reset the
- * session's pair limits or end its session-tool waits, and its turn is traced under its own origin.
- * A browser socket (no origin) still does both.
+ * session's pair limits, and its turn is traced under its own origin. Like any message, it ends a
+ * session-tool wait the chat stands in, as PPM's rather than the user's. A browser socket (no
+ * origin) resets the limits and ends the waits as the user's.
  */
 import { afterEach, expect, it, spyOn } from "bun:test";
 import "../../test-setup.ts";
@@ -23,7 +24,7 @@ async function messageFrom(origin: "scheduler" | undefined) {
     origins.push(opts?.origin);
     yield { type: "done" } as any;
   } as any);
-  const cancel = spyOn(collabWaits, "cancelWaiter");
+  const cancel = spyOn(collabWaits, "interruptWaiter");
   spies.push(send, cancel);
   pairCounter.record(session.id, OTHER_SESSION);
   pairCounter.record(session.id, OTHER_SESSION);
@@ -39,16 +40,17 @@ async function messageFrom(origin: "scheduler" | undefined) {
   return { session, origins, cancel };
 }
 
-it("a script schedule's message leaves pair limits and waits alone, and is traced as the scheduler", async () => {
+it("a script schedule's message leaves pair limits alone, ends the chat's waits as PPM's, and is traced as the scheduler", async () => {
   const { session, origins, cancel } = await messageFrom("scheduler");
   expect(origins).toEqual(["scheduler"]);
   expect(pairCounter.count(session.id, OTHER_SESSION)).toBe(2);
-  expect(cancel).not.toHaveBeenCalled();
+  // A waiting chat reads nothing until its tool call returns: a script's message ends the wait too.
+  expect(cancel).toHaveBeenCalledWith(session.id, { kind: "ppm" });
 });
 
 it("a browser message resets the session's pair limits and ends its waits", async () => {
   const { session, origins, cancel } = await messageFrom(undefined);
   expect(origins).toEqual(["ws"]);
   expect(pairCounter.count(session.id, OTHER_SESSION)).toBe(0);
-  expect(cancel).toHaveBeenCalledWith(session.id);
+  expect(cancel).toHaveBeenCalledWith(session.id, { kind: "user" });
 });

@@ -12,6 +12,7 @@ import { NEWS_OPENER } from "./wake-news-text.ts";
 import { RESTART_OPENER } from "../restart-news/restart-news-text.ts";
 import { assistantClock } from "./assistant-clock.ts";
 import { quietNow } from "./wake-quiet-hours.ts";
+import { collabWaits } from "../session-collab/collab-waits.ts";
 
 /**
  * The one door through which PPM starts a PPM Assistant turn on its own. Sources (watches, manager
@@ -68,6 +69,11 @@ export interface WakeQueueDeps {
   turnTimeoutMs?: number;
   /** Where the wake-turn times are kept across restarts (the process-wide queue: a config row); memory when absent. */
   turnLog?: { load(): string | null; save(json: string): void };
+  /**
+   * News found the Assistant mid-turn: a `send_to_session` wait it stands in ends, so the turn can
+   * finish and the news go in (the session tools' waits by default).
+   */
+  interruptWaits?: (sessionId: string) => void;
 }
 
 /** The config row holding when each session's wake turns started in the last hour. */
@@ -104,8 +110,10 @@ export class AssistantWakeQueue {
   private turnTimes: Map<string, number[]> | null = null;
   private readonly turnLog: NonNullable<WakeQueueDeps["turnLog"]>;
   private retryAt = new Map<string, number>();
+  private readonly interruptWaits: (sessionId: string) => void;
 
   constructor(deps: WakeQueueDeps = {}) {
+    this.interruptWaits = deps.interruptWaits ?? ((id) => { collabWaits.interruptWaiter(id, { kind: "ppm", queued: true }); });
     this.control = deps.control ?? chatControl;
     this.lifecycle = deps.lifecycle ?? chatLifecycle;
     this.now = deps.now ?? (() => assistantClock.now());
@@ -219,7 +227,11 @@ export class AssistantWakeQueue {
     const control = this.control();
     if (!control) return;
     const live = control.liveState(id);
-    if (live && (live.running || live.card)) return;
+    if (live && (live.running || live.card)) {
+      // The turn's end brings this back; a wait would hold that end off until it ran out.
+      if (live.running) this.interruptWaits(id);
+      return;
+    }
 
     const watchEvents = items.flatMap((i) => (i.watch ? [i.watch] : []));
     const wakeNews = items.flatMap((i) => (i.news ? [i.news] : []));

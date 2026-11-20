@@ -9,7 +9,7 @@
 import {
   CLAUDE_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_SERVER, CREATE_SESSION_TOOL, DESIGN_SCREENSHOT_TOOL, SEND_TO_SESSION_TOOL,
   SESSION_STATUS_TOOL, type SessionCollabTool, type SessionStatus, type SessionWaitOutcome, type SessionDelivery,
-  type WaitingCard,
+  type WaitingCard, type WaitInterruption,
 } from "../../shared/session-collab";
 import { tabToolResultText } from "./tab-tool-call";
 import type { LinkedSessionStatus } from "./linked-sessions";
@@ -92,8 +92,26 @@ function readWaitingCard(v: unknown): WaitingCard | null {
   return { kind: v.kind, title: v.title };
 }
 
+const INTERRUPTERS = new Set(["user", "session", "assistant", "ppm"]);
+
+/** Who ended a wait, as the server wrote it; null when malformed. */
+function readInterruption(v: unknown): WaitInterruption | null {
+  if (!isObj(v) || typeof v.kind !== "string" || !INTERRUPTERS.has(v.kind)) return null;
+  return {
+    kind: v.kind as WaitInterruption["kind"],
+    ...(text(v.sessionId) ? { sessionId: v.sessionId as string } : {}),
+    ...(text(v.title) ? { title: v.title as string } : {}),
+    ...(v.queued === true ? { queued: true } : {}),
+    ...(v.stopped === true ? { stopped: true } : {}),
+  };
+}
+
 function readReply(v: unknown): SessionWaitOutcome | undefined {
   if (!isObj(v)) return undefined;
+  if (v.replied === false && v.reason === "interrupted") {
+    const by = readInterruption(v.by);
+    return by ? { replied: false, reason: "interrupted", by, note: typeof v.note === "string" ? v.note : "" } : undefined;
+  }
   if (v.replied === true && typeof v.text === "string") {
     return { replied: true, text: v.text, sentAt: typeof v.sentAt === "string" ? v.sentAt : "",
       ...(typeof v.turnId === "string" ? { turnId: v.turnId } : {}) };
@@ -142,10 +160,32 @@ export function waitEndedText(reply: Extract<SessionWaitOutcome, { replied: fals
   if (reply.reason === "waiting_for_user") {
     return `It is waiting for the user to answer ${reply.card.kind === "question" ? "a question" : "an approval"}: “${reply.card.title}”. It goes on with the message once they have.`;
   }
+  if (reply.reason === "interrupted") return `${interruptedText(reply.by)} It keeps working: a reply comes in as a message, or open it to read its answer.`;
   const reason = reply.reason;
   if (reason === "turn_ended_without_reply") return "It finished its turn without replying.";
   if (reason === "timeout") return "No reply before the wait timed out.";
   return "The wait was cancelled.";
+}
+
+/** Why the waiting chat stopped waiting: the message that reached it, or the user's Stop waiting. */
+function interruptedText(by: WaitInterruption): string {
+  if (by.stopped) return "You stopped waiting, so this chat went on.";
+  if (by.kind === "user") return "Stopped waiting: you wrote to this chat.";
+  if (by.kind === "session") return `Stopped waiting: “${by.title ?? "another chat"}” wrote to this chat.`;
+  if (by.kind === "assistant") return "Stopped waiting: the PPM Assistant wrote to this chat.";
+  return by.queued
+    ? "Stopped waiting so a message from PPM (a schedule or news) can go in once this turn ends."
+    : "Stopped waiting: PPM sent this chat a message.";
+}
+
+/**
+ * A message or a new session handed off without waiting: it went in, and the other session's
+ * reply will come back to this chat as a message of its own. Nothing is pending on the card.
+ */
+export function sentAwaitingReply(call: SessionCollabToolCall, result: SessionCollabToolResult | null): boolean {
+  if (call.tool === SESSION_STATUS_TOOL || call.wait || !result || result.reply) return false;
+  // A send says how the message went in; a create answers with the session it made and handed the task to.
+  return call.tool === CREATE_SESSION_TOOL ? !!result.sessionId : !!result.delivered;
 }
 
 /**

@@ -2,7 +2,8 @@
 // server (tests/e2e/fixtures/session-collab-server.ts) whose Claude and Codex providers are scripted
 // and call the real `ppm-sessions` tools (`/api/sessions-mcp`) with the token each turn is handed.
 // Covers creating a session behind the card, the child's from-session bubble and turn link, a
-// waited reply, a message inserted into a running turn, the pair limit, depth and running limits,
+// waited reply, a message inserted into a running turn, waits ended by any message to the waiting
+// chat and by Stop waiting (fixtures/session-collab-steps-waits.mjs), the pair limit, depth and running limits,
 // Stop and Stop all child sessions, Codex and Claude creating each other, the Settings switches
 // (each checked in a chat started after the change), the phone, and which notifications are sent.
 // No live credentials, no real PPM data.
@@ -21,6 +22,7 @@
 // PPM_PLAYWRIGHT_EXECUTABLE=<chromium> or PPM_PLAYWRIGHT_CHANNEL=chrome picks the browser.
 // PPM_COLLAB_WEB_DIR=<dir> keeps the bundle there (built on the first run, reused after);
 // PPM_COLLAB_ARTIFACTS=<dir> keeps the screenshots and logs.
+// PPM_COLLAB_WAIT_SHOTS=before runs only the wait cards' screenshots (desktop 1440, phone 390).
 // PPM_E2E_RECORD_VIDEO=<dir> also records a walkthrough video, one clip per check, with a small
 // slowMo (PPM_E2E_SLOWMO, default 150 ms); see fixtures/e2e-video-recorder.mjs.
 import { spawn } from "node:child_process";
@@ -35,6 +37,7 @@ import { collabKit } from "./fixtures/session-collab-helpers.mjs";
 import { runCreateSteps } from "./fixtures/session-collab-steps-create.mjs";
 import { runLimitSteps } from "./fixtures/session-collab-steps-limits.mjs";
 import { runSettingsSteps } from "./fixtures/session-collab-steps-settings.mjs";
+import { runWaitCardShots, runWaitSteps } from "./fixtures/session-collab-steps-waits.mjs";
 import { videoRecorder } from "./fixtures/e2e-video-recorder.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-collab-e2e-"));
@@ -99,9 +102,15 @@ try {
   ctx.pageErrors = []; page.on("pageerror", (e) => ctx.pageErrors.push(String(e)));
   await page.goto(`${web}/project/alpha`);
 
-  await runCreateSteps(ctx);
-  await runLimitSteps(ctx);
-  await runSettingsSteps(ctx);
+  if (process.env.PPM_COLLAB_WAIT_SHOTS === "before") {
+    // Only the wait cards, to compare against a bundle built before they changed.
+    await runWaitCardShots(ctx, "before");
+  } else {
+    await runCreateSteps(ctx);
+    await runWaitSteps(ctx);
+    await runLimitSteps(ctx);
+    await runSettingsSteps(ctx);
+  }
 
   const unexpected = ctx.pageErrors.filter((e) => !/read the 'serviceWorker' property/.test(e));
   if (unexpected.length) console.log(`NOTE page errors: ${unexpected.join("\n")}`);

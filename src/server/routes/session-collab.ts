@@ -66,6 +66,25 @@ chatSessionCollabRoutes.get("/sessions/:id/links", (c) => {
   return c.json(ok(links));
 });
 
+/**
+ * POST /chat/sessions/:id/stop-waiting — body `{ target?: sessionId }`. The Stop waiting button of
+ * a session tool's card: the session's `wait: true` call on `target` (every wait of the session
+ * when none is named, as for a create whose new session the card cannot name yet) returns now,
+ * marked interrupted by the user, and the turn goes on. Nothing is stopped: the other session keeps
+ * working and its reply arrives later as a message. Answers how many waits ended (0 when the wait
+ * was already over).
+ */
+chatSessionCollabRoutes.post("/sessions/:id/stop-waiting", async (c) => {
+  const raw = c.req.param("id");
+  if (!SESSION_ID_RE.test(raw)) return c.json(err("Invalid session id"), 400);
+  const body = await c.req.json<unknown>().catch(() => null);
+  const target = body && typeof body === "object" ? (body as { target?: unknown }).target : undefined;
+  if (target !== undefined && (typeof target !== "string" || !SESSION_ID_RE.test(target))) return c.json(err("Invalid target session id"), 400);
+  if (!inProject(raw, c.get("projectPath"))) return c.json(err("Session not found in this project"), 404);
+  const stopped = collabWaits.interruptWaiter(raw, { kind: "user", stopped: true }, target);
+  return c.json(ok({ stopped }));
+});
+
 chatSessionCollabRoutes.post("/sessions/:id/stop-children", (c) => {
   const raw = c.req.param("id");
   if (!SESSION_ID_RE.test(raw)) return c.json(err("Invalid session id"), 400);

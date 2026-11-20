@@ -1,7 +1,7 @@
 import { normalizeFromSessionTitle, type FromSessionReference } from "../../shared/chat-from-session.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
 import type { AssistantProvenance } from "../../shared/assistant-provenance.ts";
-import type { SessionDelivery, SessionWaitOutcome, WaitingCard } from "../../shared/session-collab.ts";
+import { waitInterruptedNote, type SessionDelivery, type SessionWaitOutcome, type WaitingCard } from "../../shared/session-collab.ts";
 import { neutralizeFences } from "../../shared/untrusted-text.ts";
 import type { CollabCaller, CollabEnv, CollabTarget } from "./collab-context.ts";
 import type { WaitHandle } from "./collab-waits.ts";
@@ -103,6 +103,11 @@ export async function deliverAndWait(env: CollabEnv, input: {
   let reply = await handle.outcome;
   if (target.design && !reply.replied && reply.reason === "turn_ended_without_reply") {
     reply = designAnswerReply(env, target.sessionId, delivered.clientMessageId) ?? reply;
+  }
+  // Where the answer will be depends on the target: a Design chat answers only in its reply, and a
+  // manager chat's answer comes back to the Assistant as manager news (its messages carry a provenance).
+  if (!reply.replied && reply.reason === "interrupted" && (target.design || (caller.kind === "assistant" && input.provenance))) {
+    reply = { ...reply, note: waitInterruptedNote(reply.by, { answersInReply: !!target.design, managerNews: !target.design }) };
   }
   // The target finishing its turn, or a Design chat's answer, is it reporting back, though no
   // message was counted for it. The PPM Assistant's chats belong to no project, so its pairs are

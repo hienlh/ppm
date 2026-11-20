@@ -52,6 +52,11 @@ export interface SessionScheduleDispatchEnv {
   queuedCheckMs: number;
   /** Waits before trying again after the 1st, 2nd… failure in a row; past the last, it pauses. */
   retryBackoffMs: readonly number[];
+  /**
+   * The chat is mid-turn when a fire is due: a `send_to_session` wait it stands in ends, so the turn
+   * can finish and the scheduled message go in rather than sit out the whole wait.
+   */
+  interruptWaits?(sessionId: string): void;
 }
 
 /** A schedule's turn on its way into a chat, or running there. */

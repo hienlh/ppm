@@ -37,7 +37,7 @@ export async function runSettingsSteps(ctx) {
     await ck.show(page, [lister]);
     await ck.send(page, "Which session tools do you have?");
     const [list] = await ck.answered(from, 1, (c) => c.sessionId === lister.id);
-    assert.deepEqual(list.text.split(",").sort(), ["send_to_session", "session_status"], `tools/list: ${list.text}`);
+    assert.deepEqual(list.text.split(",").sort(), ["design_screenshot", "send_to_session", "session_status"], `tools/list: ${list.text}`);
 
     await openTools(page);
     await page.getByRole("switch", { name: /create_session/ }).click();
