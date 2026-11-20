@@ -16,6 +16,7 @@ import { splitAnswerOpening, VoiceUnderstoodLine } from "./voice-understood-line
 import { CHAT_MESSAGE_TEXT } from "@/lib/chat-message-text";
 import { approvalDrawsAsCard } from "@/lib/approval-request";
 import { AsyncQuestionCard } from "./async-question-card";
+import { useChatViewMode } from "@/stores/chat-view-mode-store";
 import { ASYNC_QUESTION_TOOL, type ChatQuestion } from "../../../shared/chat-questions";
 import { SessionRecoveredNotice, type SessionRecoveredEvent } from "./session-recovered-notice";
 import { AutoApprovedNotice } from "./auto-approved-notice";
@@ -205,13 +206,21 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
 
 /** Collapsible thinking block — shows the provider's safe reasoning summary, collapsed by default when done */
 function ThinkingBlock({ content, projectName, isStreaming }: { content: string; projectName?: string; isStreaming: boolean }) {
-  const [expanded, setExpanded] = useState(isStreaming);
+  // Thinking and Verbose view modes keep every block open; Normal folds a block once it is done.
+  const keepOpen = useChatViewMode((s) => s.mode !== "normal");
+  const [expanded, setExpanded] = useState(isStreaming || keepOpen);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-collapse when streaming finishes
   useEffect(() => {
-    if (!isStreaming && content.length > 0) setExpanded(false);
-  }, [isStreaming, content.length]);
+    if (!isStreaming && content.length > 0 && !keepOpen) setExpanded(false);
+  }, [isStreaming, content.length, keepOpen]);
+  // A change of view mode opens or folds every block, whatever was clicked before.
+  const firstMode = useRef(true);
+  useEffect(() => {
+    if (firstMode.current) { firstMode.current = false; return; }
+    setExpanded(keepOpen || isStreaming);
+  }, [keepOpen, isStreaming]);
 
   // Auto-scroll to bottom during streaming
   useEffect(() => {
@@ -221,7 +230,7 @@ function ThinkingBlock({ content, projectName, isStreaming }: { content: string;
   }, [content, isStreaming, expanded]);
 
   return (
-    <div className="rounded border border-border/50 bg-surface/30 text-xs">
+    <div className="rounded border border-border/50 bg-surface/30 text-xs" data-thinking-block="" data-expanded={expanded ? "" : undefined}>
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-2 px-2 py-1.5 w-full text-left hover:bg-surface transition-colors text-text-subtle"

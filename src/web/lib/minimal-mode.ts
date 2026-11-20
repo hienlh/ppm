@@ -8,6 +8,7 @@ export function isMinimalTab(type: TabType): boolean {
 const MINIMAL_KEY_ACTIONS = new Set([
   "save-prevent", "toggle-sidebar", "new-file", "open-settings", "open-chat", "voice-input",
   "open-search", "next-tab", "prev-tab", "chat-nav-prev", "chat-nav-next",
+  "chat-view-mode", "chat-toggle-thinking", "chat-model-picker", "reopen-closed-chat",
 ]);
 
 /**

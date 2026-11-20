@@ -39,6 +39,7 @@ import { isPanelOnScreen, projectOwningPanel, relocateTab, withoutEmptiedOffGrid
 import { isAssistantProject } from "../../shared/assistant-project";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { tabSessionId } from "@/lib/tab-session-id";
+import { rememberClosedTab } from "@/lib/closed-chats";
 import { randomId } from "@/lib/utils";
 import { keptMetadata, planTaskTabOpen, replaceTabInPlace, taskTabId } from "@/lib/ppm-tasks/task-tab-preview";
 import { hydrateProjectCache } from "@/lib/browser-cache/project-cache-hydration";
@@ -942,6 +943,8 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       const panel = panelId ? get().panels[panelId] : findPanel(tabId);
       if (!panel) return;
       const pid = panel.id;
+      // A chat with a session can come back with Reopen Closed Chat.
+      rememberClosedTab(panel.tabs.find((t) => t.id === tabId));
 
       // Closing a terminal ends it, from a grid panel and from the dock alike.
       // Parking a live session is an explicit action ("Move to Dock" / redockTab),

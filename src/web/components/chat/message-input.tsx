@@ -969,6 +969,30 @@ export const MessageInput = memo(function MessageInput({
   }, [voiceMsg.autoSendReady, voiceMsg.draft?.id, autoSentVoiceId, pendingSend, autoSendBlocked, handleSend]);
   const autoSendStalled = !!voiceMsg.draft && autoSentVoiceId === voiceMsg.draft.id && !pendingSend;
 
+  // Alt+T and Alt+P (`use-global-keybindings.ts`) reach the composer of the chat that owns the keys.
+  const composerRootRef = useRef<HTMLDivElement>(null);
+  const thinkingRef = useRef({ thinking, onThinkingChange, isStreaming });
+  thinkingRef.current = { thinking, onThinkingChange, isStreaming };
+  useEffect(() => {
+    const owns = () => ownsGlobalShortcut(composerRootRef.current);
+    const onThinking = () => {
+      const t = thinkingRef.current;
+      if (!owns() || t.isStreaming || !t.onThinkingChange) return;
+      t.onThinkingChange(!t.thinking);
+      toast(`Thinking ${t.thinking ? "off" : "on"} for the next message`, { duration: 1500 });
+    };
+    const onModelPicker = () => {
+      if (!owns()) return;
+      composerRootRef.current?.querySelector<HTMLButtonElement>("[data-model-chip]:not(:disabled)")?.click();
+    };
+    window.addEventListener("chat-toggle-thinking", onThinking);
+    window.addEventListener("chat-model-picker", onModelPicker);
+    return () => {
+      window.removeEventListener("chat-toggle-thinking", onThinking);
+      window.removeEventListener("chat-model-picker", onModelPicker);
+    };
+  }, []);
+
   /** The suggestion is offered only on an empty, idle composer. */
   const offeredSuggestion = !isStreaming && !offline && !disabled && !hasText && !agentTag && suggestion ? suggestion : null;
   const acceptSuggestion = useCallback(() => {
@@ -1163,7 +1187,7 @@ export const MessageInput = memo(function MessageInput({
   const placeholder = offline ? "Will send when reconnected..." : isStreaming ? "Follow-up or Stop..." : offeredSuggestion ?? idlePlaceholder ?? "Ask anything...";
 
   return (
-    <div data-onboarding="chat-input">
+    <div data-onboarding="chat-input" ref={composerRootRef}>
       {/* Rounded input container */}
       <div
         className="cursor-text rounded-[18px] border border-border bg-panel shadow-[var(--shadow-float)] transition-[border-color] duration-150 focus-within:border-accent-wash-border"

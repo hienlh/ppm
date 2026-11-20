@@ -42,6 +42,10 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: "voice-input", label: "Voice Input", category: "general", defaultKey: "Mod+Shift+V", note: "Toggle speech-to-text in chat" },
   { id: "chat-nav-prev", label: "Previous Chat Message", category: "general", defaultKey: "Alt+ArrowUp", note: "Jump to your previous message in the visible chat transcript" },
   { id: "chat-nav-next", label: "Next Chat Message", category: "general", defaultKey: "Alt+ArrowDown", note: "Jump to your next message in the visible chat transcript" },
+  { id: "chat-view-mode", label: "Chat View Mode", category: "general", defaultKey: "Ctrl+O", note: "Cycles Normal → Thinking (thinking stays open) → Verbose (every tool card open too); Claude Code's shortcut. Fires in the composer too" },
+  { id: "chat-toggle-thinking", label: "Toggle Thinking", category: "general", defaultKey: "Alt+T", note: "Extended thinking on or off for the focused chat's next message; Claude Code's Option+T" },
+  { id: "chat-model-picker", label: "Choose Model", category: "general", defaultKey: "Alt+P", note: "Opens the focused chat's model and effort picker; Claude Code's Option+P" },
+  { id: "reopen-closed-chat", label: "Reopen Closed Chat", category: "tabs", defaultKey: "Alt+Shift+T", note: "Brings back the chat tab closed last (browsers keep Ctrl+Shift+T for themselves)" },
   { id: "compare-files", label: "Compare Files...", category: "general", defaultKey: "Mod+Alt+D", note: "Open file-compare picker (seeds active file as A)" },
   // Projects — Mod+1..9
   ...Array.from({ length: 9 }, (_, i) => ({
@@ -92,7 +96,10 @@ export function eventMatchesCombo(e: KeyboardEvent, combo: ParsedCombo): boolean
   if (e.metaKey !== combo.meta) return false;
   if (e.altKey !== combo.alt) return false;
   if (e.shiftKey !== combo.shift) return false;
-  return e.key.toLowerCase() === combo.key;
+  if (e.key.toLowerCase() === combo.key) return true;
+  // On a Mac, Option turns a letter into another character (Option+T is "†"), so an Alt
+  // combo on a letter is matched by the physical key as well.
+  return combo.alt && /^[a-z]$/.test(combo.key) && e.code === `Key${combo.key.toUpperCase()}`;
 }
 
 /**

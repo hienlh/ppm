@@ -718,6 +718,19 @@ Claude chats only, both from the Claude CLI itself.
   `useChat` keeps it until a turn starts or a message is sent. The empty, idle composer shows it
   as its placeholder; Tab takes it, and a phone gets a chip to tap instead.
 
+### View modes and chat keys
+
+Claude Code's transcript modes, per device (`src/web/stores/chat-view-mode-store.ts`): **Normal**
+(thinking folds once done, tool cards one line unless a diff), **Thinking** (every thinking block
+stays open) and **Verbose** (every tool card open too). Ctrl+O cycles them, and so does *View* in
+the chat's ··· menu. Keys in `keybindings-store.ts`, answered by `use-global-keybindings.ts`
+(`dispatchChatKeys`) from the composer too and in minimal mode: `chat-view-mode` Ctrl+O,
+`chat-toggle-thinking` Alt+T and `chat-model-picker` Alt+P (window events the composer of the chat
+owning the keyboard answers; typed into another field they are that field's own), and
+`reopen-closed-chat` Alt+Shift+T (browsers keep Ctrl+Shift+T), which reopens the last chat tab
+closed with a session (`src/web/lib/closed-chats.ts`, recorded by `panel-store.closeTab`). An Alt
+combo on a letter also matches by `e.code`, since a Mac's Option key types another character.
+
 ## Voice messages
 
 The chat mic records a voice message instead of dictating, once the install has said yes to the `voice-messages-2026-11` feature intro (config `voice_message.enabled`; Settings → Voice Input has the same switch). Off, the mic dictates exactly as before.
