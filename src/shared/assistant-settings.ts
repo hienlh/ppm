@@ -128,6 +128,13 @@ export interface AssistantSettings {
 export const ASSISTANT_PERMISSION_MODES = ["full", "ask"] as const;
 export type AssistantPermissionMode = (typeof ASSISTANT_PERMISSION_MODES)[number];
 
+/** `/ws/global` event after a save that names the mode, so every device's Full/Ask chip follows it. */
+export const ASSISTANT_PERMISSION_MODE_EVENT = "assistant:permission-mode";
+export interface AssistantPermissionModeEvent {
+  type: typeof ASSISTANT_PERMISSION_MODE_EVENT;
+  mode: AssistantPermissionMode | null;
+}
+
 /** At most this many connections may be listed as writable without a card. */
 export const ASSISTANT_DB_WRITE_CONNECTIONS_MAX = 50;
 

@@ -41,15 +41,36 @@ async function settle(): Promise<void> {
 const btn = () => document.body.querySelector<HTMLButtonElement>("[data-assistant-mode]")!;
 
 describe("AssistantModeHeadButton", () => {
-  it("shows Ask, flips to Full with one press, and saves only the mode", async () => {
+  it("shows Ask, asks before Full, and saves only the mode once confirmed", async () => {
     view = await mount(<AssistantModeHeadButton />);
     await settle();
     expect(btn().textContent).toBe("Ask");
     expect(btn().getAttribute("aria-pressed")).toBe("false");
     await click(btn());
     await settle();
+    expect(puts).toEqual([]);
+    expect(document.body.textContent).toContain("Switch the Assistant to Full mode?");
+    await click([...document.body.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Use Full")!);
+    await settle();
     expect(puts.at(-1)!.permission_mode).toBe("full");
     expect(btn().getAttribute("data-assistant-mode")).toBe("full");
+    expect(btn().textContent).toBe("Full");
+  });
+
+  it("goes back to Ask with one press", async () => {
+    stored = { ...stored, permission_mode: "full" };
+    view = await mount(<AssistantModeHeadButton />);
+    await settle();
+    await click(btn());
+    await settle();
+    expect(puts.at(-1)!.permission_mode).toBe("ask");
+    expect(btn().textContent).toBe("Ask");
+  });
+
+  it("follows a change from another device", async () => {
+    view = await mount(<AssistantModeHeadButton />);
+    await settle();
+    await act(async () => { window.dispatchEvent(new CustomEvent("assistant:permission-mode", { detail: { type: "assistant:permission-mode", mode: "full" } })); });
     expect(btn().textContent).toBe("Full");
   });
 

@@ -1,20 +1,27 @@
 /**
  * The PPM Assistant's permission mode (Full or Ask) for the Settings pane and the Assistant
- * window's quick switch. Both read it here, and a change made in one is announced to the other on
- * this page (`MODE_CHANGED_EVENT`), so the window's button and Settings never disagree.
+ * window's quick switch. Every copy follows a change however it was made: on this page
+ * (`MODE_CHANGED_EVENT`), on another device or tab (`assistant:permission-mode` from `/ws/global`),
+ * or by answering the "PPM has new features" question (`feature-intros:changed`, then a re-read).
  *
  * `null` while loading; "unset" when the user has not chosen yet, which the server treats as Ask.
  */
 import { useCallback, useEffect, useState } from "react";
 import { getAssistantSettings, patchAssistantSettings } from "@/lib/assistant-settings-api";
-import type { AssistantPermissionMode } from "../../shared/assistant-settings";
+import {
+  ASSISTANT_PERMISSION_MODE_EVENT, type AssistantPermissionMode, type AssistantPermissionModeEvent,
+} from "../../shared/assistant-settings";
+import { FEATURE_INTROS_CHANGED_EVENT } from "../../shared/feature-intros";
 
 export type PermissionModeState = AssistantPermissionMode | "unset";
 
 const MODE_CHANGED_EVENT = "ppm:assistant-permission-mode";
 
+/** What switching to Full lets the Assistant do, shown before it is switched on (Settings and the window chip). */
+export const FULL_MODE_CONFIRM = "In turns you start, the Assistant will message and open chats, change schedules, projects and git, edit files and run commands without asking. It reads other chats, logs and web pages, and text in them can try to steer it. Pushing, publishing, sending to other people, database writes (unless you tick a connection), the vault and your private folders still ask; turns PPM starts on its own (watch reports, the digest, restart news) never act. Edits become available from the Assistant's next session start.";
+
 /** Turns a mode read from the server into the hook's state. */
-export function modeState(mode: AssistantPermissionMode | undefined): PermissionModeState {
+export function modeState(mode: AssistantPermissionMode | null | undefined): PermissionModeState {
   return mode === "full" || mode === "ask" ? mode : "unset";
 }
 
@@ -33,12 +40,22 @@ export function useAssistantPermissionMode(): {
 
   useEffect(() => {
     let live = true;
-    getAssistantSettings()
+    const read = () => getAssistantSettings()
       .then((res) => { if (live) setModeState(modeState(res.settings.permission_mode)); })
-      .catch(() => { if (live) setModeState("unset"); });
-    const onChange = (e: Event) => setModeState((e as CustomEvent<PermissionModeState>).detail);
-    window.addEventListener(MODE_CHANGED_EVENT, onChange);
-    return () => { live = false; window.removeEventListener(MODE_CHANGED_EVENT, onChange); };
+      .catch(() => { if (live) setModeState((m) => m ?? "unset"); });
+    void read();
+    const onLocal = (e: Event) => setModeState((e as CustomEvent<PermissionModeState>).detail);
+    const onServer = (e: Event) => setModeState(modeState((e as CustomEvent<AssistantPermissionModeEvent>).detail?.mode));
+    const onIntro = () => { void read(); };
+    window.addEventListener(MODE_CHANGED_EVENT, onLocal);
+    window.addEventListener(ASSISTANT_PERMISSION_MODE_EVENT, onServer);
+    window.addEventListener(FEATURE_INTROS_CHANGED_EVENT, onIntro);
+    return () => {
+      live = false;
+      window.removeEventListener(MODE_CHANGED_EVENT, onLocal);
+      window.removeEventListener(ASSISTANT_PERMISSION_MODE_EVENT, onServer);
+      window.removeEventListener(FEATURE_INTROS_CHANGED_EVENT, onIntro);
+    };
   }, []);
 
   const setMode = useCallback(async (next: AssistantPermissionMode) => {

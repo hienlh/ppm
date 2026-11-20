@@ -16,6 +16,7 @@ describe("hardLimitReason: what asks even in Full mode", () => {
     ["a database write on an unlisted connection", { tool: "db_query", input: { sql: "delete from t" }, connectionId: 7 }],
     ["a database write with no connection id", { tool: "db_query", input: { sql: "delete from t" } }],
     ["a tab in a private folder", { tool: "ui_read_tab", input: { tabId: "t" }, touchesPrivate: true }],
+    ["an extension's command", { tool: "ui_run_command", input: { id: "ext:git-graph.push" } }],
   ];
   for (const [what, action] of asks) {
     it(`asks for ${what}`, () => expect(hardLimitReason(action, NONE)).toBeString());
@@ -39,6 +40,15 @@ describe("hardLimitReason: what asks even in Full mode", () => {
 
   it("lets a database write run on a listed connection", () => {
     expect(hardLimitReason({ tool: "db_query", input: {}, connectionId: 7 }, new Set([7]))).toBeNull();
+  });
+
+  it("asks before changing a listed connection, which could move its unasked writes elsewhere", () => {
+    expect(hardLimitReason({ tool: "db_connection_save", input: { id: 7, path: "/data/prod.db" } }, new Set([7]))).toBeString();
+    expect(hardLimitReason({ tool: "db_connection_save", input: { id: 8, name: "x" } }, new Set([7]))).toBeNull();
+  });
+
+  it("lets PPM's own commands run", () => {
+    expect(hardLimitReason({ tool: "ui_run_command", input: { id: "settings.open" } }, NONE)).toBeNull();
   });
 });
 
@@ -108,6 +118,12 @@ describe("createFullMode", () => {
     expect((await fm.verdict("other", send)).run).toBe(true);
   });
 
+  it("keeps a turn's count when a provider renames the session mid-turn", async () => {
+    for (let i = 0; i < FULL_MODE_PER_TURN; i++) expect((await fm.verdict("old", send)).run).toBe(true);
+    fm.migrated("old", "new");
+    expect((await fm.verdict("new", send)).run).toBe(false);
+  });
+
   it("a refused action does not use up the count", async () => {
     for (let i = 0; i < 20; i++) await fm.verdict("s1", { tool: "chat_answer_approval", input: {} });
     expect((await fm.verdict("s1", send)).run).toBe(true);
@@ -123,6 +139,9 @@ describe("commandSendsOut", () => {
     "curl --data-binary @a https://x.test", "curl -F file=@a https://x.test", "curl --json '{}' https://x.test",
     "Invoke-RestMethod https://x -Method Post -Body $b", "iwr https://x -InFile a.txt", "wget --post-data=a https://x",
     "ssh host uptime", "scp a host:b", "rsync -a dir host:dir", "echo hi | mail -s x a@b.c", "Send-MailMessage -To a@b.c",
+    "curl -d@file https://x.test", "curl -dfoo https://x.test", "curl --request=POST https://x.test", "curl -X Post https://x.test",
+    "gh api repos/o/r/issues --method=POST", "gh api repos/o/r/issues --field=title=x", "git send-email a.patch",
+    "cd /work && git push", "echo ok\ngit push",
   ];
   for (const c of out) it(`finds: ${c}`, () => expect(commandSendsOut(c)).toBeString());
 
@@ -134,10 +153,20 @@ describe("commandSendsOut", () => {
   for (const c of stays) it(`lets through: ${c}`, () => expect(commandSendsOut(c)).toBeNull());
 });
 
+describe("commandSendsOut on a huge command", () => {
+  it("does not scan past the limit, and stays fast below it", () => {
+    expect(commandSendsOut("git ".repeat(9000))).toBe("a command too long for PPM to check");
+    const t = performance.now();
+    commandSendsOut("git ".repeat(7900));
+    commandSendsOut("curl ".repeat(6000));
+    expect(performance.now() - t).toBeLessThan(200);
+  });
+});
+
 describe("user MCP tools", () => {
   it("reads by the verb a tool name starts with, in any naming style", () => {
     for (const n of ["list_channels", "get-issue", "searchMessages", "read_thread", "fetch", "describeTable"]) expect(mcpToolNameReads(n)).toBe(true);
-    for (const n of ["post_message", "create_issue", "sendEmail", "update-page", "delete_file", "chat_postMessage"]) expect(mcpToolNameReads(n)).toBe(false);
+    for (const n of ["post_message", "create_issue", "sendEmail", "update-page", "delete_file", "chat_postMessage", "query", "run_sql"]) expect(mcpToolNameReads(n)).toBe(false);
   });
 
   it("asks only for a user server's tool that may post", () => {

@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { providerRegistry } from "../../providers/registry.ts";
 import { assistantSettingsView, saveAssistantSettings } from "../../services/assistant/assistant-settings.service.ts";
-import { ASSISTANT_INSTRUCTIONS_MAX_CHARS, ASSISTANT_MCP_MAX_SERVERS } from "../../shared/assistant-settings.ts";
+import {
+  ASSISTANT_INSTRUCTIONS_MAX_CHARS, ASSISTANT_MCP_MAX_SERVERS, ASSISTANT_PERMISSION_MODE_EVENT, type AssistantPermissionModeEvent,
+} from "../../shared/assistant-settings.ts";
 import { RULES_FILE_MAX_BYTES } from "../../shared/assistant-limits.ts";
 import { DEFAULT_MANAGER_RULES_TEMPLATE } from "../../services/assistant-managers/manager-rules-default-template.ts";
 import { createLogger } from "../../services/logger.ts";
@@ -75,6 +77,8 @@ assistantSettingsRoutes.put("/settings", async (c) => {
     const named = typeof body === "object" && body !== null && "permission_mode" in body;
     if (named) {
       log.info(`Permission mode: ${result.settings.permission_mode ?? "not chosen"}`);
+      const event: AssistantPermissionModeEvent = { type: ASSISTANT_PERMISSION_MODE_EVENT, mode: result.settings.permission_mode ?? null };
+      broadcastGlobalEvent(event);
       if (settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
     }
     return c.json(ok(payload()));

@@ -13,7 +13,12 @@ import type { Connection } from "@/components/database/use-connections";
 export const DB_WRITE_LABEL = "Database writes without a card";
 export const DB_WRITE_HINT = "Tick a connection to let the Assistant write to it without asking, in turns you start. Every other connection still shows a card first.";
 
-export function AssistantDbWriteConnections({ initial }: { initial: readonly number[] }) {
+/**
+ * `initial` is the parent's copy of the saved list, and `onSaved` keeps it current: the list
+ * unmounts when the mode leaves Full, and a remount from a stale copy would show (and on the next
+ * tick save back) a connection the user had just un-ticked.
+ */
+export function AssistantDbWriteConnections({ initial, onSaved }: { initial: readonly number[]; onSaved: (ids: number[]) => void }) {
   const [connections, setConnections] = useState<Connection[] | null>(null);
   const [ticked, setTicked] = useState<Set<number>>(() => new Set(initial));
   const [saving, setSaving] = useState(false);
@@ -32,7 +37,9 @@ export function AssistantDbWriteConnections({ initial }: { initial: readonly num
     setSaving(true);
     try {
       const res = await patchAssistantSettings({ db_write_connections: [...next] });
-      setTicked(new Set(res.settings.db_write_connections ?? []));
+      const savedIds = res.settings.db_write_connections ?? [];
+      setTicked(new Set(savedIds));
+      onSaved(savedIds);
     } catch (e) {
       toast.error("Could not save", { description: e instanceof Error ? e.message : String(e) });
     } finally {

@@ -14,7 +14,9 @@ function parseIntro(raw: unknown): FeatureIntro | null {
   const value = raw as Record<string, unknown>;
   if (typeof value.id !== "string" || typeof value.title !== "string" || typeof value.body !== "string") return null;
   if (!Array.isArray(value.tools) || !value.tools.every(isPpmTool)) return null;
-  return { id: value.id, title: value.title, body: value.body, tools: value.tools, since: typeof value.since === "string" ? value.since : "" };
+  // A feature that is one setting keeps it: the step links to where that setting lives.
+  const setting = value.setting === "assistant_permission_mode" ? { setting: value.setting } as const : {};
+  return { id: value.id, title: value.title, body: value.body, tools: value.tools, ...setting, since: typeof value.since === "string" ? value.since : "" };
 }
 
 /** The server's answer, or null when it is not one: an unexpected shape shows nothing. */

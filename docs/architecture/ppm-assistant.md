@@ -107,7 +107,9 @@ PPM Assistant → General → Permissions; both switches are read on every tool 
   `search…`). A denylist over text, so a guard against the model's own mistakes, not a boundary.
 
 **Full mode** (`permission_mode`, Settings → PPM Assistant → General → Permissions, and the
-Full/Ask chip in the Assistant's head and window titlebar, `assistant-mode-button.tsx`). The user
+Full/Ask chip in the Assistant's head and window titlebar, `assistant-mode-button.tsx`; both ask
+for confirmation before Full, go back to Ask in one press, and follow a change made on another
+device through `assistant:permission-mode` on `/ws/global`). The user
 asked for it as "like a chat in bypass mode, except that pushing, publishing and sending to others
 still needs me" (ppm/42). `full` includes acting on its own (`assistantPolicySwitches` answers
 `actOnOwn` for it, so Edit/Write, Codex's writable roots and the provider-tool rules follow), and
@@ -118,8 +120,11 @@ not look at whether the turn has read outside text: the user chose to trust thei
 the line against injected text is that a turn PPM started never acts. Still asked in Full mode:
 - `git_sync` push, `public_link_set` on, `port_forward_start` over Cloudflare, and
   `chat_answer_approval` (another chat's request, which the user has not seen);
+- `ui_run_command` for an extension's command (`ext:…`), which may post or publish like a user MCP
+  tool;
 - `db_query` writes, except on a connection listed in `db_write_connections` (ticked in the same
-  pane; a read-only connection is never written through either way);
+  pane; a read-only connection is never written through either way), and `db_connection_save` on
+  a listed connection — the list is kept by id, so an edit could point it at another database;
 - a tab or file in a private folder (`touchesPrivate` on the ask), and the vault's locked tiers,
   whose cards take a password and never pass through the asker;
 - more than 10 cards in one turn or 30 in an hour across Assistant sessions: the next one is

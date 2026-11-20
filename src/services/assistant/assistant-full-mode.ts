@@ -14,6 +14,8 @@
  *    link on, a port forwarded to a public Cloudflare address;
  *  - another chat's approval card (`chat_answer_approval`): the user has not seen what that chat
  *    wants to do, and it may be one of the actions above;
+ *  - an extension's command, which may post or publish, and an edit to a connection listed as
+ *    writable, which could move its unasked writes to another database;
  *  - a database write, unless the user listed the connection as writable without a card;
  *  - a read of a folder PPM keeps private (the PPM dir, credential stores): what it holds could
  *    leave in the Assistant's answer, which also goes to Telegram;
@@ -25,7 +27,8 @@
  * Every action this module lets through is written to the session trace, so what ran without a
  * card can be read back next to what the user approved.
  */
-import { CHAT_ANSWER_APPROVAL_TOOL, DB_QUERY_TOOL } from "../../shared/assistant-tool-names.ts";
+import { CHAT_ANSWER_APPROVAL_TOOL, DB_QUERY_TOOL, UI_RUN_COMMAND_TOOL } from "../../shared/assistant-tool-names.ts";
+import { DB_CONNECTION_SAVE_TOOL } from "../../shared/assistant-db-connection-tool-names.ts";
 import { GIT_SYNC_TOOL } from "../../shared/assistant-git-tool-names.ts";
 import { PORT_FORWARD_START_TOOL, PUBLIC_LINK_SET_TOOL } from "../../shared/assistant-tunnel-tool-names.ts";
 import { CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL } from "../../shared/session-collab.ts";
@@ -80,6 +83,16 @@ export function hardLimitReason(action: FullModeAction, dbWritable: ReadonlySet<
       ? null
       : "database writes ask unless the connection is listed as writable in Settings";
   }
+  // The writable list is kept by id: an edit could point a listed connection at another database
+  // (a SQLite file, a URL with no saved password) and its writes would then go there unasked.
+  if (tool === DB_CONNECTION_SAVE_TOOL && typeof input.id === "number" && dbWritable.has(input.id)) {
+    return "it changes a connection listed as writable without a card";
+  }
+  // An extension's command does whatever its extension does, posting included: the same as a
+  // user MCP tool that may send, which asks too.
+  if (tool === UI_RUN_COMMAND_TOOL && typeof input.id === "string" && input.id.startsWith("ext:")) {
+    return "an extension's command may send or publish";
+  }
   return null;
 }
 
@@ -120,6 +133,14 @@ export function createFullMode(deps: FullModeDeps) {
     /** The session's turn ended: its per-turn count starts again. */
     turnEnded(sessionId: string): void {
       perTurn.delete(sessionId);
+    },
+
+    /** A provider renamed the session mid-turn (Codex): the count moves with it rather than restarting. */
+    migrated(from: string, to: string): void {
+      const count = perTurn.get(from);
+      if (count === undefined) return;
+      perTurn.delete(from);
+      perTurn.set(to, Math.max(count, perTurn.get(to) ?? 0));
     },
 
     /** For tests. */

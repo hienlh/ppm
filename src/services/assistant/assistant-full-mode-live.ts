@@ -18,4 +18,6 @@ export const assistantFullMode = createFullMode({
   now: () => Date.now(),
 });
 
-chatLifecycle.on("turn_ended", (e) => assistantFullMode.turnEnded(e.sessionId));
+// A builtin typed mid-turn (`/version`) reports `turn_ended` with `turnStillRunning`: the turn has not ended.
+chatLifecycle.on("turn_ended", (e) => { if (!e.turnStillRunning) assistantFullMode.turnEnded(e.sessionId); });
+chatLifecycle.on("migrated", (e) => assistantFullMode.migrated(e.oldSessionId, e.newSessionId));

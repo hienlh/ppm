@@ -10,30 +10,45 @@
  * its own at all. Pure.
  */
 
-const METHOD = "['\"]?(POST|PUT|PATCH|DELETE|post|put|patch|delete)\\b";
+/** An HTTP method that writes, in any case, after an optional quote. */
+const METHOD = "['\"]?([Pp][Oo][Ss][Tt]|[Pp][Uu][Tt]|[Pp][Aa][Tt][Cc][Hh]|[Dd][Ee][Ll][Ee][Tt][Ee])\\b";
+
+/** Longer than this is not scanned: the command asks instead. */
+export const OUTBOUND_SCAN_MAX_CHARS = 32_000;
 
 /**
- * Each pattern runs on the command with runs of whitespace collapsed to one space. Command names
- * match in any case; flags whose case matters (`curl -F` is a form upload, `-f` only "fail
- * quietly") are matched as written.
+ * Each rule runs on one command of the line at a time (split at `;`, `&`, `|` and line breaks,
+ * runs of spaces collapsed). A rule is the program (`lead`, found once) and, when it needs one,
+ * what follows it (`tail`, tested once on the rest), so no pattern rescans the text from every
+ * place a program name appears. Program names match in any case; flags whose case matters
+ * (`curl -F` is a form upload, `-f` only "fail quietly") are matched as written.
  */
-const OUTBOUND_COMMAND_PATTERNS: ReadonlyArray<{ re: RegExp; what: string }> = [
-  { re: /\bgit\b[^|;&\n]* push\b/i, what: "a git push" },
-  { re: /\bgh (pr|issue) (create|comment|review|merge|close|reopen|edit|ready|lock|unlock|delete|transfer|develop)\b/i, what: "a GitHub pull request or issue change" },
-  { re: /\bgh (release|gist|repo|secret|variable|label|workflow|run|cache|ruleset|project) (create|upload|edit|delete|set|run|rerun|cancel|enable|disable|fork|rename|archive|sync|close|copy|item-add|item-edit|item-delete)\b/i, what: "a GitHub change" },
-  { re: new RegExp(`\\b[Gg][Hh] api\\b.*( (-X|--method) ?${METHOD}| (-f|-F|--field|--raw-field|--input) )`), what: "a GitHub API write" },
-  { re: /\b(npm|pnpm|yarn|bun) publish\b|\bcargo publish\b|\btwine upload\b|\bgem push\b|\bdotnet nuget push\b|\bdocker (image )?push\b|\bvsce publish\b/i, what: "a publish" },
-  { re: new RegExp(`\\b[Cc][Uu][Rr][Ll]\\b.*( -[A-Za-z]*X ?${METHOD}| --request ?${METHOD}| -[A-Za-z]*[dFT]( |=|$)| --(data|form|upload-file|json)\\b)`), what: "an HTTP upload" },
-  { re: /\b(invoke-webrequest|invoke-restmethod|iwr|irm)\b.*(-method ['"]?(post|put|patch|delete)\b|-body\b|-infile\b)/i, what: "an HTTP upload" },
-  { re: /\bwget\b.*--(post-data|post-file|method)/i, what: "an HTTP upload" },
-  { re: /(^|[\s;&|(])(ssh|scp|sftp|rsync) /i, what: "a remote login or copy" },
-  { re: /\b(sendmail|send-mailmessage)\b|(^|[\s;&|(])mail /i, what: "an email" },
+const OUTBOUND_RULES: ReadonlyArray<{ lead: RegExp; tail?: RegExp; what: string }> = [
+  { lead: /\bgit\b/i, tail: / push\b/i, what: "a git push" },
+  { lead: /\bgit send-email\b/i, what: "an email" },
+  { lead: /\bgh (pr|issue) (create|comment|review|merge|close|reopen|edit|ready|lock|unlock|delete|transfer|develop)\b/i, what: "a GitHub pull request or issue change" },
+  { lead: /\bgh (release|gist|repo|secret|variable|label|workflow|run|cache|ruleset|project) (create|upload|edit|delete|set|run|rerun|cancel|enable|disable|fork|rename|archive|sync|close|copy|item-add|item-edit|item-delete)\b/i, what: "a GitHub change" },
+  { lead: /\bgh api\b/i, tail: new RegExp(` (-X|--method)[ =]?${METHOD}| (-f|-F|--field|--raw-field|--input)[ =]`), what: "a GitHub API write" },
+  { lead: /\b(npm|pnpm|yarn|bun) publish\b|\bcargo publish\b|\btwine upload\b|\bgem push\b|\bdotnet nuget push\b|\bdocker (image )?push\b|\bvsce publish\b/i, what: "a publish" },
+  { lead: /\bcurl\b/i, tail: new RegExp(` -[A-Za-z]*X[ =]?${METHOD}| --request[ =]?${METHOD}| -[A-Za-z]*[dFT]| --(data|form|upload-file|json)\\b`), what: "an HTTP upload" },
+  { lead: /\b(invoke-webrequest|invoke-restmethod|iwr|irm)\b/i, tail: /-method ['"]?(post|put|patch|delete)\b|-body\b|-infile\b/i, what: "an HTTP upload" },
+  { lead: /\bwget\b/i, tail: /--(post-data|post-file|method)/i, what: "an HTTP upload" },
+  { lead: /(^|[\s(])(ssh|scp|sftp|rsync) /i, what: "a remote login or copy" },
+  { lead: /\b(sendmail|send-mailmessage)\b|(^|[\s(])mail /i, what: "an email" },
 ];
 
 /** What a command sends out, or null when its text names nothing on the list. */
 export function commandSendsOut(command: string): string | null {
-  const text = command.replace(/\s+/g, " ");
-  return OUTBOUND_COMMAND_PATTERNS.find((p) => p.re.test(text))?.what ?? null;
+  if (command.length > OUTBOUND_SCAN_MAX_CHARS) return "a command too long for PPM to check";
+  for (const part of command.split(/[;&|\r\n]+/)) {
+    const text = part.replace(/[ \t]+/g, " ").trim();
+    if (!text) continue;
+    for (const rule of OUTBOUND_RULES) {
+      const lead = rule.lead.exec(text);
+      if (lead && (!rule.tail || rule.tail.test(text.slice(lead.index + lead[0].length)))) return rule.what;
+    }
+  }
+  return null;
 }
 
 /**
@@ -41,7 +56,8 @@ export function commandSendsOut(command: string): string | null {
  * (`list_channels`, `get-issue`, `searchMessages`). A user's own MCP server is where Slack, email,
  * Jira and GitHub reach the Assistant, and its other tools may post: those ask.
  */
-const READ_VERBS = ["get", "list", "search", "read", "fetch", "find", "query", "describe", "view", "show", "lookup", "status", "whoami", "count", "browse"];
+// Not `query` or `run`: a database server's `query` tool runs writes as readily as reads.
+const READ_VERBS = ["get", "list", "search", "read", "fetch", "find", "describe", "view", "show", "lookup", "status", "whoami", "count", "browse"];
 
 /** Whether a user MCP server's tool, by its bare name, reads by the naming convention above. */
 export function mcpToolNameReads(bare: string): boolean {

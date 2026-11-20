@@ -15,7 +15,9 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { getAssistantSettings, patchAssistantSettings, type AssistantSettingsResponse } from "@/lib/assistant-settings-api";
 import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
-import { useAssistantPermissionMode } from "@/hooks/use-assistant-permission-mode";
+import { FULL_MODE_CONFIRM, useAssistantPermissionMode } from "@/hooks/use-assistant-permission-mode";
+
+export { FULL_MODE_CONFIRM };
 import type { AssistantPermissionMode } from "../../../../shared/assistant-settings";
 import { SettingLine, SettingsCard } from "./assistant-settings-card";
 import { ConfirmDialog } from "./assistant-settings-dialog";
@@ -27,7 +29,6 @@ export const MODE_HINTS: Record<AssistantPermissionMode, string> = {
   ask: "The Assistant shows a card before each change. The two switches below decide what runs without one.",
 };
 export const MODE_UNSET_HINT = "Not chosen yet: the Assistant asks until you pick one.";
-export const FULL_MODE_CONFIRM = "In turns you start, the Assistant will message and open chats, change schedules, projects and git, edit files and run commands without asking. It reads other chats, logs and web pages, and text in them can try to steer it. Pushing, publishing, sending to other people, database writes (unless you tick a connection), the vault and your private folders still ask; turns PPM starts on its own (watch reports, the digest, restart news) never act. Edits become available from the Assistant's next session start.";
 export const READONLY_COMMANDS_LABEL = "Run read-only commands without asking";
 export const READONLY_COMMANDS_HINT = "Commands PPM can prove only read — git status, listing files in your projects, process and memory info — run without a card. Anything else still asks. Never reaches your keys, credential folders or PPM's own data.";
 export const ACT_ON_OWN_LABEL = "Let the Assistant act on its own";
@@ -40,7 +41,7 @@ export const ACT_ON_OWN_CONFIRM = "The Assistant will edit files in your project
  * desktop, 26px on a phone. The switches keep their own size.
  */
 const CONFIRM_BUTTON = `${TEXT_CONTROL_HEIGHT} px-2.5 text-xs`;
-const MODE_BUTTON = `${TEXT_CONTROL_HEIGHT} inline-flex items-center gap-1.5 rounded-full border px-2.5 text-[11.5px] font-medium max-md:px-2`;
+const MODE_BUTTON = `${TEXT_CONTROL_HEIGHT} inline-flex items-center gap-1.5 rounded-full border px-2.5 text-[11.5px] font-medium max-md:px-[5px]`;
 
 interface Switches { readonly: boolean; actOnOwn: boolean; dbWrite: number[] }
 
@@ -107,7 +108,8 @@ export function AssistantPermissionsSettings() {
             {modeButton("ask", "Ask", Hand)}
           </div>
         </SettingLine>
-        {full && <AssistantDbWriteConnections initial={saved.dbWrite} />}
+        {full && <AssistantDbWriteConnections initial={saved.dbWrite}
+          onSaved={(ids) => setSaved((s) => (s ? { ...s, dbWrite: ids } : s))} />}
         <SettingLine label={READONLY_COMMANDS_LABEL} note={READONLY_COMMANDS_HINT}>
           <Switch aria-label={READONLY_COMMANDS_LABEL} checked={saved.readonly} disabled={saving}
             onCheckedChange={(on) => void save({ auto_readonly_commands: on })} />
