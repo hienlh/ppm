@@ -628,16 +628,16 @@ export async function startServer(options: {
     // Both supervisorPid AND pid are tree-killed — a dead supervisor entry must
     // not stop us from reaping a still-alive orphaned server (the common case
     // after an interrupted upgrade self-replace).
+    // The tunnel and the edge are not on that list: detached, they outlive a dead supervisor still
+    // serving the public URL and port, and the new supervisor adopts them (leftover-recovery.ts).
+    let prevRun: Record<string, unknown> = {};
+    const isAlive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
     if (existsSync(statusFile)) {
       try {
-        const prev = JSON.parse(readFileSync(statusFile, "utf-8"));
+        prevRun = JSON.parse(readFileSync(statusFile, "utf-8"));
         const { killProcessTree } = await import("../services/windows-process-tree.ts");
-        for (const key of ["supervisorPid", "pid", "tunnelPid"] as const) {
-          const p = prev[key] as number | undefined;
-          if (!p) continue;
-          try { process.kill(p, 0); } catch { continue; } // already dead
-          killProcessTree(p);
-        }
+        const { leftoverPidsToKill } = await import("../services/supervisor-watchdog/leftover-recovery.ts");
+        for (const p of leftoverPidsToKill(prevRun, isAlive)) killProcessTree(p);
       } catch {}
     }
 
@@ -651,6 +651,14 @@ export async function startServer(options: {
     });
 
     let portInUse = await checkPort();
+    if (portInUse) {
+      const { findPortListenerPid } = await import("../services/windows-process-tree.ts");
+      const { edgeHoldsPort } = await import("../services/supervisor-watchdog/leftover-recovery.ts");
+      if (edgeHoldsPort(prevRun, isAlive, findPortListenerPid(port))) {
+        console.log(`  Port ${port} is held by the previous run's edge forwarder (PID ${prevRun.edgePid}) — keeping it for the new supervisor`);
+        portInUse = false;
+      }
+    }
     if (portInUse && process.platform === "win32") {
       // Orphaned server descendants from a previous run may hold an inherited
       // handle to this port's listening socket (zombie port). Reap them first.

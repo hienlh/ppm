@@ -164,6 +164,18 @@ export async function readOomEvents(from: number, to: number, platform: NodeJS.P
 }
 
 /**
+ * Whether the supervisor `prevStatus` names is gone while its run was live (running, paused or
+ * mid-upgrade): it died rather than was stopped. False for this process's own pid (a reused pid
+ * is not the old supervisor coming back), for a stopped run, and when there is no status.
+ */
+export function previousSupervisorDied(prevStatus: Record<string, unknown>): boolean {
+  const pid = prevStatus.supervisorPid;
+  if (typeof pid !== "number" || !LIVE_STATES.has(String(prevStatus.state))) return false;
+  if (pid === process.pid) return true;
+  try { process.kill(pid, 0); return false; } catch { return true; }
+}
+
+/**
  * {@link diagnosePreviousRunDeath} on the live machine: whether the supervisor `prevStatus` names is
  * alive, its server's memory pulse, and the OS's low-memory reports around the last reading. The
  * reports are only asked for when the previous run did die. Never throws.
@@ -175,13 +187,8 @@ export async function readPreviousRunDeath(
 ): Promise<StartReason | null> {
   const now = opts.now ?? Date.now();
   try {
-    const supervisorPid = prevStatus.supervisorPid;
-    if (typeof supervisorPid !== "number" || !LIVE_STATES.has(String(prevStatus.state))) return null;
-    let supervisorAlive = false;
-    if (supervisorPid !== process.pid) {
-      try { process.kill(supervisorPid, 0); supervisorAlive = true; } catch { /* dead */ }
-    }
-    if (supervisorAlive) return null;
+    if (!previousSupervisorDied(prevStatus)) return null;
+    const supervisorAlive = false;
     const { readPulse } = await import("../memory-pulse.ts");
     const pulse = typeof prevStatus.pid === "number" ? readPulse(ppmDir, prevStatus.pid) : null;
     const window = oomEventWindow(pulse, now);

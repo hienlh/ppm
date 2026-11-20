@@ -54,7 +54,13 @@ import { waitForReplacement } from "./supervisor-self-replace-wait.ts";
 import { readThreadSnapshot, describeThreadSnapshot, type ThreadSnapshot } from "./process-thread-snapshot.ts";
 import { readMachineCpuTimes, machineBusyFraction, type MachineCpuTimes } from "./machine-cpu.ts";
 import { uptime as osUptime } from "node:os";
-import { readPreviousRunDeath } from "./restart-news/previous-run-death.ts";
+import { previousSupervisorDied, readPreviousRunDeath } from "./restart-news/previous-run-death.ts";
+import { describeCommit, readSystemCommit } from "./system-commit.ts";
+import { readPulse } from "./memory-pulse.ts";
+import {
+  healthMissCounts, MAX_MEMORY_WAIT_MS, MEMORY_POLL_MS, memoryExhausted, memoryGuardFromRaw, oomBackoffMs, oomExitReason,
+} from "./supervisor-memory-guard.ts";
+import type { MemoryGuardSettings } from "../shared/memory-guard.ts";
 import { dropStaleRestartRequest, peekRestartRequester, requesterNote, startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
 import { dropOrderedStop, writeOrderedStop } from "./restart-news/ordered-stop-note.ts";
 import {
@@ -179,6 +185,11 @@ let _opts: { port: number; host: string; share: boolean } = { port: 8080, host: 
 
 let serverRestarts = 0;
 let lastServerCrash = 0;
+/** Restarts after an out-of-memory exit, counted apart from crashes (`supervisor-memory-guard.ts`). */
+let oomRestarts = 0;
+let lastOomRestart = 0;
+/** Since when health probes have been failing with memory exhausted; null when memory is fine. */
+let healthLowMemorySince: number | null = null;
 let tunnelRestarts = 0;
 let lastTunnelCrash = 0;
 
@@ -926,6 +937,28 @@ export async function spawnServer(
     return spawnServer(serverArgs, logFd, decision.reason);
   }
 
+  // Out of memory: the machine, not the server, is what failed. Wait for commit to come back and
+  // restart on a backoff of its own, outside the crash budget that pauses PPM for good.
+  const upForS = Math.round((Date.now() - startedAt) / 1000);
+  const exitCommit = await readSystemCommit();
+  const guard = await freshMemoryGuard();
+  if (exitCommit && memoryExhausted(exitCommit, guard.blockFreeGB)) {
+    const reason = oomExitReason({ exitCode, signal: exitSignal, upForS }, exitCommit, readPulse(getPpmDir(), childPid));
+    if (Date.now() - lastOomRestart > STABLE_WINDOW_MS) oomRestarts = 0;
+    oomRestarts++;
+    const delay = oomBackoffMs(oomRestarts);
+    log("ERROR", `Server went down with the machine out of memory (${describeCommit(exitCommit)}) — ${reason.detail}. Waiting ${Math.round(delay / 1000)}s, then until ${guard.blockFreeGB} GB is free (at most ${MAX_MEMORY_WAIT_MS / 60_000} min), before restarting it`);
+    serverBackoffPending = true;
+    try {
+      await Bun.sleep(delay);
+      const waited = await waitForFreeMemory(guard.blockFreeGB);
+      if (waited > 0) log("INFO", `Free memory ${waited >= MAX_MEMORY_WAIT_MS ? "did not come back" : "came back"} after ${Math.round(waited / 1000)}s — restarting the server`);
+    } finally { serverBackoffPending = false; }
+    lastOomRestart = Date.now();
+    if (!shuttingDown) return spawnServer(serverArgs, logFd, reason);
+    return;
+  }
+
   // Crash — apply backoff. A server the health check killed is the watchdog's restart.
   const crashReason = decision.reason;
   const now = Date.now();
@@ -969,6 +1002,29 @@ export async function spawnServer(
  * `restart-news/supervisor-start-reason.ts` ask for it only where someone asked for the restart.
  */
 const takeRequest = (): StartReason | null => takeRestartRequest(getPpmDir());
+
+/**
+ * The memory guard thresholds, read fresh from the database: the server writes Settings, and this
+ * process's own config cache would never see the change. Defaults when unreadable.
+ */
+async function freshMemoryGuard(): Promise<MemoryGuardSettings> {
+  try {
+    const { getConfigValue } = await import("./db.service.ts");
+    return memoryGuardFromRaw(getConfigValue("ai"));
+  } catch {
+    return memoryGuardFromRaw(undefined);
+  }
+}
+
+/** Wait until free commit is at least `blockFreeGB` (or unreadable), for at most {@link MAX_MEMORY_WAIT_MS}. Returns the ms waited. */
+async function waitForFreeMemory(blockFreeGB: number): Promise<number> {
+  const start = Date.now();
+  while (!shuttingDown && Date.now() - start < MAX_MEMORY_WAIT_MS) {
+    if (!memoryExhausted(await readSystemCommit(), blockFreeGB)) break;
+    await Bun.sleep(MEMORY_POLL_MS);
+  }
+  return Date.now() - start;
+}
 
 /** Seconds since the machine started; null when the OS will not say (then it is not a boot). */
 function machineUptimeS(): number | null {
@@ -1503,6 +1559,15 @@ function startServerHealthCheck() {
     } catch (e) {
       const err = e as { name?: string; code?: string; message?: string } | null;
       lastProbe = err?.name === "TimeoutError" ? "timeout after 5s" : err?.code ?? err?.message ?? String(e);
+    }
+    // A server not answering while the machine is out of memory is paging, not hung, and
+    // killing it frees nothing the culprit holds: those misses do not count, for a while.
+    const probeCommit = await readSystemCommit();
+    const grace = healthMissCounts(memoryExhausted(probeCommit, (await freshMemoryGuard()).blockFreeGB), healthLowMemorySince, Date.now());
+    healthLowMemorySince = grace.lowSince;
+    if (!grace.counts && probeCommit) {
+      log("WARN", `Server health probe on port ${checkPort} failed (${lastProbe}) with the machine out of memory (${describeCommit(probeCommit)}) — not counted; the server is left running`);
+      return;
     }
     healthFailCount++;
     // Read while the server is still not answering: the main thread's wait is the cause.
@@ -2381,6 +2446,10 @@ export async function runSupervisor(opts: {
     statusWrittenAt: statusWrittenAt(),
   });
   if (previousDeath) log("WARN", `Previous run did not stop — ${previousDeath.kind}: ${previousDeath.detail ?? "no detail"}`);
+  // A supervisor that died (out of memory, killed) leaves its detached edge and tunnel running,
+  // still serving the public port and URL: keep their records, as an upgrade does, so they are
+  // adopted rather than replaced. Adoption checks each one's identity and liveness itself.
+  const keepDetached = isUpgrade || previousSupervisorDied(prevStatus);
   writeStatus({
     supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null,
     // Which database this supervisor's server runs on: the CLI's process commands and its
@@ -2389,18 +2458,18 @@ export async function runSupervisor(opts: {
     minimalMode: !!opts.minimal,
     state: "running", pausedAt: null, pauseReason: null, lastCrashError: null,
     pid: null,
-    tunnelPid: isUpgrade ? (prevStatus.tunnelPid ?? null) : null,
-    shareUrl: isUpgrade ? (prevStatus.shareUrl ?? null) : null,
-    tunnelPort: isUpgrade ? (prevStatus.tunnelPort ?? null) : null,
+    tunnelPid: keepDetached ? (prevStatus.tunnelPid ?? null) : null,
+    shareUrl: keepDetached ? (prevStatus.shareUrl ?? null) : null,
+    tunnelPort: keepDetached ? (prevStatus.tunnelPort ?? null) : null,
     // The edge is detached and survives self-replace exactly like the tunnel,
     // so its PID must survive this wholesale rewrite or the new supervisor
     // would spawn a second edge and collide on the public port.
-    edgePid: isUpgrade ? (prevStatus.edgePid ?? null) : null,
+    edgePid: keepDetached ? (prevStatus.edgePid ?? null) : null,
     // tunnelMode/tunnelWarning survive an upgrade the same way tunnelPid/shareUrl
     // do above — otherwise a live named tunnel would report as unset mode with
     // no warning history the instant the new supervisor takes over.
-    tunnelMode: isUpgrade ? (prevStatus.tunnelMode ?? null) : null,
-    tunnelWarning: isUpgrade ? (prevStatus.tunnelWarning ?? null) : null,
+    tunnelMode: keepDetached ? (prevStatus.tunnelMode ?? null) : null,
+    tunnelWarning: keepDetached ? (prevStatus.tunnelWarning ?? null) : null,
     // Unconditional (not upgrade-gated): every boot of this code understands
     // "retunnel" — its ABSENCE is how phase 3's UI detects a pre-upgrade
     // supervisor that predates the retunnel command entirely.
@@ -2410,7 +2479,7 @@ export async function runSupervisor(opts: {
   // Diagnostic: a cold start (isUpgrade=false) always nulls the tunnel and forces
   // a fresh URL. A genuine upgrade must arrive here with state "upgrading" AND a
   // live tunnelPid for the public URL to survive — log both to catch which path ran.
-  log("INFO", `Startup: isUpgrade=${isUpgrade} prevState=${prevStatus.state} prevTunnelPid=${prevStatus.tunnelPid ?? null} prevShareUrl=${prevStatus.shareUrl ?? null}`);
+  log("INFO", `Startup: isUpgrade=${isUpgrade} keepDetached=${keepDetached} prevState=${prevStatus.state} prevTunnelPid=${prevStatus.tunnelPid ?? null} prevShareUrl=${prevStatus.shareUrl ?? null}`);
 
   // Build __serve__ args. Port 0 = OS-assigned, bound to loopback only: the
   // edge is the sole public listener, and the server publishes whatever port it

@@ -55,13 +55,16 @@ export async function restartServer(options: { force?: boolean; reason?: string 
       // job-object server child) can die on resume while the detached
       // cloudflared tunnel survives, leaving a half-alive daemon that `ppm
       // status` reports as "running". Dead-ending with "use stop && start"
-      // forces a manual two-step recovery — instead, self-heal: tear down the
-      // orphan tunnel + stale state, then start a fresh daemon.
-      console.log("\n  Supervisor not running (orphaned after sleep/crash) — recovering...\n");
+      // forces a manual two-step recovery — instead, self-heal: start a fresh
+      // supervisor on top of the stale state. Not `ppm stop --kill` first: that
+      // killed the edge and the tunnel, which still served the public port and
+      // URL, and deleted status.json, which the new supervisor reads to adopt
+      // them and to tell what the previous run died of. `startServer` kills the
+      // orphaned server; the supervisor reaps its leftover children before it
+      // spawns a new one, and replaces an edge or tunnel it cannot adopt.
+      console.log("\n  Supervisor not running (orphaned after sleep, a crash or running out of memory) — recovering, keeping the public tunnel if it is alive...\n");
       const port = status.port as number | undefined;
       const profile = status.profile as string | undefined;
-      const { stopServer } = await import("./stop.ts");
-      await stopServer({ kill: true, requestedBy });
       leaveReason();
       const { startServer } = await import("../../server/index.ts");
       await startServer({ port: port ? String(port) : undefined, profile, minimal: status.minimalMode === true });
