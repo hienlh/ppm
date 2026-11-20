@@ -67,6 +67,10 @@ export function setPinned(sessions: SessionInfo[], id: string, pinned: boolean):
   return sortSessions(sessions.map((s) => (s.id === id ? { ...s, pinned } : s)));
 }
 
+export function setSessionArchive(sessions: SessionInfo[], id: string, archive: SessionInfo["archive"]): SessionInfo[] {
+  return sessions.map((s) => (s.id === id ? { ...s, archive } : s));
+}
+
 export function setSessionTag(
   sessions: SessionInfo[],
   id: string,

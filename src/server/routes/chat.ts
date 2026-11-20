@@ -46,6 +46,7 @@ import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionT
 import { setSessionTag, bulkSetSessionTag, getTagById } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
 import { listProjectSessions, searchProjectChats } from "../../services/chat-session-queries.service.ts";
+import { setSessionArchiveState } from "../../services/session-archive.service.ts";
 import { managerChats } from "../../services/assistant-managers/manager-chats.service.ts";
 import { antigravitySessionOutsideProject, historyProviderFor, readSessionHistory } from "../../services/chat-history-read.service.ts";
 import { parseHistoryPageQuery } from "./chat-history-page.ts";
@@ -483,6 +484,23 @@ chatRoutes.delete("/sessions/:id/pin", (c) => {
     const id = c.req.param("id");
     unpinSession(id);
     return c.json(ok({ id, pinned: false }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * PUT /chat/sessions/:id/archive { state: "archived" | "kept" | null } — archive a chat, keep it
+ * out of auto-archive (`kept`), or forget either. The list leaves archived chats out by default.
+ */
+chatRoutes.put("/sessions/:id/archive", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ state?: unknown }>().catch(() => ({}) as { state?: unknown });
+  const state = body.state === "archived" || body.state === "kept" ? body.state : body.state === null ? null : undefined;
+  if (state === undefined) return c.json(err('state must be "archived", "kept" or null'), 400);
+  try {
+    setSessionArchiveState(id, state);
+    return c.json(ok({ id, archive: state }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

@@ -731,6 +731,21 @@ owning the keyboard answers; typed into another field they are that field's own)
 closed with a session (`src/web/lib/closed-chats.ts`, recorded by `panel-store.closeTab`). An Alt
 combo on a letter also matches by `e.code`, since a Mac's Option key types another character.
 
+### Archived chats and the status filter
+
+A chat is archived by hand (*Archive* in its context menu, or the hover button in the history list)
+or automatically once it has been idle the number of days chosen beside the filter (Never, 7, 14,
+30, 90; per device). A pinned chat, the manager chat and one marked `kept` (unarchived by hand after
+the rule caught it) are never auto-archived. The rule is `isSessionArchived` in
+`src/shared/session-archive.ts`; the history list filters by `matchesStatusFilter` — **Active**
+(the default) hides archived chats unless one is running or unread, and **Running**, **Unread**,
+**Archived** and **All** show their own. A search under Active looks at every chat, archived ones included.
+The state is one row per session in `session_archive` (`src/services/session-archive.service.ts`,
+created on first use rather than by a numbered migration), set by
+`PUT /chat/sessions/:id/archive { state: "archived" | "kept" | null }` and returned on every
+`SessionInfo` as `archive`; the filter and the day count live in
+`src/web/stores/chat-history-filter-store.ts`. Archiving never deletes or stops anything.
+
 ## Voice messages
 
 The chat mic records a voice message instead of dictating, once the install has said yes to the `voice-messages-2026-11` feature intro (config `voice_message.enabled`; Settings → Voice Input has the same switch). Off, the mic dictates exactly as before.

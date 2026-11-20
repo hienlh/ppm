@@ -5,7 +5,11 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { projectCacheId } from "@/lib/browser-cache/cache-keys";
 import { useSessionListStore, EMPTY_SESSIONS, commitOptimistic } from "@/stores/session-list-store";
 import { projectRefForName, useProjectRef } from "@/stores/session-list-sync-triggers";
-import { sortSessions, removeSession, renameSession, setPinned, setSessionTag } from "@/lib/session-list-merge";
+import { sortSessions, removeSession, renameSession, setPinned, setSessionTag, setSessionArchive } from "@/lib/session-list-merge";
+import { useChatHistoryFilter } from "@/stores/chat-history-filter-store";
+import { useStreamingStore } from "@/stores/streaming-store";
+import { useNotificationStore } from "@/stores/notification-store";
+import { isSessionArchived, matchesStatusFilter, type SessionArchiveState, type SessionStatusFilter } from "../../shared/session-archive";
 import { useSessionTitleChanges } from "@/lib/session-title-live";
 import type { SessionInfo, SessionListResponse } from "../../types/chat";
 
@@ -200,6 +204,18 @@ export function useSessionHistory({
     if (!ok) void load(debouncedSearch || undefined);
   }, [projectName, project, load, debouncedSearch]);
 
+  /** Archive, or un-archive (`kept`, so auto-archive leaves it alone too). */
+  const setArchive = useCallback(async (session: SessionInfo, state: SessionArchiveState | null) => {
+    if (!projectName) return;
+    const ref = project ?? projectRefForName(projectName);
+    useSessionListStore.getState().setArchive(ref, session.id, state);
+    setPagedExtra((prev) => setSessionArchive(prev, session.id, state));
+    setSearchFirstPage((prev) => prev ? setSessionArchive(prev, session.id, state) : prev);
+    const ok = await commitOptimistic(ref, () =>
+      api.put(projectUrl(projectName) + "/chat/sessions/" + encodeURIComponent(session.id) + "/archive", { state }));
+    if (!ok) void load(debouncedSearch || undefined);
+  }, [projectName, project, load, debouncedSearch]);
+
   const deleteSession = useCallback(async (e: React.MouseEvent, session: SessionInfo) => {
     e.stopPropagation();
     if (!projectName) return;
@@ -260,10 +276,20 @@ export function useSessionHistory({
     return () => window.removeEventListener("keydown", handler);
   }, [enableKeyboardShortcuts, projectTags, sessionId, projectName, handleTagChanged]);
 
-  // Client-side tag filter (title search is server-side via ?q=).
-  const filteredSessions = selectedTagId !== null
-    ? sessions.filter((s) => s.tag?.id === selectedTagId)
-    : sessions;
+  // Client-side tag and status filters (title search is server-side via ?q=). A search shows
+  // archived chats too: a chat looked for by name is wanted wherever it was put.
+  const statusFilter = useChatHistoryFilter((s) => s.status);
+  const autoArchiveDays = useChatHistoryFilter((s) => s.autoArchiveDays);
+  const streaming = useStreamingStore((s) => s.sessions);
+  const notifications = useNotificationStore((s) => s.notifications);
+  const filteredSessions = useMemo(() => {
+    const byTag = selectedTagId !== null ? sessions.filter((s) => s.tag?.id === selectedTagId) : sessions;
+    const status: SessionStatusFilter = debouncedSearch && statusFilter === "active" ? "all" : statusFilter;
+    if (status === "all") return byTag;
+    const ctx = { autoDays: autoArchiveDays, running: (id: string) => streaming.has(id), unread: (id: string) => notifications.has(id) };
+    return byTag.filter((s) => matchesStatusFilter(status, s, ctx));
+  }, [sessions, selectedTagId, statusFilter, autoArchiveDays, streaming, notifications, debouncedSearch]);
+  const isArchived = useCallback((s: SessionInfo) => isSessionArchived(s, autoArchiveDays), [autoArchiveDays]);
 
   return {
     sessions, filteredSessions, loading: effectiveLoading, hasMore, loadingMore,
@@ -274,5 +300,6 @@ export function useSessionHistory({
     load, loadMore, loadTags,
     openSession, startEditing, saveTitle, cancelEditing,
     togglePin, deleteSession, handleTagChanged, bulkDelete,
+    setArchive, isArchived,
   };
 }

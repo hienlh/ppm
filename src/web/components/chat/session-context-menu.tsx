@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Bot, Check, Pin, PinOff, Pencil, Trash2, Tag, Circle, X } from "@/lib/icons";
+import { Archive, Bot, Check, Pin, PinOff, Pencil, Trash2, Tag, Circle, X } from "@/lib/icons";
 import {
   ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem,
   ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
@@ -24,6 +24,9 @@ interface SessionContextMenuProps {
   onStartEditing?: (session: SessionInfo, e: React.MouseEvent) => void;
   onDeleteSession?: (e: React.MouseEvent, session: SessionInfo) => void;
   onTagChanged: (sessionId: string, tag: { id: number; name: string; color: string } | null) => void;
+  /** Archive or un-archive; `archived` is what the list shows the row as now. */
+  onArchive?: (session: SessionInfo, archive: "archived" | "kept") => void;
+  archived?: boolean;
 }
 
 /**
@@ -32,7 +35,7 @@ interface SessionContextMenuProps {
  */
 export function SessionContextMenu({
   session, projectName, projectTags, children,
-  onTogglePin, onStartEditing, onDeleteSession, onTagChanged,
+  onTogglePin, onStartEditing, onDeleteSession, onTagChanged, onArchive, archived = false,
 }: SessionContextMenuProps) {
   const markUnread = useNotificationStore((s) => s.markUnread);
   const isUnread = useNotificationStore((s) => s.notifications.has(session.id));
@@ -73,6 +76,12 @@ export function SessionContextMenu({
             {session.pinned ? <PinOff className="size-3.5 mr-2" /> : <Pin className="size-3.5 mr-2" />}
             {session.pinned ? "Unpin" : "Pin"}
           </ContextMenuItem>
+          {onArchive && !isManager && (
+            <ContextMenuItem onClick={() => onArchive(session, archived ? "kept" : "archived")}>
+              <Archive className="size-3.5 mr-2" />
+              {archived ? "Unarchive" : "Archive"}
+            </ContextMenuItem>
+          )}
           {!isUnread && (
             <ContextMenuItem onClick={() => markUnread(session.id, projectName, session.title)}>
               <Circle className="size-3.5 mr-2 fill-primary text-primary" />

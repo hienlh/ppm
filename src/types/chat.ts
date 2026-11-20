@@ -339,6 +339,8 @@ export interface SessionInfo {
   spawnedBy?: string | null;
   /** That session's title, when PPM has one for it. */
   parentTitle?: string | null;
+  /** Archived by hand, or `kept` once un-archived (`src/shared/session-archive.ts`). */
+  archive?: import("../shared/session-archive").SessionArchiveState | null;
 }
 
 /**
