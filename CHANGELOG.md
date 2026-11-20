@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.26.22] - 2026-11-21
+
+### Added
+
+- **Multi-line vault values**: a vault item can hold several lines (recovery codes, keys), drawn as discs while hidden, and the AI's output is checked for each line on its own.
+- **Files on Secure and Sealed vault items**: attach JPEG, PNG, WebP or PDF files, encrypted on disk and kept with backups; preview, download, rename and delete them in Settings → Vault. No AI reads them.
+- **Vault notices on Telegram link back**: Open in PPM and Open Vault open Settings → Vault on that item.
+
 ## [0.26.21] - 2026-11-21
 
 ### Added
