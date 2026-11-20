@@ -27,6 +27,7 @@ import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 import type { BridgeAction, ManagerCardPress, TaskPress } from "./assistant-telegram-actions.ts";
 import type { CardReplyMessage } from "./assistant-telegram-card-replies.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
+import type { TypedAnswerMessage } from "./assistant-telegram-typed-answers.ts";
 import { forwardedFrom, wrapForwarded, backlogQuestion, viaInlineBot } from "./assistant-telegram-inbound-text.ts";
 import { quoteTelegramMessage, toReplyReference, type BotSource, type QuotedCard, type TelegramQuote } from "./assistant-telegram-reply-quote.ts";
 import type { AnswerTurn } from "./assistant-telegram-own-answers.ts";
@@ -80,6 +81,11 @@ export interface InboundDeps {
    * "Message about this task". `wants` decides, `take` sends and answers in the chat.
    */
   taskWords?: { wants(chatId: string, replyToMessageId?: number): TaskWordsAim | null; take(chatId: string, m: TaskWordsMessage, aim: TaskWordsAim): Promise<void> };
+  /**
+   * Words that may answer a question card (a reply to it, or the message after its ✏️ Other): what
+   * to tell the user when a card took them or refused them, null when they are not for a card.
+   */
+  typedAnswer?: (chatId: string, m: TypedAnswerMessage) => string | null;
   /** A message sent as a reply to a card's message: true when it answered the card. */
   replyToCard?: (chatId: string, m: CardReplyMessage) => Promise<boolean>;
   /** Whether this message of this chat shows one of the Assistant's cards. */
@@ -228,9 +234,25 @@ export class AssistantTelegramInbound {
       return false;
     }
 
+    // An answer in the user's own words to a chat's question card: a reply to it, or the message
+    // after its ✏️ Other. One sent while PPM was off is not: it goes on and is asked about below.
+    const repliedTo = message.reply_to_message?.message_id;
+    if (this.deps.typedAnswer && this.now() - message.date * 1000 <= BACKLOG_AGE_MS) {
+      const said = this.deps.typedAnswer(chatId, {
+        text: message.text ?? message.caption ?? "",
+        ...(repliedTo !== undefined ? { replyToMessageId: repliedTo } : {}),
+        notTheUsers: !!from || !!message.via_bot,
+        hasPhoto: !!message.photo?.length,
+      });
+      if (said !== null) {
+        await this.flush(chatId);
+        this.reply(chatId, said);
+        return false;
+      }
+    }
+
     // A reply to one of the Assistant's cards answers that card, word for word, and is never merged
     // into a gathered message. One sent while PPM was off is asked about first, like any other.
-    const repliedTo = message.reply_to_message?.message_id;
     /** The photo, when the card-reply path already tried to fetch it (null: it could not be). */
     let prefetched: Image | null | undefined;
     if (repliedTo !== undefined && this.deps.replyToCard && this.deps.isCardMessage?.(chatId, repliedTo)) {

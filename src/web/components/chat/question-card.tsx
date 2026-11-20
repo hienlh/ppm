@@ -206,6 +206,7 @@ export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: 
     <div
       ref={kb.containerRef}
       className={`${questionFrameClass("question")} animate-in slide-in-from-bottom-2`}
+      data-question-card=""
     >
       {/* Header */}
       <div className="flex items-center justify-between text-sm font-medium text-text-primary">

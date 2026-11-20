@@ -46,6 +46,7 @@ import { AssistantTelegramMirror, type MirrorCardSink } from "./assistant-telegr
 import { AssistantTelegramRelay } from "./assistant-telegram-relay.ts";
 import { AssistantTelegramDbNotices } from "./assistant-telegram-db-notices.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
+import type { TypedAnswerMessage } from "./assistant-telegram-typed-answers.ts";
 import { AssistantTelegramPoller } from "./assistant-telegram-poller.ts";
 import { AssistantTelegramSendQueue, EDIT_INTERVAL_MS, outcomeOf, sendMessageTask } from "./assistant-telegram-send-queue.ts";
 import { BridgeStateStore, readBridgeState } from "./assistant-telegram-state.ts";
@@ -82,6 +83,10 @@ export interface BridgeCards extends MirrorCardSink {
   isShowing(chatId: string, requestId: string): boolean;
   /** Acts on a pressed card button; the toast to show. */
   press(chatId: string, press: CardPress, group: string, cq: TelegramCallbackQuery): string;
+  /** Words that may answer a question card in the user's own words: what to reply, or null when not for a card. */
+  typed?(chatId: string, m: TypedAnswerMessage): string | null;
+  /** The chat's next message is meant for something else now: it stops waiting for a typed answer. */
+  stopTyped?(chatId: string): void;
   forgetChat(chatId: string): void;
 }
 
@@ -219,12 +224,15 @@ export class AssistantTelegramBridge {
       debounceMs: () => opts.debounceMs ?? bridgeConfig().debounce_ms,
       delivered: (id) => poller?.delivered(id),
       pressCard: (chatId, press, group, cq) => cards.press(chatId, press, group, cq),
+      typedAnswer: (chatId, m) => cards.typed?.(chatId, m) ?? null,
       switchSession: (chatId, sessionId) => this.switchSession(chatId, sessionId),
       relayCard: (chatId, card) => cards.relayed(chatId, card),
       pressManagerCard: (chatId, press, group) => cardReplies.press(chatId, press, group),
       pressTask: async (chatId, press, group, cq) => {
         if (press.op === "undo_history") return pressTaskCardUndo(chatId, press, group, cq, { codes, queue });
         // Not the card's own buttons: the card stays as it is, and its buttons keep working.
+        // The newest "your next message goes to…" wins: a task's chat takes it from a question card's Other.
+        if (press.op === "about" || press.op === "ask") cards.stopTyped?.(chatId);
         if (press.op === "about" || press.op === "ask" || press.op === "about_cancel") return taskMessages.press(chatId, press, group);
         if (taskCreated.owns(press.ref)) return taskCreated.press(chatId, press, group);
         return tasks.press(chatId, press, group, cq);

@@ -251,13 +251,18 @@ try {
   await wholeCardShot(page, body, "06-desktop-card-nxsys-urgent-whole");
 
   await show(body, question.id);
-  const q = (n, letter) => cur(body).locator(`[data-card-question="q${n}"] [data-card-option="${letter}"]`);
-  await q(1, "A").click();
-  await q(2, "A").click();
+  // The card answers with the chat's own question form: one tab per question, options numbered from 1.
+  const q = async (n, letter) => {
+    const form = cur(body).locator("[data-question-card]");
+    await form.locator(`[data-question-tab="${n - 1}"]`).click();
+    await form.locator(`[data-question-option="${letter.charCodeAt(0) - 65}"]`).click();
+  };
+  await q(1, "A");
+  await q(2, "A");
   await k.shot("07-desktop-stream-four-questions-two-picked");
   await wholeCardShot(page, body, "08-desktop-card-four-questions-whole");
-  const send = cur(body).getByRole("button", { name: /Send answers/ });
-  assert.equal(await send.innerText(), "Send answers (2/4)");
+  const send = cur(body).locator("[data-question-card] button", { hasText: /^Submit/ });
+  assert.equal(await send.innerText(), "Submit (2/4)");
   assert.equal(await send.isDisabled(), true);
   ok("desktop: four questions with 2–3-line options are answered on the card, sent together");
 
@@ -302,7 +307,7 @@ try {
   await show(mbody, idOf(NXSYS_DECISION.title), true);
   await wholeCardShot(mob, mbody, "14-phone-card-nxsys-long-title-whole");
   await show(mbody, question.id, true);
-  await cur(mbody).locator('[data-card-question="q1"] [data-card-option="A"]').tap();
+  await cur(mbody).locator('[data-question-card] [data-question-option="0"]').tap();
   await mk.shot("15-phone-stream-four-questions");
   await wholeCardShot(mob, mbody, "16-phone-card-four-questions-whole");
   await show(mbody, idOf(REVIEW_DRAFT.title), true);
@@ -344,8 +349,8 @@ try {
   await page.goto(`${web}/project/ppm/assistant`);
   await body.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
   await show(body, question.id);
-  for (const [n, letter] of [[1, "A"], [2, "A"], [3, "B"], [4, "A"]]) await q(n, letter).click();
-  await cur(body).getByRole("button", { name: "Send answers (4/4)" }).click();
+  for (const [n, letter] of [[1, "A"], [2, "A"], [3, "B"], [4, "A"]]) await q(n, letter);
+  await cur(body).locator("[data-question-card] button", { hasText: "Submit ✓" }).click();
   const [asked] = await k.answered("r-questions", 1);
   assert.equal(asked.approved, true, "the manager got its answers");
   ok("the four answers reached the manager chat");

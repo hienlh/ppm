@@ -206,6 +206,8 @@ describe("a question card asked one question at a time", () => {
     expect(m.text).toContain("API token?");
     expect(m.text).toContain("give it in PPM");
     expect(m.text).not.toContain("Question 1/2");
+    // No buttons, so no hint about ✏️ Other either.
+    expect(m.text).not.toContain("✏️");
     expect(t.buttons(id)).toEqual([]);
   });
 
@@ -214,7 +216,7 @@ describe("a question card asked one question at a time", () => {
     const questions = normalizeClaudeQuestions({ questions: [{ question: "Màu nào?", header: "Màu", options: [{ label: "Đỏ" }, { label: "Xanh" }], multiSelect: false }] });
     const { id, requestId } = await t.show(questions);
     expect(t.message(id).text).not.toContain("Question 1/1");
-    expect(t.labels(id)).toEqual([["Đỏ"], ["Xanh"]]);
+    expect(t.labels(id)).toEqual([["Đỏ"], ["Xanh"], ["✏️ Other (type it)"]]);
     expect(await t.press(id, "Xanh")).toBe("Answer sent.");
     expect(answered.at(-1)).toEqual({ sessionId: "s", requestId, answer: { approved: true, answersById: { [questions[0]!.id]: ["Xanh"] } } });
   });
@@ -224,7 +226,7 @@ describe("a question card asked one question at a time", () => {
     const questions: NormalizedQuestion[] = [{ id: "q1", question: "Which?", options: [{ label: "a" }, { label: "b" }, { label: "c" }], multiSelect: true, allowsFreeText: true }];
     const { id, requestId } = await t.show(questions);
     expect(t.message(id).text).toContain("Question 1/1");
-    expect(t.labels(id)).toEqual([["a"], ["b"], ["c"], ["Next »"]]);
+    expect(t.labels(id)).toEqual([["a"], ["b"], ["c"], ["✏️ Other (type it)"], ["Next »"]]);
     await t.press(id, "c");
     await t.press(id, "a");
     // Kept in the order the choices are listed.
