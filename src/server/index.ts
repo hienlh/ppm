@@ -1005,6 +1005,11 @@ if (process.argv.includes("__serve__")) {
     console.warn("[serve] provider bootstrap failed:", (e as Error).message);
   }
 
+  // Low-memory warnings and releasing quiet chats' subprocesses, on every watchdog reading.
+  void import("../services/memory-guard/memory-guard.service.ts")
+    .then(({ startMemoryGuard }) => startMemoryGuard())
+    .catch((e) => console.warn("[serve] memory guard failed to start:", (e as Error).message));
+
   // Each chat's commands run in a systemd slice of the chat's own, so what a chat leaves running
   // can be stopped once it is idle. Not awaited: the probe takes ~10 ms, and a CLI spawned before
   // it settles merely goes untracked.

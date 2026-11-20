@@ -24,6 +24,9 @@ const TOP: Readonly<Record<string, ConfigValueType>> = {
   tab_tools: "boolean",
   hide_builtin_cron: "boolean",
   leftover_processes_idle_minutes: "number",
+  memory_warn_free_gb: "number",
+  memory_block_free_gb: "number",
+  idle_cli_release_minutes: "number",
 };
 
 /** A provider's own fields, with the type each holds when it is not set yet. */

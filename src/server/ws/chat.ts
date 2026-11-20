@@ -44,6 +44,8 @@ import type { EffortStatus } from "../../shared/effort-status.ts";
 import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
 import { extractAntigravitySessionTitle, findAntigravityTranscriptPath } from "../../providers/antigravity/antigravity-history.ts";
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
+import { spawnTracker } from "../../services/memory-diagnostics-spawns.ts";
+import { selectIdleReleases, type QuietSession, type ReleasePick } from "../../services/memory-guard/idle-subprocess-release.ts";
 import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
 import { assistantUiBroker, setAssistantUiDelivery } from "../../services/assistant-mcp/assistant-ui-tools.ts";
 import { parseAssistantUiResult, type UiSummary } from "../../shared/assistant-ui-protocol.ts";
@@ -675,8 +677,23 @@ function releaseSubprocess(sessionId: string, reason: string, note: string): voi
   if (supersededByLiveEntry(sessionId)) return;
   const provider = providerRegistry.get(entry.providerId);
   if (!provider?.hasStreamingSession?.(sessionId)) return;
-  chatService.abortQuery(entry.providerId, sessionId, reason, "ws");
+  abortAndReap(entry.providerId, sessionId, reason);
   log.info(`session=${sessionId} released subprocess (${reason}): ${note}`);
+}
+
+/**
+ * Abort the session's subprocess and, on Windows, end what its CLI started (MCP servers, shells)
+ * that would otherwise outlive it (`cli-leftover-reaper.ts`). The abort itself is synchronous, as
+ * every caller expects; the children are read right after it, while the CLI is still closing.
+ */
+function abortAndReap(providerId: string, sessionId: string, reason: string): void {
+  // Which CLI it is, read before the abort: the tracker forgets a child once it has exited.
+  const cliPids = process.platform === "win32" ? spawnTracker.pidsForSession(sessionId, "claude") : [];
+  chatService.abortQuery(providerId, sessionId, reason, "ws");
+  if (cliPids.length === 0) return;
+  void import("../../services/cli-leftover-reaper.ts")
+    .then(async ({ snapshotCliLeftovers, reapCliLeftovers }) => reapCliLeftovers(sessionId, await snapshotCliLeftovers(cliPids)))
+    .catch(() => {});
 }
 
 /**
@@ -701,7 +718,7 @@ export function dropIdleSubprocess(sessionId: string, reason: string, note: stri
   if (supersededByLiveEntry(sessionId)) return;
   const provider = providerRegistry.get(entry.providerId);
   if (!provider?.hasStreamingSession?.(sessionId)) return;
-  chatService.abortQuery(entry.providerId, sessionId, reason, "ws");
+  abortAndReap(entry.providerId, sessionId, reason);
   if (entry.cacheReleaseTimer) {
     clearTimeout(entry.cacheReleaseTimer);
     entry.cacheReleaseTimer = undefined;
@@ -720,6 +737,39 @@ export function hasBackgroundWork(sessionId: string): boolean {
   if (entry && hasRunningTasks(entry)) return true;
   if ((entry?.backgroundToolUseIds?.size ?? 0) > 0) return true;
   return backgroundShellRegistry.list(sessionId).some((sh) => sh.status !== "stopped");
+}
+
+/**
+ * Release the subprocesses of chats that have been quiet too long, tab open or not, and under
+ * memory pressure a few more (`memory-guard/idle-subprocess-release.ts` picks). Only chats between
+ * turns with nothing a release would lose: no card, no message arriving or queued, no background
+ * work. Called on every memory reading of the server's watchdog. Returns what it released.
+ */
+export function releaseQuietSubprocesses(opts: { idleMinutes: number; memoryLow: boolean; now?: number }): ReleasePick[] {
+  const now = opts.now ?? Date.now();
+  const quiet: QuietSession[] = [];
+  for (const [sessionId, entry] of activeSessions) {
+    if (supersededByLiveEntry(sessionId)) continue;
+    const provider = providerRegistry.get(entry.providerId);
+    if (!provider?.hasStreamingSession?.(sessionId)) continue;
+    const busy = entry.phase !== "idle" || !!entry.pendingApprovalEvent || (entry.approvalQueue?.length ?? 0) > 0
+      || (entry.messagesArriving ?? 0) > 0 || entry.nextTurnOrigin !== undefined || hasBackgroundWork(sessionId);
+    if (busy) continue;
+    const quietSince = Math.max(entry.lastTurnEndedAt ?? 0, entry.idleSince ?? 0);
+    if (!quietSince) continue;
+    quiet.push({ sessionId, quietSince });
+  }
+  const picks = selectIdleReleases(quiet, now, opts);
+  for (const p of picks) {
+    dropIdleSubprocess(
+      p.sessionId,
+      p.why === "idle" ? "idle_release" : "memory_pressure",
+      p.why === "idle"
+        ? `Subprocess released: the chat was quiet for ${opts.idleMinutes} min; the next message starts a new one`
+        : "Subprocess released: the machine is low on memory and this chat was the longest quiet",
+    );
+  }
+  return picks;
 }
 
 /** Tear down the longest-idle subprocesses once too many sessions are holding one. */

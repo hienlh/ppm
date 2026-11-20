@@ -17,6 +17,7 @@ import { isDbExplorerPrefs } from "../../shared/db-explorer-prefs.ts";
 import { isLookupDescriptions } from "../../shared/db-lookup-prefs.ts";
 import { isPpmTool, patchPpmToolSwitches, type PpmToolSwitches } from "../../shared/ppm-tools.ts";
 import { isValidLeftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../shared/leftover-processes.ts";
+import { isValidFreeGB, isValidIdleCliReleaseMinutes, MAX_IDLE_CLI_RELEASE_MINUTES, MAX_MEMORY_FREE_GB } from "../../shared/memory-guard.ts";
 import { parseSessionCollabPatch, resolveSessionCollabSettings, type SessionCollabSettings } from "../../shared/session-collab-settings.ts";
 import {
   SESSION_TRACE_MIN_RETENTION_DAYS,
@@ -215,6 +216,9 @@ settingsRoutes.put("/ai", async (c) => {
       ppm_tools?: PpmToolSwitches;
       hide_builtin_cron?: boolean;
       leftover_processes_idle_minutes?: number;
+      memory_warn_free_gb?: number;
+      memory_block_free_gb?: number;
+      idle_cli_release_minutes?: number;
       session_collab?: unknown;
       providers?: Record<string, Partial<AIProviderConfig>>;
     }>();
@@ -239,6 +243,14 @@ settingsRoutes.put("/ai", async (c) => {
     }
     if ("leftover_processes_idle_minutes" in body && !isValidLeftoverIdleMinutes(body.leftover_processes_idle_minutes)) {
       return c.json(err(`leftover_processes_idle_minutes must be a whole number from 0 to ${MAX_LEFTOVER_IDLE_MINUTES}, 0 for never`), 400);
+    }
+    for (const key of ["memory_warn_free_gb", "memory_block_free_gb"] as const) {
+      if (key in body && !isValidFreeGB(body[key])) {
+        return c.json(err(`${key} must be a number of GB from 0 to ${MAX_MEMORY_FREE_GB} (halves allowed), 0 for off`), 400);
+      }
+    }
+    if ("idle_cli_release_minutes" in body && !isValidIdleCliReleaseMinutes(body.idle_cli_release_minutes)) {
+      return c.json(err(`idle_cli_release_minutes must be a whole number from 0 to ${MAX_IDLE_CLI_RELEASE_MINUTES}, 0 for never`), 400);
     }
     if ("ppm_tools" in body) {
       const tools = body.ppm_tools as unknown;
@@ -280,6 +292,9 @@ settingsRoutes.put("/ai", async (c) => {
       ...(typeof body.tab_tools === "boolean" && { tab_tools: body.tab_tools }),
       ...(typeof body.hide_builtin_cron === "boolean" && { hide_builtin_cron: body.hide_builtin_cron }),
       ...(body.leftover_processes_idle_minutes !== undefined && { leftover_processes_idle_minutes: body.leftover_processes_idle_minutes }),
+      ...(body.memory_warn_free_gb !== undefined && { memory_warn_free_gb: body.memory_warn_free_gb }),
+      ...(body.memory_block_free_gb !== undefined && { memory_block_free_gb: body.memory_block_free_gb }),
+      ...(body.idle_cli_release_minutes !== undefined && { idle_cli_release_minutes: body.idle_cli_release_minutes }),
       // One switch at a time: the tools the body does not name keep theirs, and the other tools of
       // an introduced feature are written at the state they showed (see `patchPpmToolSwitches`).
       ...(body.ppm_tools && { ppm_tools: patchPpmToolSwitches(currentAi.ppm_tools, body.ppm_tools) }),

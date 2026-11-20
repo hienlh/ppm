@@ -23,6 +23,7 @@ import { autoModelLabel, modelDisplayName } from "@/lib/model-display-name";
 import type { EffortStatus } from "../../../shared/effort-status";
 import type { ModelOption } from "../../../types/chat";
 import { LOG_ONLY_IDLE_MINUTES, leftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../../shared/leftover-processes";
+import { MemoryGuardSettingsFields } from "./memory-guard-settings";
 import type { ProviderProbeStatus } from "../../../providers/provider-probe";
 
 const EFFORT_OPTIONS = [
@@ -270,6 +271,15 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
           server log names what {LOG_ONLY_IDLE_MINUTES} idle minutes would have stopped. Linux with systemd only.
         </p>
       </div>
+
+      <MemoryGuardSettingsFields
+        settings={settings}
+        revision={revision}
+        compact={compact}
+        labelSize={labelSize}
+        fieldGap={fieldGap}
+        onSave={(patch) => handleSettingsSave(patch)}
+      />
 
       {/* Provider tabs */}
       {providerTabs.length > 1 && (

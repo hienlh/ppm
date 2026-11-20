@@ -198,6 +198,15 @@ export interface AIConfig {
    */
   leftover_processes_idle_minutes?: number;
   /**
+   * The memory guard (`src/shared/memory-guard.ts`): warn when free commit falls under this many
+   * GB (15), refuse new heavy commands from chats and release quiet chats' subprocesses under the
+   * block threshold (10), and release a chat's subprocess after this many quiet minutes even with
+   * a tab open (60; 0 keeps it while a tab is open). A threshold of 0 is off.
+   */
+  memory_warn_free_gb?: number;
+  memory_block_free_gb?: number;
+  idle_cli_release_minutes?: number;
+  /**
    * Limits for sessions that open and message each other. Read through
    * `resolveSessionCollabSettings` (`src/shared/session-collab-settings.ts`), which fills defaults
    * and clamps, so a field missing here means its default.
