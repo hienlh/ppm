@@ -1298,8 +1298,10 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   is refused when the card does not show everything that would run. A question card is answered on
   the card whatever its number of questions: each option is a lettered tile (A, B, C…) with its
   whole description and a "Recommended" tag taken from "(Recommended)" in its label, the user picks
-  one per question (several where allowed) and sends them together; a question with no options or
-  a secret is answered in the chat (`cards/question-options.tsx`). `POST …/reply` may carry
+  one per question (several where allowed) and sends them together. A question that takes typed
+  text (every Claude question, a Codex one marked "other") also has an "Other" field, as the chat's
+  own form does; the words go out alone in place of the tiles, and a question with no options is
+  answered by that field. Only a secret is answered in the chat (`cards/question-options.tsx`). `POST …/reply` may carry
   `images` (at most five PNG/JPEG/GIF/WebP as base64, each at most 5,000,000 base64 characters,
   the composer's inline cap, and under 2000 px on its longer side): the server checks the type
   against the bytes and the pixel size, writes its own copy under the uploads folder and forwards
@@ -1739,7 +1741,10 @@ user, forwarded word for word by PPM". Only `forward-verbatim.ts` builds one; ev
 the forwarded text included, breaks its markers, and a unit test checks the source for any second
 writer. A card that stopped waiting or is older than `STALE_REPLY_MS` asks "send anyway?" first
 (on Telegram a card that was decided is refused instead, see Answering above). A
-reply to an approval or question card refuses that request, as typing in the manager chat would;
+reply to an approval or question card refuses that request, as typing in the manager chat would,
+unless the question on screen takes typed text: then the reply is its answer, as the message after
+the card's "✏️ Other" button is (`assistant-telegram-typed-answers.ts`; a card asked step by step
+still answers only with Send, and any other button, Cancel or ten minutes end that wait);
 any other forward waits behind a pending request. Forwarding resets the pair counts, leaves a line
 for the Assistant's next turn (no turn is started for it) and records the device and fetch site, or
 the Telegram chat, in the session trace. A card with no manager (digest, rules, budget) takes no
