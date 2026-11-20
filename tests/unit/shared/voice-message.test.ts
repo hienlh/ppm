@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
-  encodeVoicePart, formatVoiceDuration, isStoredVoicePath, splitVoiceMessage, voiceMarkerLine, voicePlainText,
+  encodeVoicePart, formatVoiceDuration, isStoredVoicePath, splitVoiceMessage, VOICE_NOTE, voiceMarkerLine, voicePlainText,
   whisperVocabularyPrompt,
 } from "../../../src/shared/voice-message.ts";
 
@@ -21,10 +21,31 @@ describe("formatVoiceDuration", () => {
 });
 
 describe("encodeVoicePart / splitVoiceMessage", () => {
-  it("writes the marker the plan specifies, then the transcript", () => {
+  it("writes the marker, the note telling the model it may be misheard, then the transcript", () => {
     expect(encodeVoicePart({ path: PATH, durationSec: 42, transcript: "  sửa route Hono  " })).toBe(
-      `[Voice message (0:42), transcribed below; the audio needs no opening: ${PATH}]\nsửa route Hono`,
+      `[Voice message (0:42), transcribed below; the audio needs no opening: ${PATH}]\n${VOICE_NOTE}\nsửa route Hono`,
     );
+    expect(VOICE_NOTE).toContain("misheard");
+    expect(VOICE_NOTE).toContain("ask instead of guessing");
+  });
+
+  it("never shows the note: the split returns the transcript alone", () => {
+    const { voice } = splitVoiceMessage(`Xem ảnh\n\n${encodeVoicePart({ path: PATH, durationSec: 42, transcript: "sửa route Hono" })}`);
+    expect(voice?.transcript).toBe("sửa route Hono");
+    expect(voicePlainText(encodeVoicePart({ path: PATH, durationSec: 4, transcript: "chào" }))).toBe("chào");
+  });
+
+  it("still reads a message sent before the note existed", () => {
+    const old = `Xem ảnh\n\n[Voice message (0:42), transcribed below; the audio needs no opening: ${PATH}]\nsửa route Hono\ndòng hai`;
+    expect(splitVoiceMessage(old)).toEqual({
+      before: "Xem ảnh",
+      voice: { path: PATH, durationSec: 42, transcript: "sửa route Hono\ndòng hai" },
+    });
+  });
+
+  it("reads the note with Windows line endings too", () => {
+    const crlf = encodeVoicePart({ path: PATH, durationSec: 5, transcript: "một" }).replace(/\n/g, "\r\n");
+    expect(splitVoiceMessage(crlf).voice?.transcript).toBe("một");
   });
 
   it("round-trips typed text above a multi-line transcript", () => {
@@ -55,7 +76,7 @@ describe("encodeVoicePart / splitVoiceMessage", () => {
     const path = "/home/a b/[x]/v.ogg";
     expect(splitVoiceMessage(encodeVoicePart({ path, durationSec: 1, transcript: "t" })).voice?.path).toBe(path);
     const broken = encodeVoicePart({ path: "/a\n/b.wav", durationSec: 1, transcript: "t" });
-    expect(broken.split("\n")).toHaveLength(2);
+    expect(broken.split("\n")).toHaveLength(3); // marker, note, transcript
   });
 
   it("defuses a marker-shaped line inside the transcript, so it cannot move the split", () => {

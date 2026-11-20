@@ -52,15 +52,22 @@ export function voiceMarkerLine(path: string, durationSec: number): string {
 }
 
 /**
- * Marker line + "\n" + transcript. A transcript line shaped like a marker (dictated, typed into the
- * block, or written by the clean-up) gets a zero-width space before its bracket: the split looks
- * for the LAST marker line, so a forged one below the real marker would move the voice part onto
- * a path the transcript chose.
+ * Written under the marker for the model that reads the message, never shown to the user (the
+ * split drops it). Even after the clean-up a transcript can carry a misheard term, and an agent
+ * that takes it literally acts on a word the user never said.
+ */
+export const VOICE_NOTE = "(Transcribed automatically from speech, so words may be misheard, especially technical terms and names. Read it in context; where something does not make sense, ask instead of guessing.)";
+
+/**
+ * Marker line + the note for the model + transcript. A transcript line shaped like a marker
+ * (dictated, typed into the block, or written by the clean-up) gets a zero-width space before its
+ * bracket: the split looks for the LAST marker line, so a forged one below the real marker would
+ * move the voice part onto a path the transcript chose.
  */
 export function encodeVoicePart(p: VoicePart): string {
   const transcript = p.transcript.trim()
     .replace(/^([^\S\r\n]*)\[Voice message \(/gm, `$1${String.fromCharCode(0x200b)}[Voice message (`);
-  return `${voiceMarkerLine(p.path, p.durationSec)}\n${transcript}`;
+  return `${voiceMarkerLine(p.path, p.durationSec)}\n${VOICE_NOTE}\n${transcript}`;
 }
 
 /**
@@ -76,9 +83,12 @@ export function splitVoiceMessage(text: string): { before: string; voice: VoiceP
     const m = MARKER_RE.exec(line);
     if (!m) continue;
     const durationSec = Number(m[1]) * 60 + Number(m[2]);
+    // The note for the model sits right under the marker; messages sent before it existed have none.
+    const below = lines.slice(i + 1);
+    if (below[0]?.replace(/\r$/, "") === VOICE_NOTE) below.shift();
     return {
       before: lines.slice(0, i).join("\n").trim(),
-      voice: { path: m[3]!, durationSec, transcript: lines.slice(i + 1).join("\n").trim() },
+      voice: { path: m[3]!, durationSec, transcript: below.join("\n").trim() },
     };
   }
   return { before: text, voice: null };
