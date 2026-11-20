@@ -18,7 +18,7 @@ import { cleanupStaleBinaryUpgradeArtifacts } from "./binary-upgrade-swap.ts";
 import {
   type SupervisorState,
   getState, setState, waitForResume, triggerResume,
-  readAndDeleteCmd, readStatus, updateStatus, writeStatus,
+  readAndDeleteCmd, readStatus, updateStatus, writeStatus, statusWrittenAt,
   STATUS_FILE, PID_FILE,
 } from "./supervisor-state.ts";
 import { resolveTunnelConfig, type ResolvedTunnelConfig, type TunnelMode } from "./named-tunnel/named-tunnel-config.ts";
@@ -54,6 +54,7 @@ import { waitForReplacement } from "./supervisor-self-replace-wait.ts";
 import { readThreadSnapshot, describeThreadSnapshot, type ThreadSnapshot } from "./process-thread-snapshot.ts";
 import { readMachineCpuTimes, machineBusyFraction, type MachineCpuTimes } from "./machine-cpu.ts";
 import { uptime as osUptime } from "node:os";
+import { readPreviousRunDeath } from "./restart-news/previous-run-death.ts";
 import { dropStaleRestartRequest, peekRestartRequester, requesterNote, startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
 import { dropOrderedStop, writeOrderedStop } from "./restart-news/ordered-stop-note.ts";
 import {
@@ -2344,6 +2345,23 @@ export async function runSupervisor(opts: {
     }
   }
 
+  // ── Windows: a task registered by an older PPM starts PPM at logon only. Re-register it so
+  // its watchdog trigger (`__ensure_supervisor__` every 2 minutes) brings PPM back after the
+  // supervisor itself dies, which nothing inside PPM can do. No admin needed; an isolated
+  // PPM_HOME never touches the real task (`enableAutoStart` refuses).
+  if (process.platform === "win32") {
+    try {
+      const { staleWindowsTaskConfig, enableAutoStart } = await import("./autostart-register.ts");
+      const stale = staleWindowsTaskConfig();
+      if (stale) {
+        await enableAutoStart(stale, { skipStart: true });
+        log("INFO", "Autostart task re-registered with the watchdog trigger (PPM is started again within 2 minutes if it goes down)");
+      }
+    } catch (e) {
+      log("WARN", `Autostart task re-registration failed (non-fatal): ${e}`);
+    }
+  }
+
   // Global exception handlers — supervisor must never crash
   process.on("uncaughtException", (err) => {
     log("ERROR", `Uncaught exception: ${err.stack || err.message}`);
@@ -2357,6 +2375,12 @@ export async function runSupervisor(opts: {
   writeFileSync(PID_FILE(), String(process.pid));
   const prevStatus = readStatus();
   const isUpgrade = prevStatus.state === "upgrading";
+  // Read before the rewrite below erases what the previous run left: whether it died, and of what.
+  const previousDeath = isUpgrade ? null : await readPreviousRunDeath(prevStatus, getPpmDir(), {
+    bootAt: ((up) => (up === null ? null : Date.now() - up * 1000))(machineUptimeS()),
+    statusWrittenAt: statusWrittenAt(),
+  });
+  if (previousDeath) log("WARN", `Previous run did not stop — ${previousDeath.kind}: ${previousDeath.detail ?? "no detail"}`);
   writeStatus({
     supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null,
     // Which database this supervisor's server runs on: the CLI's process commands and its
@@ -2774,7 +2798,7 @@ export async function runSupervisor(opts: {
   }, prevStatus.shareHostPid, { ppmRestarting: true });
 
   // Spawn server + (fresh) tunnel in parallel
-  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd, initialStartReason({ isUpgrade, uptimeS: machineUptimeS(), takeRequest }))];
+  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd, initialStartReason({ isUpgrade, uptimeS: machineUptimeS(), takeRequest, previousDeath }))];
   const tunnelLoopStarted = tunnelSharingEnabled && !tunnelAdopted;
   if (tunnelLoopStarted) promises.push(spawnTunnel(_opts.port));
 

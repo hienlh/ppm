@@ -3,6 +3,7 @@ import {
   generatePlist,
   generateSystemdService,
   generateVbsWrapper,
+  buildWatchdogCommand,
   buildRegDeleteCommand,
   buildSchtasksCreateCommand,
   generateTaskXml,
@@ -214,23 +215,33 @@ describe("generateSystemdService", () => {
 
 describe("generateVbsWrapper", () => {
   test("creates WScript.Shell object", () => {
-    const vbs = generateVbsWrapper(TEST_CONFIG);
+    const vbs = generateVbsWrapper();
     expect(vbs).toContain('CreateObject("WScript.Shell")');
   });
 
   test("uses Run method with hidden window flag (0)", () => {
-    const vbs = generateVbsWrapper(TEST_CONFIG);
+    const vbs = generateVbsWrapper();
     expect(vbs).toContain(", 0, False");
   });
 
-  test("includes __supervise__ argument", () => {
-    const vbs = generateVbsWrapper(TEST_CONFIG);
-    expect(vbs).toContain("__supervise__");
+  test("runs the watchdog check, not the supervisor directly", () => {
+    // The task fires every 2 minutes: each run must check and exit, never start a second supervisor.
+    const vbs = generateVbsWrapper();
+    expect(vbs).toContain("__ensure_supervisor__");
+    expect(vbs).not.toContain("__supervise__");
   });
 
-  test("includes port in arguments", () => {
-    const vbs = generateVbsWrapper(TEST_CONFIG);
-    expect(vbs).toContain("3210");
+  test("quotes the executable and passes the arguments", () => {
+    const vbs = generateVbsWrapper(["C:\\b\\bun.exe", "run", "C:\\p\\index.ts", "__ensure_supervisor__"]);
+    expect(vbs).toContain('objShell.Run """C:\\\\b\\\\bun.exe"" run C:\\p\\index.ts __ensure_supervisor__", 0, False');
+  });
+});
+
+describe("buildWatchdogCommand", () => {
+  test("runs the CLI entry with the watchdog sentinel", () => {
+    const cmd = buildWatchdogCommand();
+    expect(cmd[cmd.length - 1]).toBe("__ensure_supervisor__");
+    if (!isCompiledBinary()) expect(cmd.some((a) => a.endsWith("index.ts"))).toBe(true);
   });
 });
 
@@ -274,6 +285,13 @@ describe("generateTaskXml", () => {
     const xml = generateTaskXml("C:\\path\\run-ppm.vbs", USER);
     expect(xml).toContain("<LogonType>InteractiveToken</LogonType>");
     expect(xml).toContain("<RunLevel>LeastPrivilege</RunLevel>");
+  });
+
+  test("repeats every 2 minutes, indefinitely, so a dead PPM comes back without anyone", () => {
+    const xml = generateTaskXml("C:\\path\\run-ppm.vbs", USER);
+    expect(xml).toContain("<TimeTrigger>");
+    expect(xml).toContain("<Interval>PT2M</Interval>");
+    expect(xml).not.toContain("<Duration>");
   });
 
   test("lifts the execution time limit so the supervisor is not killed after 72h", () => {

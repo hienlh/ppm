@@ -163,6 +163,7 @@ describe("watchdog summary", () => {
         { pid: 39788, name: "claude", label: "claude", session: "48008560-faff-4a3e-aa6f-bef1eebc82b4", ageMin: 30, ownMB: 683, treeMB: 1283 },
         { pid: 47256, name: "claude", label: "claude", ownMB: 605, treeMB: 605 },
       ],
+      mcpServers: 2,
     });
     expect(text).toBe(
       "children 4 = 1900MB [claude ×2 1300MB, python ×2 600MB] biggest: "

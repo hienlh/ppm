@@ -26,11 +26,17 @@ import { diffRequestCounts, requestTracker } from "./memory-diagnostics-requests
 import { descendantsOf, readProcessList } from "./process-tree-memory.ts";
 import { bunRuntimeAdvisory } from "./bun-runtime-advisory.ts";
 import { heapStats } from "bun:jsc";
+import { getPpmDir } from "./ppm-dir.ts";
+import { prunePulses, writePulse, type PulseSample } from "./memory-pulse.ts";
+import { readSystemCommit } from "./system-commit.ts";
+import { DEFAULT_MEMORY_WARN_FREE_GB, belowFreeGB } from "../shared/memory-guard.ts";
 
 const log = createLogger("mem");
 
 const MB = 1024 * 1024;
 const WATCH_INTERVAL_MS = 60_000;
+/** The server's tick while free commit is low: the readings a death diagnosis has to go on. */
+const LOW_MEMORY_INTERVAL_MS = 15_000;
 const SUMMARY_INTERVAL_MS = 30 * 60_000;
 /** Growth between two summaries that turns the summary into a WARN. */
 const FAST_GROWTH_MB = 1024;
@@ -56,7 +62,16 @@ export interface TreeSummary {
   byName: Record<string, { n: number; mb: number }>;
   /** Direct children, biggest subtree first. */
   branches: ChildBranch[];
+  /**
+   * What the Claude/Codex CLIs started that is not a shell: their MCP servers, near enough (a
+   * Windows MCP server started through `cmd /c npx …` counts once, by its `cmd`).
+   */
+  mcpServers: number;
 }
+
+/** Programs a CLI starts for its own shell tools, not MCP servers. */
+const CLI_SHELLS = new Set(["bash", "sh", "zsh", "powershell", "pwsh", "conhost", "git"]);
+const AI_CLIS = new Set(["claude", "codex"]);
 
 /** Read the tree below `rootPid` and fold it by program and by direct child. Undefined when unreadable. */
 export async function summarizeDescendants(rootPid: number, limit: number): Promise<TreeSummary | undefined> {
@@ -66,7 +81,10 @@ export async function summarizeDescendants(rootPid: number, limit: number): Prom
   const byName: TreeSummary["byName"] = {};
   const branches = new Map<number, ChildBranch>();
   let privateMB = 0;
+  const cliPids = new Set(all.filter((d) => d.depth === 1 && AI_CLIS.has(d.name)).map((d) => d.pid));
+  let mcpServers = 0;
   for (const d of all) {
+    if (d.depth === 2 && cliPids.has(d.ppid) && !CLI_SHELLS.has(d.name)) mcpServers++;
     privateMB += d.privateMB;
     const n = (byName[d.name] ??= { n: 0, mb: 0 });
     n.n++;
@@ -90,6 +108,7 @@ export async function summarizeDescendants(rootPid: number, limit: number): Prom
     privateMB,
     byName,
     branches: [...branches.values()].sort((a, b) => b.treeMB - a.treeMB).slice(0, limit),
+    mcpServers,
   };
 }
 
@@ -121,6 +140,31 @@ function describeGauges(gauges: Record<string, number | string>): string {
   return rows.length ? `gauges ${rows.join(" ")}` : "";
 }
 
+type PulseListener = (sample: PulseSample) => void;
+let pulseListener: PulseListener | null = null;
+
+/**
+ * Called with every reading the server's watchdog takes (free commit and its children), after it is
+ * on disk. The memory guard hangs its warnings and its subprocess release here. Server role only.
+ */
+export function onServerPulse(listener: PulseListener | null): void {
+  pulseListener = listener;
+}
+
+/** The pulse sample a tick writes. Exported for tests. */
+export function pulseSample(t: number, commit: PulseSample["commit"], tree: TreeSummary | undefined): PulseSample {
+  return {
+    t,
+    commit,
+    branches: (tree?.branches ?? []).map((b) => ({
+      pid: b.pid, name: b.name, treeMB: b.treeMB,
+      ...(b.session ? { session: b.session } : {}),
+      ...(b.label ? { label: b.label } : {}),
+    })),
+    ...(tree ? { childrenMB: tree.privateMB, mcpServers: tree.mcpServers } : {}),
+  };
+}
+
 export function startMemoryWatchdog(role: string, readGauges: () => Record<string, number | string>): void {
   const startedAt = Date.now();
   const selfAlerted = new Set<number>();
@@ -139,10 +183,21 @@ export function startMemoryWatchdog(role: string, readGauges: () => Record<strin
     else log.info(`${who} exited after ${e.ageMin}m${e.lastPrivateMB !== undefined ? `, held ${e.lastPrivateMB}MB at its last reading` : ""}`);
   };
 
+  let nextDelayMs = WATCH_INTERVAL_MS;
+  let pruned = false;
   const tick = async () => {
     try {
       const native = await readNativeMemory();
-      const tree = await summarizeDescendants(process.pid, 5);
+      const tree = await summarizeDescendants(process.pid, 8);
+      if (role === "server") {
+        const commit = await readSystemCommit();
+        const sample = pulseSample(Date.now(), commit, tree);
+        const dir = getPpmDir();
+        writePulse(dir, process.pid, sample);
+        if (!pruned) { pruned = true; prunePulses(dir, new Set([process.pid])); }
+        nextDelayMs = commit && belowFreeGB(commit.freeMB, DEFAULT_MEMORY_WARN_FREE_GB) ? LOW_MEMORY_INTERVAL_MS : WATCH_INTERVAL_MS;
+        try { pulseListener?.(sample); } catch (e) { log.debug(`pulse listener failed: ${(e as Error).message}`); }
+      }
       const self = native.privateMB;
       const crossedSelf = self === undefined ? [] : SELF_ALERT_MB.filter((t) => self >= t && !selfAlerted.has(t));
       const crossedChildren = role === "server" && tree
@@ -185,5 +240,8 @@ export function startMemoryWatchdog(role: string, readGauges: () => Record<strin
     }
   };
 
-  setInterval(() => { void tick(); }, WATCH_INTERVAL_MS).unref?.();
+  const loop = () => {
+    setTimeout(() => { void tick().finally(loop); }, nextDelayMs).unref?.();
+  };
+  loop();
 }

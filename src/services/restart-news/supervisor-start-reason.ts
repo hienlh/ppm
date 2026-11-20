@@ -138,10 +138,23 @@ export const isUpgradeFailed = (r: StartReason | null | undefined): boolean =>
 export const BOOT_WINDOW_S = 10 * 60;
 
 /** Why the supervisor's first server starts: an upgrade, a restart someone asked for, a boot, or a start. */
-export function initialStartReason(opts: { isUpgrade: boolean; uptimeS: number | null; takeRequest: TakeRequest }): StartReason {
+export function initialStartReason(opts: {
+  isUpgrade: boolean;
+  uptimeS: number | null;
+  takeRequest: TakeRequest;
+  /**
+   * Why the previous run is gone, when it died rather than stopped (`previous-run-death.ts`). It
+   * outranks whatever brought PPM back (a `ppm restart`, the watchdog task), which is kept as who
+   * asked: "out of memory, restarted by …" says what happened, "manual" alone hid it.
+   */
+  previousDeath?: StartReason | null;
+}): StartReason {
   if (opts.isUpgrade) return { kind: "upgrade" };
   let requested: StartReason | null = null;
   try { requested = opts.takeRequest(); } catch { /* none */ }
+  if (opts.previousDeath) {
+    return requested?.requestedBy ? { ...opts.previousDeath, requestedBy: requested.requestedBy } : opts.previousDeath;
+  }
   const started: StartReason = { kind: "manual", detail: "PPM was started (ppm start, or its service starting it again)" };
   // A `ppm restart` that found the supervisor dead and started PPM again: it asked, so not a boot.
   if (requested) return mergeRequest(requested, started);

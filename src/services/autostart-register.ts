@@ -10,6 +10,7 @@ import {
   generateSystemdService,
   getServicePath,
   generateVbsWrapper,
+  WINDOWS_TASK_VERSION,
   getVbsPath,
   generateTaskXml,
   getTaskXmlPath,
@@ -67,6 +68,8 @@ interface AutoStartMetadata {
   servicePath: string;
   createdAt: string;
   config: AutoStartConfig;
+  /** Windows: the task definition's version (`WINDOWS_TASK_VERSION`); absent = registered before versions. */
+  taskVersion?: number;
 }
 
 /** Save autostart metadata to ~/.ppm/autostart.json */
@@ -330,7 +333,7 @@ async function enableWindows(config: AutoStartConfig): Promise<string> {
   const vbsDir = dirname(vbsPath);
 
   if (!existsSync(vbsDir)) mkdirSync(vbsDir, { recursive: true });
-  writeFileSync(vbsPath, generateVbsWrapper(config));
+  writeFileSync(vbsPath, generateVbsWrapper());
 
   // Task Scheduler only accepts a definition file encoded as UTF-16 and reads
   // the BOM to detect it; a UTF-8 file is rejected as malformed XML.
@@ -361,9 +364,21 @@ async function enableWindows(config: AutoStartConfig): Promise<string> {
     servicePath: vbsPath,
     createdAt: new Date().toISOString(),
     config,
+    taskVersion: WINDOWS_TASK_VERSION,
   });
 
   return vbsPath;
+}
+
+/**
+ * The config of a Windows task registered by an older definition (before the watchdog trigger),
+ * or null when there is none or it is current. The supervisor re-registers such a task at start,
+ * so upgrading PPM is all it takes to get the watchdog.
+ */
+export function staleWindowsTaskConfig(): AutoStartConfig | null {
+  const meta = loadMetadata();
+  if (!meta?.enabled || meta.platform !== "win32") return null;
+  return (meta.taskVersion ?? 1) < WINDOWS_TASK_VERSION ? meta.config : null;
 }
 
 async function disableWindows(): Promise<void> {

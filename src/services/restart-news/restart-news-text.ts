@@ -30,6 +30,7 @@ const KIND_TEXT: Record<StartReasonKind, string> = {
   watchdog: "a watchdog restarted PPM (it stopped answering, or used too much memory)",
   recycle: "PPM was restarted on purpose to free memory",
   crash: "the PPM server crashed",
+  oom: "the machine ran out of memory and PPM went down with it",
   unknown: "the cause was not recorded",
 };
 

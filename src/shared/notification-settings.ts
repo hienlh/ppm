@@ -8,10 +8,10 @@
  * topic — can be paused without being forgotten.
  */
 
-export type NotificationEvent = "done" | "approval_request" | "question" | "collab_approval" | "schedule" | "schedule_created" | "jira" | "design_review" | "extension";
+export type NotificationEvent = "done" | "approval_request" | "question" | "collab_approval" | "schedule" | "schedule_created" | "jira" | "design_review" | "extension" | "memory";
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
-  "done", "approval_request", "question", "collab_approval", "schedule", "schedule_created", "jira", "design_review", "extension",
+  "done", "approval_request", "question", "collab_approval", "schedule", "schedule_created", "jira", "design_review", "extension", "memory",
 ];
 
 export interface NotificationSettings {
@@ -27,7 +27,7 @@ export interface NotificationSettings {
 }
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
-  events: { done: true, approval_request: true, question: true, collab_approval: true, schedule: true, schedule_created: true, jira: true, design_review: true, extension: true },
+  events: { done: true, approval_request: true, question: true, collab_approval: true, schedule: true, schedule_created: true, jira: true, design_review: true, extension: true, memory: true },
   delay_seconds: 60,
   telegram: true,
   ntfy: true,
@@ -53,6 +53,7 @@ export const NOTIFICATION_EVENT_COPY: Record<NotificationEvent, { label: string;
   jira: { label: "Jira", note: "A watcher found new issues, or a debug run finished." },
   design_review: { label: "Reviewer comments", note: "Someone commented on a design you shared." },
   extension: { label: "Extensions", note: "An extension asked to tell you something." },
+  memory: { label: "Low memory", note: "The machine is running out of memory (which chat is growing fastest), or PPM went down and could not be brought back." },
 };
 
 function isValidDelay(value: unknown): value is number {
