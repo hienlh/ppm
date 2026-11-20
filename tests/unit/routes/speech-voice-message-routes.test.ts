@@ -121,10 +121,11 @@ describe("/voice-message", () => {
     expect(processed[0]!.audio).toBeInstanceOf(Uint8Array);
   });
 
-  it("always asks for review when the clean-up failed", async () => {
+  it("answers the plain setting and the clean-up's failure apart, so the client can hold on cleaned:false", async () => {
     await put({ enabled: true, reviewBeforeSend: false });
     processResult = async () => ({ ...CLEANED, text: CLEANED.raw, cleaned: false, cleanupError: "no account" });
-    expect((await json(await postVoice({ audio: audio(), project: "demo" }))).data.reviewBeforeSend).toBe(true);
+    const data = (await json(await postVoice({ audio: audio(), project: "demo" }))).data;
+    expect(data).toMatchObject({ cleaned: false, cleanupError: "no account", reviewBeforeSend: false });
   });
 
   it("maps service errors to statuses and codes", async () => {

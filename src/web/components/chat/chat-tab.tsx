@@ -7,7 +7,7 @@ import { api, projectUrl } from "@/lib/api-client";
 import type { ReplyReference } from "../../../shared/chat-reply";
 import type { TurnReference } from "../../../shared/chat-turn-ref";
 import { decodeMessageBlocks, encodeMessageBlocks } from "../../../shared/chat-message-blocks";
-import { voicePlainText } from "../../../shared/voice-message";
+import { splitVoiceMessage, voicePlainText } from "../../../shared/voice-message";
 import { buildTurnLink } from "@/lib/turn-link";
 import { readChatPreparationSettings } from "@/lib/chat-preference-local-cache";
 import { useComposerTurnRefs } from "@/hooks/use-composer-turn-refs";
@@ -778,10 +778,15 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     replyToRef.current = decoded.replyTo;
     setReplySelection({ owner: replyOwner, reply: decoded.replyTo });
     const overflow = mergeTurnChips(decoded.turnRefs);
-    const text = [decoded.content, ...overflow.map((ref) => buildTurnLink(window.location.origin, ref))].filter(Boolean).join("\n");
+    // A voice message comes back as its words: the marker and its file path in the box would be
+    // sent as typed text, outside the transcript block. The recording itself cannot come back.
+    const hadVoice = !!splitVoiceMessage(decoded.content).voice;
+    const text = [voicePlainText(decoded.content), ...overflow.map((ref) => buildTurnLink(window.location.origin, ref))].filter(Boolean).join("\n");
     saveDraft(text, undefined, { replyTo: decoded.replyTo, turnRefs: turnRefsRef.current });
     setRestore({ text, nonce: Date.now() });
-    toast.error("Message not sent", { description: `${reason} Your text is back in the input.` });
+    toast.error("Message not sent", {
+      description: `${reason} Your text is back in the input${hadVoice ? "; the voice message came back as its transcript, without the recording" : ""}.`,
+    });
   }, [replyOwner, saveDraft, mergeTurnChips, turnRefsRef]);
 
   rejectedSendRef.current = (event) => {
@@ -992,8 +997,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     // The edited message is in this conversation, and so is what it quotes — including a
     // message copied in when this conversation was forked, whose quote names the one it came from.
     const reply = decoded.replyTo && sessionId ? { ...decoded.replyTo, sessionId } : decoded.replyTo;
-    setForkDraft(decoded.content);
-    setRestore({ text: decoded.content, nonce: Date.now(), replace: true });
+    // A voice message is edited as its words; the recording is not sent again (as ArrowUp recall).
+    const text = voicePlainText(decoded.content);
+    setForkDraft(text);
+    setRestore({ text, nonce: Date.now(), replace: true });
     replyToRef.current = reply;
     setReplySelection({ owner: replyOwner, reply });
     replaceTurnChips(decoded.turnRefs);

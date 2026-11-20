@@ -664,6 +664,20 @@ type ChatWsClientMessage =
 
 Images are passed to provider's message context and included in tool input/output.
 
+## Voice messages
+
+The chat mic records a voice message instead of dictating, once the install has said yes to the `voice-messages-2026-11` feature intro (config `voice_message.enabled`; Settings → Voice Input has the same switch). Off, the mic dictates exactly as before.
+
+- **Recording** (`use-voice-message-recorder.ts`): MediaRecorder, at most 2:00 (`VOICE_MAX_SECONDS`), Esc cancels. The original recording is uploaded like any attachment (`<ppm dir>/uploads`), and a 16 kHz WAV of it goes to `POST /api/speech/voice-message` with the project, the session, and the text already typed.
+- **Transcription** (`src/services/voice-message/`): `whisper-cli` on the host, with `--prompt` built from the word lists (`whisperVocabularyPrompt`). Anything that is not WAV (Telegram's OGG/Opus) is converted with ffmpeg first; WAV never needs ffmpeg.
+- **Clean-up**: one Claude Haiku `completeOnce` call on the user's own account, no tools. It may fix misheard words (English terms inside Vietnamese speech above all), punctuation and fillers, and nothing else. Its context is quoted as data: the last ~8 text messages of the chat (read through the turn index, only for a session the project owns), CLAUDE.md's headings and backtick terms, the project's Claude `MEMORY.md`, file names from the cached file index (never a fresh walk), the word lists and the typed text. For the PPM Assistant (`__assistant__`) it uses the notebook and the registered project names instead. A failure returns the raw transcript with the reason.
+- **Review**: "Read the transcript before it is sent" (default on). Off, a tidied transcript sends the whole message as soon as it is ready; a raw one (clean-up failed) always waits.
+- **The message**: images and typed text as usual, then the voice part LAST: a marker line `[Voice message (m:ss), transcribed below; the audio needs no opening: <path>]` and the transcript (`encodeVoicePart` / `splitVoiceMessage` in `src/shared/voice-message.ts`). The bubble draws an audio player from the path. Text forwarded as the user's words from a card cannot forge the marker (`chat-user-words.ts`).
+- **Learning**: when the user edited the tidied transcript, `POST /api/speech/voice-learn` asks Haiku for short misheard→correct pairs (only for small edits) and adds them to the project's word list as learned words, removable in Settings.
+- **Telegram** (PPM Assistant bot, `assistant-telegram-voice*.ts`): the same pipeline. The bot replies "transcribing…" at once and keeps receiving while Whisper runs: texts and photos that arrive meanwhile join the voice's message. A photo that already went out stays its own message, and the voice follows it. With review on, the bot turns its reply into a card with Send / Cancel, and a text reply to that card replaces the transcript. Voice notes older than the backlog age, forwarded ones, and pending cards across a restart are not kept.
+
+Nothing but the local Whisper and the Haiku call ever sees the audio or the transcript.
+
 
 ## Reply to a chat message
 

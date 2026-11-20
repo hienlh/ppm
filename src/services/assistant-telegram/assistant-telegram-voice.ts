@@ -10,6 +10,7 @@
  * (Send / Cancel; a reply to it with text replaces the transcript) or into "Sent".
  */
 import { randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { ensureUploadsDir } from "../chat-upload-storage.service.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
@@ -23,7 +24,8 @@ import { boundSession } from "./assistant-telegram-binding.ts";
 import type { TelegramVoiceDeps, VoiceProcessResult } from "./assistant-telegram-voice-deps.ts";
 import { PendingVoices, voiceExpiry, type VoiceBundle, type VoiceJob } from "./assistant-telegram-voice-pending.ts";
 import {
-  VOICE_MAX_BYTES, voiceCancelledHtml, voiceCardHtml, voiceErrorHtml, voiceSentHtml, voiceStatusHtml, withItText,
+  VOICE_MAX_BYTES, VOICE_REPLACE_MAX_CHARS, VOICE_REPLACE_TOO_LONG_TEXT, voiceCancelledHtml, voiceCardHtml,
+  voiceErrorHtml, voiceExpiredHtml, voiceSentHtml, voiceStatusHtml, withItText,
 } from "./assistant-telegram-voice-card.ts";
 import { createLogger } from "../logger.ts";
 
@@ -52,7 +54,8 @@ export class TelegramVoiceMessages {
   private readonly pending: PendingVoices;
 
   constructor(private readonly host: VoiceHost) {
-    this.pending = new PendingVoices(host.now);
+    // An expired card still owes the chat what came with its voice; the end runs on the chat's lane.
+    this.pending = new PendingVoices(host.now, (job) => host.onLane(job.chatId, () => this.expired(job)));
   }
 
   /** Starts reading `message`'s voice for `bundle` (already marked as owned by a voice) and returns. */
@@ -78,6 +81,10 @@ export class TelegramVoiceMessages {
     const text = (message.text ?? message.caption ?? "").trim();
     if (!text) {
       this.host.reply(chatId, "Reply with the corrected text to replace the transcript.");
+      return true;
+    }
+    if (text.length > VOICE_REPLACE_MAX_CHARS) {
+      this.host.reply(chatId, VOICE_REPLACE_TOO_LONG_TEXT);
       return true;
     }
     job.transcript = text;
@@ -120,6 +127,11 @@ export class TelegramVoiceMessages {
     // Kept with the chat, like a pasted image: the message names this file and PPM plays it back.
     job.path = join(ensureUploadsDir(), `${randomUUID().slice(0, 8)}-telegram-voice.ogg`);
     await Bun.write(job.path, bytes.result);
+    // Forgotten while it downloaded (chat disconnected, bridge stopped): finish() had no file to delete.
+    if (job.state === "done") {
+      rmSync(job.path, { force: true });
+      throw new Error("the voice message was dropped while it downloaded.");
+    }
     const bound = boundSession(job.chatId);
     return this.host.deps.process({
       audio: bytes.result, project: ASSISTANT_PROJECT_NAME,
@@ -146,6 +158,19 @@ export class TelegramVoiceMessages {
     this.showCard(job);
     // Waiting on a person can take hours; the updates must not be read again after a restart.
     this.host.confirm(job.bundle);
+    // Nothing else would look at the card again if nobody touches the chat: its own timer does.
+    const timer = setTimeout(() => this.pending.sweep(), Math.max(0, job.expiresAt - this.host.now()) + 1_000);
+    (timer as { unref?: () => void }).unref?.();
+    job.expiryTimer = timer;
+  }
+
+  /** A card's day ran out: the buttons go, the card says so, and what came with the voice is sent. */
+  private async expired(job: VoiceJob): Promise<void> {
+    this.host.codes.dropGroup(`voice:${job.id}`);
+    const rest = hasRest(job.bundle);
+    this.show(job, voiceExpiredHtml(rest));
+    job.bundle.voice = undefined;
+    if (rest) await this.host.deliverBundle(job.chatId, job.bundle, null);
   }
 
   private async failed(job: VoiceJob, e: unknown): Promise<void> {

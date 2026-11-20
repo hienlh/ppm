@@ -86,6 +86,7 @@ function TranscriptEditor({ initial, onChange, onSubmit, disabled }: {
 }) {
   const [value, setValue] = useState(initial);
   return (
+    <>
     <textarea
       value={value}
       disabled={disabled}
@@ -97,6 +98,11 @@ function TranscriptEditor({ initial, onChange, onSubmit, disabled }: {
       }}
       className="block max-h-40 w-full resize-none bg-transparent py-0.5 text-sm leading-relaxed text-foreground focus:outline-none disabled:opacity-50 [field-sizing:content]"
     />
+    {/* An emptied transcript is not sent: the message would say "transcribed below" over nothing. */}
+    {!value.trim() && (
+      <p role="status" data-voice-blank="" className="text-[11px] text-warning">Write something or remove the voice.</p>
+    )}
+    </>
   );
 }
 

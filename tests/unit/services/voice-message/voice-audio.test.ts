@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { isWav, toWhisperWav, wavDurationSec } from "../../../../src/services/voice-message/voice-audio.ts";
+import {
+  DECODE_LIMIT_SEC, ffmpegWavArgs, isWav, toWhisperWav, wavDurationSec,
+} from "../../../../src/services/voice-message/voice-audio.ts";
+import { VOICE_MAX_SECONDS } from "../../../../src/shared/voice-message.ts";
 
 /** A PCM WAV header plus `dataBytes` of silence, with extra chunks before `data` like real recorders write. */
 function wav(dataBytes: number, byteRate = 32_000, withList = false): Uint8Array {
@@ -46,5 +49,19 @@ describe("toWhisperWav", () => {
   it("passes a WAV through untouched, never needing ffmpeg", async () => {
     const w = wav(100);
     expect(await toWhisperWav(w)).toBe(w);
+  });
+});
+
+describe("ffmpegWavArgs", () => {
+  it("stops reading the input past the accepted length, so a long file is never decoded whole", () => {
+    const args = ffmpegWavArgs("ffmpeg", "in.ogg", "out.wav");
+    const at = args.indexOf("-t");
+    expect(at).toBeGreaterThan(0);
+    // An input option: it limits what is read, and must come before the input it applies to.
+    expect(at).toBeLessThan(args.indexOf("-i"));
+    expect(Number(args[at + 1])).toBe(DECODE_LIMIT_SEC);
+    // Past 2:00 plus the service's 5 s slack, so an over-long file still reads as too long.
+    expect(DECODE_LIMIT_SEC).toBeGreaterThan(VOICE_MAX_SECONDS + 5);
+    expect(args.at(-1)).toBe("out.wav");
   });
 });

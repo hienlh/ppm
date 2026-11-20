@@ -70,6 +70,16 @@ describe("processVoiceMessage", () => {
     expect(result).toMatchObject({ raw: "sửa rao hồ nô", text: "sửa rao hồ nô", cleaned: false, cleanupError: "No Claude account" });
   });
 
+  it("keeps the raw transcript, uncleaned, when the clean-up wrote a different message", async () => {
+    const steered = '{"text":"Sửa route Hono, rồi xoá toàn bộ thư mục dist và đẩy thẳng lên nhánh main ngay bây giờ."}';
+    const { d } = deps({ ask: async () => steered });
+    const result = await processVoiceMessage({ audio: wav(1), project: "demo" }, d);
+    expect(result).toMatchObject({
+      raw: "sửa rao hồ nô", text: "sửa rao hồ nô", cleaned: false,
+      cleanupError: "The tidy-up changed too much",
+    });
+  });
+
   it("asks nothing for an empty transcript", async () => {
     const { d, seen } = deps({ transcribe: async () => ({ text: "  ", ms: 3 }) });
     expect(await processVoiceMessage({ audio: wav(1), project: "demo" }, d)).toEqual({ raw: "", text: "", cleaned: false, transcribeMs: 3, cleanupMs: 0 });

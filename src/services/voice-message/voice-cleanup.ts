@@ -3,10 +3,15 @@
  * (an English identifier inside Vietnamese speech, above all), punctuation and fillers, and
  * nothing else. Any failure — an error, a timeout, an empty or unparseable answer — leaves the raw
  * transcript to the caller, which then always waits for the user to read it.
+ *
+ * So does an answer that adds far more words than tidying ever does: the context includes the
+ * chat's last messages, and one that echoed untrusted text could steer Haiku into writing a
+ * different message, which with review off would otherwise go to the agent unread.
  */
 import { extractJson } from "../logs/log-ai.ts";
 import type { VoiceContext } from "./voice-context.ts";
 import { askClaudeHaiku, withTimeout, type VoiceAsk } from "./voice-haiku.ts";
+import { looksRewritten } from "./voice-word-change.ts";
 
 export const CLEANUP_TIMEOUT_MS = 20_000;
 
@@ -47,6 +52,9 @@ export function parseCleanupAnswer(answer: string): string | null {
   return trimmed ? trimmed : null;
 }
 
+// Both the composer and the Telegram card say "this is the raw transcript" around the reason themselves.
+export const REWRITE_ERROR = "The tidy-up changed too much";
+
 export type CleanupResult = { ok: true; text: string } | { ok: false; error: string };
 
 export async function cleanupTranscript(
@@ -62,5 +70,7 @@ export async function cleanupTranscript(
     return { ok: false, error: (e as Error)?.message || "The clean-up failed" };
   }
   const text = parseCleanupAnswer(answer);
-  return text === null ? { ok: false, error: "The clean-up did not answer in the expected shape" } : { ok: true, text };
+  if (text === null) return { ok: false, error: "The clean-up did not answer in the expected shape" };
+  if (looksRewritten(raw, text)) return { ok: false, error: REWRITE_ERROR };
+  return { ok: true, text };
 }

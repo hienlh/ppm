@@ -12,6 +12,14 @@ export const WHISPER_MISSING_TEXT = "PPM has no Whisper installed yet, so it can
 export const VOICE_TRANSCRIBING_TEXT = "🎙 Voice message — transcribing…";
 export const VOICE_OLD_TEXT = "A voice message sent while PPM was off is not read. Send it again if it still matters.";
 export const VOICE_REPLY_HINT = "Reply to this message with the corrected text to replace it.";
+/**
+ * Longest replacement a card can show. Telegram refuses a message over 4096 characters, and the
+ * card adds its header, the reason and the hint around the transcript: an edit that fails would
+ * leave the old transcript on screen while Send delivered the new one.
+ */
+export const VOICE_REPLACE_MAX_CHARS = 3_500;
+export const VOICE_REPLACE_TOO_LONG_TEXT =
+  `That is too long to replace the transcript with (at most ${VOICE_REPLACE_MAX_CHARS.toLocaleString("en-US")} characters). The card is unchanged; send a shorter text, or Cancel and send it as a message.`;
 
 const quote = (text: string) => `<blockquote>${escapeTelegramHtml(redactForTelegram(text))}</blockquote>`;
 
@@ -59,6 +67,12 @@ export function voiceCardHtml(v: VoiceCardView): string {
 export function voiceSentHtml(transcript: string, learned: readonly string[] = []): string {
   const learnedLine = learned.length ? `\n<i>Learned: ${escapeTelegramHtml(learned.join(", "))}</i>` : "";
   return `✅ <b>Sent</b>\n${quote(transcript)}${learnedLine}`;
+}
+
+export function voiceExpiredHtml(restSent: boolean): string {
+  return restSent
+    ? "⌛ <b>Expired</b> — nobody pressed Send within a day, so the voice message was dropped; what came with it was sent without it."
+    : "⌛ <b>Expired</b> — nobody pressed Send within a day, so the voice message was dropped.";
 }
 
 export function voiceCancelledHtml(restSent: boolean): string {

@@ -68,7 +68,8 @@ function cleanProjects(raw: unknown): Record<string, VoiceProjectWords> {
   if (!isObj(raw)) return out;
   let count = 0;
   for (const [name, value] of Object.entries(raw)) {
-    if (!name.trim() || name.length > VOICE_LIMITS.projectKeyChars || !isObj(value)) continue;
+    // "__proto__" as a plain assignment would replace the object's prototype instead of adding a key.
+    if (!name.trim() || name === "__proto__" || name.length > VOICE_LIMITS.projectKeyChars || !isObj(value)) continue;
     out[name] = { words: cleanWordList(value.words, VOICE_LIMITS.projectWords), learned: cleanLearnedList(value.learned) };
     if (++count >= VOICE_LIMITS.projects) break;
   }
@@ -97,7 +98,8 @@ export function voiceMessagesEnabled(): boolean {
 }
 
 export function projectWordsOf(config: VoiceMessageConfig, project: string): VoiceProjectWords {
-  return config.projects[project] ?? { words: [], learned: [] };
+  // Own keys only: a project named "constructor" or "toString" would otherwise get Object's member.
+  return Object.hasOwn(config.projects, project) ? config.projects[project]! : { words: [], learned: [] };
 }
 
 /** Every word that may help with `project`: its own, what it learned, then everyone's. */

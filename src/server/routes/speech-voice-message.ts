@@ -119,9 +119,10 @@ export function registerVoiceMessageRoutes(routes: Hono, deps: VoiceRouteDeps): 
         typed: text("typed", MAX_TEXT_CHARS),
         lang: text("lang", 8),
       });
-      // A transcript the clean-up could not tidy always waits for the user, whatever the setting.
-      const reviewBeforeSend = readVoiceSettings().review_before_send || !result.cleaned;
-      return c.json(ok({ ...result, reviewBeforeSend }));
+      // The setting as it is now, nothing folded into it: a raw transcript (`cleaned: false`) always
+      // waits for the user, and the client decides that from `cleaned`. Folding it in here made a
+      // send queued before the text arrived read "review on" and go out unread.
+      return c.json(ok({ ...result, reviewBeforeSend: readVoiceSettings().review_before_send }));
     } catch (e) {
       if (e instanceof VoiceMessageError) return fail(c, STATUS[e.code], e.message, e.code);
       return fail(c, 500, (e as Error)?.message || "The voice message failed");

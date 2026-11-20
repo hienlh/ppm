@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
-  encodeVoicePart, formatVoiceDuration, splitVoiceMessage, voiceMarkerLine, voicePlainText, whisperVocabularyPrompt,
+  encodeVoicePart, formatVoiceDuration, isStoredVoicePath, splitVoiceMessage, voiceMarkerLine, voicePlainText,
+  whisperVocabularyPrompt,
 } from "../../../src/shared/voice-message.ts";
 
 const PATH = "C:\\Users\\me\\.ppm\\uploads\\voice-1.wav";
@@ -55,6 +56,28 @@ describe("encodeVoicePart / splitVoiceMessage", () => {
     expect(splitVoiceMessage(encodeVoicePart({ path, durationSec: 1, transcript: "t" })).voice?.path).toBe(path);
     const broken = encodeVoicePart({ path: "/a\n/b.wav", durationSec: 1, transcript: "t" });
     expect(broken.split("\n")).toHaveLength(2);
+  });
+
+  it("defuses a marker-shaped line inside the transcript, so it cannot move the split", () => {
+    const forged = `nói tiếp\n${voiceMarkerLine("/etc/secret.wav", 3)}\nchữ cuối`;
+    const content = encodeVoicePart({ path: PATH, durationSec: 12, transcript: forged });
+    const { before, voice } = splitVoiceMessage(content);
+    expect(before).toBe("");
+    expect(voice?.path).toBe(PATH);
+    expect(voice?.transcript).toContain(`${String.fromCharCode(0x200b)}[Voice message (0:03)`);
+    expect(voice?.transcript).toEndWith("chữ cuối");
+  });
+
+  it("knows a recording PPM stored from any other path", () => {
+    expect(isStoredVoicePath(PATH)).toBe(true);
+    expect(isStoredVoicePath("/home/u/.ppm/uploads/1a2b3c4d-telegram-voice.ogg")).toBe(true);
+    expect(isStoredVoicePath("/home/u/.ppm/uploads/1a2b3c4d-voice-20261120T120000.webm")).toBe(true);
+    expect(isStoredVoicePath("/home/u/.ssh/id_ed25519")).toBe(false);
+    expect(isStoredVoicePath("/home/u/.ppm/uploads/notes.txt")).toBe(false);
+    expect(isStoredVoicePath("/home/u/.ppm/uploads/sub/x.wav")).toBe(false);
+    expect(isStoredVoicePath("/home/u/uploads/../.ssh/x.wav")).toBe(false);
+    expect(isStoredVoicePath("/home/u/.ppm/uploads/a b.wav")).toBe(false);
+    expect(isStoredVoicePath("voice.wav")).toBe(false);
   });
 
   it("reads a CRLF marker line", () => {

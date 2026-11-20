@@ -70,6 +70,8 @@ export function VoiceAudioPlayer({ src, durationSec, bars = 24, size = "md", see
     const audio = audioRef.current;
     if (!audio) return;
     if (playing) { audio.pause(); return; }
+    // A failed load is never final (the network or the server may be back): each press tries again.
+    setFailed(false);
     const playable = await ensureUrl();
     if (!playable) return;
     if (audio.src !== playable) audio.src = playable;
@@ -91,17 +93,17 @@ export function VoiceAudioPlayer({ src, durationSec, bars = 24, size = "md", see
   }
 
   const sm = size === "sm";
-  const label = failed ? "Recording unavailable" : playing ? "Pause voice message" : "Play voice message";
+  const label = failed ? "Recording unavailable, press to try again" : playing ? "Pause voice message" : "Play voice message";
   return (
     <div className={cn("flex min-w-0 items-center", sm ? "gap-1.5" : "gap-2.5", className)}>
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); void toggle(); }}
-        disabled={failed}
         aria-label={label}
         title={label}
         className={cn(
-          "relative grid shrink-0 place-items-center rounded-full bg-primary text-primary-foreground transition-transform motion-safe:active:scale-[0.95] disabled:opacity-40",
+          "relative grid shrink-0 place-items-center rounded-full bg-primary text-primary-foreground transition-transform motion-safe:active:scale-[0.95]",
+          failed && "opacity-40",
           "before:absolute before:content-['']",
           sm ? "size-6 before:-inset-2.5" : "size-8 before:-inset-1.5",
         )}

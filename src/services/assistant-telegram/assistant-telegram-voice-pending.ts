@@ -3,8 +3,9 @@
  *
  * A voice message owns the bundle it arrived in (the texts and photos gathered with it): while it
  * is being transcribed that bundle stays open, and while its card waits for Send or Cancel the
- * bundle waits with it. A card left unanswered expires with its buttons (a day); after a restart
- * every one is gone, as the buttons are, and its stored audio is deleted with it.
+ * bundle waits with it. A card left unanswered expires with its buttons (a day): its audio is
+ * deleted and `onExpire` hears of it, so what came with the voice can still go. After a restart
+ * every one is gone, as the buttons are.
  */
 import { rmSync } from "node:fs";
 import type { InlineKeyboardMarkup } from "../telegram/telegram-types.ts";
@@ -43,12 +44,14 @@ export interface VoiceJob {
   reason?: string;
   markup?: InlineKeyboardMarkup;
   expiresAt: number;
+  /** Wakes the sweep when this card's day is up; cleared when the job ends any other way. */
+  expiryTimer?: ReturnType<typeof setTimeout>;
 }
 
 export class PendingVoices {
   private readonly jobs = new Map<string, VoiceJob>();
 
-  constructor(private readonly now: () => number) {}
+  constructor(private readonly now: () => number, private readonly onExpire?: (job: VoiceJob) => void) {}
 
   add(job: VoiceJob): void {
     this.prune();
@@ -71,6 +74,8 @@ export class PendingVoices {
 
   /** Done with it: `keepAudio` when it was sent (the message names the file). */
   finish(job: VoiceJob, keepAudio: boolean): void {
+    if (job.expiryTimer) clearTimeout(job.expiryTimer);
+    job.expiryTimer = undefined;
     job.state = "done";
     this.jobs.delete(job.id);
     if (!keepAudio) removeAudio(job);
@@ -84,10 +89,19 @@ export class PendingVoices {
     for (const job of [...this.jobs.values()]) this.finish(job, false);
   }
 
-  /** A card nobody answered for a day: its buttons are gone, so it is too. */
+  /** Ends every card nobody answered for a day; also run by each card's own timer. */
+  sweep(): void {
+    this.prune();
+  }
+
+  /** A card nobody answered for a day: its buttons are gone, so it is too — but never silently. */
   private prune(): void {
     const now = this.now();
-    for (const job of [...this.jobs.values()]) if (job.state === "review" && job.expiresAt <= now) this.finish(job, false);
+    for (const job of [...this.jobs.values()]) {
+      if (job.state !== "review" || job.expiresAt > now) continue;
+      this.finish(job, false);
+      this.onExpire?.(job);
+    }
   }
 }
 

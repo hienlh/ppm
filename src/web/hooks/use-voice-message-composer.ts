@@ -28,8 +28,11 @@ export function useVoiceMessageComposer(options: VoiceComposerOptions) {
   const { recording, start: startRecording, stop: stopRecording } = recorder;
 
   const enabled = view?.enabled === true && recorder.supported && !!options.project;
+  // The plain setting (the server's answer is fresher than the one read at mount). A raw
+  // transcript's hold comes from `cleaned`, never from this flag.
   const reviewBeforeSend = draft?.transcript.reviewBeforeSend ?? (view?.reviewBeforeSend !== false);
   const cleaned = draft?.transcript.cleaned ?? false;
+  const transcriptBlank = draft?.transcript.status === "ready" && draftApi.blank;
   const gate = voiceGate(draft
     ? { transcript: draft.transcript.status, upload: draft.upload.status, cleaned }
     : null);
@@ -45,9 +48,10 @@ export function useVoiceMessageComposer(options: VoiceComposerOptions) {
     await startRecording();
   }, [recording, stopRecording, startRecording, draft, view, refresh]);
 
+  /** `queuedBeforeText`: re-checking a send queued while the transcript was not in the box yet. */
   const decide = useCallback(
-    (queued: boolean) => decideVoiceSend(gate, { reviewBeforeSend, cleaned, queued }),
-    [gate, reviewBeforeSend, cleaned],
+    (queuedBeforeText: boolean) => decideVoiceSend(gate, { reviewBeforeSend, cleaned, queuedBeforeText, transcriptBlank }),
+    [gate, reviewBeforeSend, cleaned, transcriptBlank],
   );
 
   /** After the message carrying the voice went out: drop the draft, keep its upload, learn from edits. */
@@ -80,6 +84,7 @@ export function useVoiceMessageComposer(options: VoiceComposerOptions) {
     draft,
     gate,
     decide,
+    transcriptBlank,
     autoSendReady: shouldAutoSend(gate, { reviewBeforeSend, cleaned }),
     micBlockedReason,
     remove: draftApi.remove,
@@ -90,7 +95,7 @@ export function useVoiceMessageComposer(options: VoiceComposerOptions) {
     whisperDialogOpen,
     closeWhisperDialog: () => setWhisperDialogOpen(false),
   }), [enabled, reviewBeforeSend, recording, recorder.session, stopRecording, recorder.cancel, toggle, draft,
-    gate, decide, cleaned, micBlockedReason, draftApi.remove, draftApi.retry, draftApi.setText, voicePart, sent,
+    gate, decide, transcriptBlank, cleaned, micBlockedReason, draftApi.remove, draftApi.retry, draftApi.setText, voicePart, sent,
     whisperDialogOpen]);
 }
 

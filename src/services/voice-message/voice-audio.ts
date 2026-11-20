@@ -12,6 +12,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { findFfmpegBinary } from "../media-transcode/ffmpeg-capabilities.ts";
 import { whisperTmpDir } from "../speech-to-text/whisper-paths.ts";
+import { VOICE_MAX_SECONDS } from "../../shared/voice-message.ts";
 import { VoiceMessageError } from "./voice-message-errors.ts";
 
 const CONVERT_TIMEOUT_MS = 60_000;
@@ -48,6 +49,20 @@ export function wavDurationSec(bytes: Uint8Array): number | null {
   return null;
 }
 
+/**
+ * Seconds ffmpeg reads before it stops. A 25 MB compressed file can hold hours, which would decode
+ * into hundreds of MB before the duration check ever saw it. The cap sits past the longest length
+ * the service accepts (2:00 plus its slack), so an over-long file still comes out over that length
+ * and is refused as too long rather than silently cut to two minutes.
+ */
+export const DECODE_LIMIT_SEC = VOICE_MAX_SECONDS + 10;
+
+/** ffmpeg's arguments: read at most {@link DECODE_LIMIT_SEC} of `input`, write 16 kHz mono PCM WAV. */
+export function ffmpegWavArgs(ffmpeg: string, input: string, output: string): string[] {
+  return [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-t", String(DECODE_LIMIT_SEC), "-i", input,
+    "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-f", "wav", output];
+}
+
 // Named so `ReturnType` keeps the narrowed pipe type; `typeof Bun.spawn` widens stderr to a union.
 const spawnFfmpeg = (cmd: string[]) =>
   Bun.spawn({ cmd, stdin: "ignore", stdout: "ignore", stderr: "pipe", windowsHide: true });
@@ -65,8 +80,7 @@ export async function toWhisperWav(audio: Uint8Array): Promise<Uint8Array> {
   const output = resolve(whisperTmpDir(), `${id}.wav`);
   try {
     await Bun.write(input, audio);
-    const cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", input,
-      "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-f", "wav", output];
+    const cmd = ffmpegWavArgs(ffmpeg, input, output);
     let proc: ReturnType<typeof spawnFfmpeg>;
     try {
       proc = spawnFfmpeg(cmd);

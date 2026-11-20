@@ -5,7 +5,7 @@ import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clo
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useWhisperVoiceInput } from "@/hooks/use-whisper-voice-input";
 import { useVoiceMessageComposer } from "@/hooks/use-voice-message-composer";
-import { composeVoiceContent } from "@/lib/voice-message-compose";
+import { autoSendStep, composeVoiceContent } from "@/lib/voice-message-compose";
 import { toast } from "sonner";
 import { useSettingsStore } from "@/stores/settings-store";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
@@ -272,6 +272,8 @@ export const MessageInput = memo(function MessageInput({
   // put that label on chats the server runs in "Ask before edits".
   const chipMode = permissionLocked ? null : boundAwareMode;
   const [pendingSend, setPendingSend] = useState(false);
+  // Whether the queued send was pressed before the voice transcript was in the box (see decideVoiceSend).
+  const queuedBeforeTextRef = useRef(false);
   const [priority, setPriority] = useState<MessagePriority>('next');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mobileTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -889,29 +891,35 @@ export const MessageInput = memo(function MessageInput({
     const voiceDecision = voiceMsg.decide(false);
     if (voiceDecision === "refuse") { toastVoiceNotSendable(); return; }
     if (voiceDecision === "hold") return;
-    if (voiceDecision === "queue") { setPendingSend(true); return; }
+    if (voiceDecision === "queue") {
+      // Pressed before the transcript was in the box: whatever arrives has not been read yet.
+      queuedBeforeTextRef.current = voiceMsg.gate === "transcribing";
+      setPendingSend(true);
+      return;
+    }
 
     // If files are still uploading, queue the send for when they finish
     if (attachments.some((a) => a.status === "uploading")) {
       const trimmed = valueRef.current.trim();
       if (trimmed || attachments.some((a) => a.status !== "error")) {
+        queuedBeforeTextRef.current = false;
         setPendingSend(true);
       }
       return;
     }
 
     executeSend();
-  }, [attachments, disabled, executeSend, turnChipsBlockedReason, voiceMsg.recording, voiceMsg.decide]);
+  }, [attachments, disabled, executeSend, turnChipsBlockedReason, voiceMsg.recording, voiceMsg.decide, voiceMsg.gate]);
 
   // Auto-send when queued and all uploads complete — and the voice message, if any, is ready.
   useEffect(() => {
     if (!pendingSend) return;
     if (attachments.some((a) => a.status === "uploading")) return;
     if (turnChipsBlockedReason) { setPendingSend(false); return; }
-    const voiceDecision = voiceMsg.decide(true);
+    const voiceDecision = voiceMsg.decide(queuedBeforeTextRef.current);
     if (voiceDecision === "queue") return;
     if (voiceDecision !== "send") {
-      // A raw transcript waits to be read; a failed voice is never sent.
+      // A transcript nobody has read waits to be read; a failed voice is never sent.
       setPendingSend(false);
       if (voiceDecision === "refuse") toastVoiceNotSendable();
       return;
@@ -920,14 +928,22 @@ export const MessageInput = memo(function MessageInput({
   }, [pendingSend, attachments, executeSend, turnChipsBlockedReason, voiceMsg.decide]);
 
   // With review off, a voice message that is transcribed, tidied and uploaded sends the whole
-  // message by itself: once per recording, and not on top of a send already queued.
-  const autoSentVoiceRef = useRef<string | null>(null);
+  // message by itself (with whatever was typed meanwhile): once per recording, and not on top of a
+  // send already queued. While the composer cannot send (disabled, a turn chip loading) it waits
+  // and tries again once it can; an attempt that did not send leaves the draft for the user, and
+  // the block then says to press Send rather than "sending when ready".
+  const [autoSentVoiceId, setAutoSentVoiceId] = useState<string | null>(null);
+  const autoSendBlocked = !!disabled || !!turnChipsBlockedReason || voiceMsg.recording;
   useEffect(() => {
-    const id = voiceMsg.draft?.id;
-    if (!id || !voiceMsg.autoSendReady || autoSentVoiceRef.current === id) return;
-    autoSentVoiceRef.current = id;
-    if (!pendingSend) handleSend();
-  }, [voiceMsg.autoSendReady, voiceMsg.draft?.id, pendingSend, handleSend]);
+    const id = voiceMsg.draft?.id ?? null;
+    const step = autoSendStep({
+      ready: voiceMsg.autoSendReady, draftId: id, attemptedId: autoSentVoiceId, queued: pendingSend, blocked: autoSendBlocked,
+    });
+    if (step !== "send") return;
+    setAutoSentVoiceId(id);
+    handleSend();
+  }, [voiceMsg.autoSendReady, voiceMsg.draft?.id, autoSentVoiceId, pendingSend, autoSendBlocked, handleSend]);
+  const autoSendStalled = !!voiceMsg.draft && autoSentVoiceId === voiceMsg.draft.id && !pendingSend;
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1177,7 +1193,7 @@ export const MessageInput = memo(function MessageInput({
         {voiceMsg.draft && (
           <VoiceTranscriptBlock
             draft={voiceMsg.draft}
-            reviewBeforeSend={voiceMsg.reviewBeforeSend}
+            reviewBeforeSend={voiceMsg.reviewBeforeSend || autoSendStalled}
             onTextChange={voiceMsg.setText}
             onRetry={voiceMsg.retry}
             onRemove={voiceMsg.remove}

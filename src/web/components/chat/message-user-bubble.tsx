@@ -32,7 +32,7 @@ import { api } from "@/lib/api-client";
 import { MarkdownContent } from "./message-markdown";
 import { AuthImageThumbnail, isImagePath } from "./message-media";
 import { isAssistantProject } from "../../../shared/assistant-project";
-import { splitVoiceMessage } from "../../../shared/voice-message";
+import { isStoredVoicePath, splitVoiceMessage } from "../../../shared/voice-message";
 import { MessageVoicePart } from "./message-voice-part";
 
 /** Detect if tags contain system-injected content (not real user input) */
@@ -97,7 +97,13 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
   // A voice message rides at the end of the text as a marker plus its transcript: drawn as a player.
-  const { before: typedPart, voice } = useMemo(() => splitVoiceMessage(text), [text]);
+  // Only in the person's own message and only for a recording PPM stored: a task notification or a
+  // tool's output may print a marker line, and a marker could name any file on the host.
+  const { before: typedPart, voice } = useMemo(() => {
+    if (isSystemContext) return { before: text, voice: null };
+    const split = splitVoiceMessage(text);
+    return split.voice && isStoredVoicePath(split.voice.path) ? split : { before: text, voice: null };
+  }, [text, isSystemContext]);
 
   return (
     <div className={cn("flex flex-col gap-1", !isSystemContext && "items-end")}>

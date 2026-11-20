@@ -51,9 +51,16 @@ export function voiceMarkerLine(path: string, durationSec: number): string {
   return `${MARKER_PREFIX}${formatVoiceDuration(durationSec)}), transcribed below; the audio needs no opening: ${safePath}]`;
 }
 
-/** Marker line + "\n" + transcript. */
+/**
+ * Marker line + "\n" + transcript. A transcript line shaped like a marker (dictated, typed into the
+ * block, or written by the clean-up) gets a zero-width space before its bracket: the split looks
+ * for the LAST marker line, so a forged one below the real marker would move the voice part onto
+ * a path the transcript chose.
+ */
 export function encodeVoicePart(p: VoicePart): string {
-  return `${voiceMarkerLine(p.path, p.durationSec)}\n${p.transcript.trim()}`;
+  const transcript = p.transcript.trim()
+    .replace(/^([^\S\r\n]*)\[Voice message \(/gm, `$1${String.fromCharCode(0x200b)}[Voice message (`);
+  return `${voiceMarkerLine(p.path, p.durationSec)}\n${transcript}`;
 }
 
 /**
@@ -75,6 +82,17 @@ export function splitVoiceMessage(text: string): { before: string; voice: VoiceP
     };
   }
   return { before: text, voice: null };
+}
+
+/**
+ * Whether a marker's path is a recording PPM itself stored: a file directly inside an `uploads`
+ * folder, named the way the upload routes and the Telegram bridge name one (letters, digits,
+ * `.`, `_`, `-`), with an audio extension. The bubble only draws a player for such a path, so a
+ * marker typed or quoted into a message cannot point the player at any other file on the host.
+ */
+export function isStoredVoicePath(path: string): boolean {
+  const m = /[/\\]uploads[/\\]([^/\\]+)$/.exec(path);
+  return !!m && /^[A-Za-z0-9._-]+\.(webm|ogg|oga|opus|m4a|mp4|wav|mp3)$/i.test(m[1]!) && !m[1]!.startsWith(".");
 }
 
 /**

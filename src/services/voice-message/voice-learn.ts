@@ -7,6 +7,9 @@
 import { extractJson } from "../logs/log-ai.ts";
 import type { LearnedWord } from "../../shared/voice-message.ts";
 import { askClaudeHaiku, withTimeout, type VoiceAsk } from "./voice-haiku.ts";
+import { MAX_COMPARED_CHARS, wordChange } from "./voice-word-change.ts";
+
+export { wordChange };
 
 export const LEARN_LIMITS = {
   maxChangedTokens: 12,
@@ -15,33 +18,10 @@ export const LEARN_LIMITS = {
   maxToWords: 4,
   maxFromChars: 60,
   /** Longest text compared; a transcript is two minutes of speech at most. */
-  maxTextChars: 4_000,
+  maxTextChars: MAX_COMPARED_CHARS,
 } as const;
 
 export const LEARN_TIMEOUT_MS = 20_000;
-
-const tokens = (text: string): string[] =>
-  text.slice(0, LEARN_LIMITS.maxTextChars).split(/\s+/).map((t) => t.replace(/^[\p{P}]+|[\p{P}]+$/gu, "")).filter(Boolean);
-
-function lcsLength(a: readonly string[], b: readonly string[]): number {
-  let prev = new Array<number>(b.length + 1).fill(0);
-  for (let i = 1; i <= a.length; i++) {
-    const row = new Array<number>(b.length + 1).fill(0);
-    for (let j = 1; j <= b.length; j++) row[j] = a[i - 1] === b[j - 1] ? prev[j - 1]! + 1 : Math.max(prev[j]!, row[j - 1]!);
-    prev = row;
-  }
-  return prev[b.length]!;
-}
-
-/** Word-level change between two texts: tokens dropped plus tokens added, and that share of both. */
-export function wordChange(before: string, after: string): { changed: number; share: number } {
-  const a = tokens(before);
-  const b = tokens(after);
-  const common = lcsLength(a, b);
-  const changed = a.length - common + (b.length - common);
-  const total = a.length + b.length;
-  return { changed, share: total === 0 ? 0 : changed / total };
-}
 
 /** Whether an edit is small enough to be a correction of misheard words. */
 export function isLearnableEdit(before: string, after: string): boolean {

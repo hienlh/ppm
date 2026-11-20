@@ -41,6 +41,16 @@ describe("normalizeVoiceConfig", () => {
     expect(config.projects.ppm!.learned.at(-1)!.word).toBe("L249");
     expect(config.projects.ppm!.learned[0]!.word).toBe("L50");
   });
+
+  it("looks projects up by own key only, so a project named like an Object member has no words of its own", () => {
+    const config = normalizeVoiceConfig({ words: ["Bun"], projects: JSON.parse('{"__proto__": {"words": ["evil"]}, "ppm": {"words": ["Hono"]}}') });
+    expect(Object.getPrototypeOf(config.projects)).toBe(Object.prototype);
+    expect(Object.keys(config.projects)).toEqual(["ppm"]);
+    for (const name of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+      expect(vocabularyOf(config, name)).toEqual(["Bun"]);
+    }
+    expect(vocabularyOf(config, "ppm")).toEqual(["Hono", "Bun"]);
+  });
 });
 
 describe("reading and writing the row", () => {

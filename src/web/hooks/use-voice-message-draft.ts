@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { recordingToWav } from "@/lib/voice-wav";
 import { randomId } from "@/lib/utils";
 import { postVoiceMessage, VoiceMessageError } from "@/lib/voice-message-client";
-import { voiceFileName } from "@/lib/voice-message-compose";
+import { transcriptFailureAction, voiceFileName } from "@/lib/voice-message-compose";
 import type { VoicePart } from "../../shared/voice-message";
 import type { VoiceRecording } from "./use-voice-message-recorder";
 
@@ -52,6 +52,9 @@ export function useVoiceMessageDraft(deps: VoiceDraftDeps) {
   const [draft, setDraft] = useState<VoiceDraft | null>(null);
   const draftRef = useRef<VoiceDraft | null>(null);
   const textRef = useRef("");
+  // Whether the user emptied the transcript. State, unlike the text, so the send button follows
+  // it; it changes only when the block goes from empty to not, never on every keystroke.
+  const [blank, setBlank] = useState(false);
   const blobRef = useRef<{ id: string; recording: VoiceRecording } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const depsRef = useRef(deps);
@@ -77,6 +80,7 @@ export function useVoiceMessageDraft(deps: VoiceDraftDeps) {
     if (!keepUpload && current.upload.path) void depsRef.current.discardUpload(current.upload.path);
     blobRef.current = null;
     textRef.current = "";
+    setBlank(false);
     commit(null);
   }, [commit]);
 
@@ -107,6 +111,7 @@ export function useVoiceMessageDraft(deps: VoiceDraftDeps) {
         return;
       }
       textRef.current = result.text;
+      setBlank(false);
       patch(id, (d) => ({
         ...d,
         transcript: {
@@ -117,11 +122,15 @@ export function useVoiceMessageDraft(deps: VoiceDraftDeps) {
       }));
     } catch (e) {
       if (controller.signal.aborted || draftRef.current?.id !== id) return;
-      if (e instanceof VoiceMessageError && (e.code === "whisper_missing" || e.status === 409)) {
+      const action = transcriptFailureAction(e instanceof VoiceMessageError ? e.code : undefined);
+      if (action === "whisper-missing") {
         clear(false);
         depsRef.current.onWhisperMissing();
         return;
       }
+      // Turned off elsewhere mid-transcript: no install dialog, which would be the wrong answer.
+      // The draft stays as a failure, so its Remove (and the chip's ×) still clear it.
+      if (action === "turned-off") toast.info("Voice messages are turned off", { description: "Turn them on again in Settings → Voice." });
       const message = e instanceof Error ? e.message : String(e);
       patch(id, (d) => ({ ...d, transcript: { ...d.transcript, status: "error", error: message } }));
     }
@@ -156,7 +165,10 @@ export function useVoiceMessageDraft(deps: VoiceDraftDeps) {
     if (current.transcript.status === "error") void runTranscript(current.id, held.recording);
   }, [patch, runUpload, runTranscript]);
 
-  const setText = useCallback((text: string) => { textRef.current = text; }, []);
+  const setText = useCallback((text: string) => {
+    textRef.current = text;
+    setBlank(!text.trim());
+  }, []);
 
   /** The voice part to send, or null when there is no ready draft with an uploaded file. */
   const voicePart = useCallback((): VoicePart | null => {
@@ -178,5 +190,5 @@ export function useVoiceMessageDraft(deps: VoiceDraftDeps) {
 
   const remove = useCallback(() => clear(false), [clear]);
   const sent = useCallback(() => clear(true), [clear]);
-  return { draft, begin, retry, setText, voicePart, remove, sent };
+  return { draft, blank, begin, retry, setText, voicePart, remove, sent };
 }

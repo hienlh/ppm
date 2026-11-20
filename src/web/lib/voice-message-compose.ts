@@ -24,18 +24,31 @@ export function voiceGate(draft: VoiceDraftProgress | null): VoiceGate {
   return "ready";
 }
 
+export interface VoiceSendOptions {
+  /** The setting "Read the transcript before it is sent", as the server last answered it. */
+  reviewBeforeSend: boolean;
+  /** The clean-up ran; false means the box holds the raw transcript, which never goes out unread. */
+  cleaned: boolean;
+  /**
+   * Re-checking a send that was queued while the transcript was not in the box yet: nobody has
+   * read what is there now. A send queued after the text was shown (only the upload was
+   * outstanding) was pressed by someone looking at it, and is false here.
+   */
+  queuedBeforeText: boolean;
+  /** The user emptied the transcript block: a voice part saying "transcribed below" over nothing. */
+  transcriptBlank?: boolean;
+}
+
 /**
  * What pressing send (or re-checking a send already queued) does about the voice draft:
  * - `send`: go now;
  * - `queue`: remember the press and go once the draft is ready;
- * - `hold`: do nothing and wait for the user (review is on and the text is not there yet, or a
- *   queued send met a raw transcript, which is never sent unread);
+ * - `hold`: do nothing and wait for the user — review is on and the text is not there yet, a
+ *   queued send met a transcript nobody has read (raw, or review turned on meanwhile), or the
+ *   transcript was emptied;
  * - `refuse`: the draft failed; a voice whose upload or transcript failed is never sent.
  */
-export function decideVoiceSend(
-  gate: VoiceGate,
-  opts: { reviewBeforeSend: boolean; cleaned: boolean; queued: boolean },
-): "send" | "queue" | "hold" | "refuse" {
+export function decideVoiceSend(gate: VoiceGate, opts: VoiceSendOptions): "send" | "queue" | "hold" | "refuse" {
   switch (gate) {
     case "none":
       return "send";
@@ -43,12 +56,13 @@ export function decideVoiceSend(
       return "refuse";
     case "uploading":
       // The transcript is in the box already; only the file is still on its way.
-      return "queue";
+      return opts.transcriptBlank ? "hold" : "queue";
     case "transcribing":
       return opts.reviewBeforeSend ? "hold" : "queue";
     case "ready":
-      // Queued before the text existed, with review off: a raw transcript still waits to be read.
-      if (opts.queued && !opts.reviewBeforeSend && !opts.cleaned) return "hold";
+      if (opts.transcriptBlank) return "hold";
+      // Pressed before any text was shown: only a tidied transcript with review off may go unread.
+      if (opts.queuedBeforeText && (opts.reviewBeforeSend || !opts.cleaned)) return "hold";
       return "send";
   }
 }
@@ -56,6 +70,18 @@ export function decideVoiceSend(
 /** With review off, a draft that is ready and was tidied sends the whole message by itself. */
 export function shouldAutoSend(gate: VoiceGate, opts: { reviewBeforeSend: boolean; cleaned: boolean }): boolean {
   return gate === "ready" && !opts.reviewBeforeSend && opts.cleaned;
+}
+
+/**
+ * The auto-send's next step for one draft: `send` it now, `wait` while the composer cannot send
+ * (disabled, a turn chip still loading, …) and try again once it can, or `idle` (nothing to send,
+ * already tried for this draft, or a send is already queued).
+ */
+export function autoSendStep(s: {
+  ready: boolean; draftId: string | null; attemptedId: string | null; queued: boolean; blocked: boolean;
+}): "send" | "wait" | "idle" {
+  if (!s.draftId || !s.ready || s.attemptedId === s.draftId || s.queued) return "idle";
+  return s.blocked ? "wait" : "send";
 }
 
 /** The message text: what was typed, then the voice part, which always comes last. */
@@ -93,4 +119,18 @@ export function transcriptFooter(input: { transcribeMs: number; cleanupMs: numbe
   if (input.cleaned) parts.push(`tidied ${secs(input.cleanupMs)}`);
   parts.push(input.reviewBeforeSend || !input.cleaned ? "read it, then send" : "sending when ready");
   return parts.join(" · ");
+}
+
+/**
+ * What a failed transcript request means for the draft, by the server's code (never by the
+ * status alone — a 409 is also "voice messages are turned off"):
+ * - `whisper-missing`: drop the draft and offer to install Whisper;
+ * - `turned-off`: the feature was switched off (on another device, say): say so, and keep the
+ *   draft as a failure the user can remove;
+ * - `failed`: an ordinary failure, shown on the block with Retry and Remove.
+ */
+export function transcriptFailureAction(code: string | undefined): "whisper-missing" | "turned-off" | "failed" {
+  if (code === "whisper_missing") return "whisper-missing";
+  if (code === "voice_messages_off") return "turned-off";
+  return "failed";
 }

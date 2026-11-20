@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
-  composeVoiceContent, decideVoiceSend, shouldAutoSend, transcriptFooter, transcriptWasEdited, voiceFileName, voiceGate,
+  autoSendStep, composeVoiceContent, decideVoiceSend, shouldAutoSend, transcriptFailureAction, transcriptFooter,
+  transcriptWasEdited, voiceFileName, voiceGate,
 } from "../../../src/web/lib/voice-message-compose";
 import { splitVoiceMessage } from "../../../src/shared/voice-message";
 import { buildMessageWithAttachments } from "../../../src/web/components/chat/build-message-with-attachments";
@@ -46,7 +47,7 @@ describe("voice send gate", () => {
   });
 
   it("with review on, holds the send while transcribing and sends once the text is there", () => {
-    const opts = { reviewBeforeSend: true, cleaned: true, queued: false };
+    const opts = { reviewBeforeSend: true, cleaned: true, queuedBeforeText: false };
     expect(decideVoiceSend("transcribing", opts)).toBe("hold");
     expect(decideVoiceSend("uploading", opts)).toBe("queue");
     expect(decideVoiceSend("ready", opts)).toBe("send");
@@ -54,15 +55,36 @@ describe("voice send gate", () => {
   });
 
   it("with review off, queues a press made while transcribing, but never sends a raw transcript unread", () => {
-    const opts = { reviewBeforeSend: false, cleaned: true, queued: false };
-    expect(decideVoiceSend("transcribing", opts)).toBe("queue");
-    expect(decideVoiceSend("ready", { ...opts, queued: true })).toBe("send");
-    expect(decideVoiceSend("ready", { ...opts, queued: true, cleaned: false })).toBe("hold");
+    // The server's real answers once the transcript is ready: the setting as it is (off), and
+    // whether the clean-up ran. A failed clean-up is cleaned:false with the setting untouched.
+    const tidied = { reviewBeforeSend: false, cleaned: true };
+    const raw = { reviewBeforeSend: false, cleaned: false };
+    expect(decideVoiceSend("transcribing", { ...tidied, queuedBeforeText: false })).toBe("queue");
+    expect(decideVoiceSend("ready", { ...tidied, queuedBeforeText: true })).toBe("send");
+    expect(decideVoiceSend("ready", { ...raw, queuedBeforeText: true })).toBe("hold");
+    // Pressed again once the raw text is on screen: the user has read it.
+    expect(decideVoiceSend("ready", { ...raw, queuedBeforeText: false })).toBe("send");
+  });
+
+  it("holds a send queued before the text when review was turned on meanwhile", () => {
+    expect(decideVoiceSend("ready", { reviewBeforeSend: true, cleaned: true, queuedBeforeText: true })).toBe("hold");
+  });
+
+  it("sends a press queued after the text was shown, while only the upload was outstanding", () => {
+    const opts = { reviewBeforeSend: true, cleaned: false, queuedBeforeText: false };
+    expect(decideVoiceSend("uploading", opts)).toBe("queue");
+    expect(decideVoiceSend("ready", opts)).toBe("send");
+  });
+
+  it("never sends an emptied transcript as a voice part", () => {
+    const opts = { reviewBeforeSend: false, cleaned: true, queuedBeforeText: false, transcriptBlank: true };
+    expect(decideVoiceSend("ready", opts)).toBe("hold");
+    expect(decideVoiceSend("uploading", opts)).toBe("hold");
   });
 
   it("never sends a failed voice, and leaves a message without one alone", () => {
-    expect(decideVoiceSend("failed", { reviewBeforeSend: false, cleaned: true, queued: true })).toBe("refuse");
-    expect(decideVoiceSend("none", { reviewBeforeSend: true, cleaned: false, queued: false })).toBe("send");
+    expect(decideVoiceSend("failed", { reviewBeforeSend: false, cleaned: true, queuedBeforeText: true })).toBe("refuse");
+    expect(decideVoiceSend("none", { reviewBeforeSend: true, cleaned: false, queuedBeforeText: false })).toBe("send");
   });
 
   it("sends by itself only with review off, a tidied transcript and the upload done", () => {
@@ -70,6 +92,23 @@ describe("voice send gate", () => {
     expect(shouldAutoSend("ready", { reviewBeforeSend: true, cleaned: true })).toBe(false);
     expect(shouldAutoSend("ready", { reviewBeforeSend: false, cleaned: false })).toBe(false);
     expect(shouldAutoSend("uploading", { reviewBeforeSend: false, cleaned: true })).toBe(false);
+  });
+
+  it("waits while the composer cannot send, then sends once, and never twice for one draft", () => {
+    const base = { ready: true, draftId: "d1", attemptedId: null, queued: false, blocked: true };
+    expect(autoSendStep(base)).toBe("wait");
+    expect(autoSendStep({ ...base, blocked: false })).toBe("send");
+    expect(autoSendStep({ ...base, blocked: false, attemptedId: "d1" })).toBe("idle");
+    expect(autoSendStep({ ...base, blocked: false, queued: true })).toBe("idle");
+    expect(autoSendStep({ ...base, blocked: false, ready: false })).toBe("idle");
+    expect(autoSendStep({ ...base, blocked: false, attemptedId: "d0" })).toBe("send");
+  });
+
+  it("opens the Whisper install only for a missing Whisper, never for voice messages turned off", () => {
+    expect(transcriptFailureAction("whisper_missing")).toBe("whisper-missing");
+    expect(transcriptFailureAction("voice_messages_off")).toBe("turned-off");
+    expect(transcriptFailureAction(undefined)).toBe("failed");
+    expect(transcriptFailureAction("transcribe_failed")).toBe("failed");
   });
 });
 
