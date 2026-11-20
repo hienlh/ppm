@@ -19,6 +19,7 @@ import { isExternalResourceUrl, rehypeBlockExternalResources } from "./markdown-
 import { rehypeStampMarkdownElements, rehypeStripAuthorPresentation } from "./markdown-author-presentation";
 import { isAssistantProject } from "../../../shared/assistant-project";
 import { markdownSanitizeSchema, rehypePrefixFragmentLinks, sanitizedRemarkRehypeOptions } from "./markdown-sanitize";
+import { LOCAL_PATH_PROP, LocalPathLink, lineFromProp, rehypeLocalPathLinks } from "./markdown-local-paths";
 
 interface MarkdownRendererProps {
   content: string;
@@ -46,8 +47,10 @@ interface MarkdownRendererProps {
 const remarkPlugins = [[remarkGfm, { singleTilde: false }], [remarkMath, { singleDollarTextMath: false }], remarkBreaks] as any;
 // Sanitise straight after parsing raw HTML and before KaTeX, so KaTeX's own markup is not
 // held to the allow-list.
-const rehypePlugins = [rehypeRaw, [rehypeSanitize, markdownSanitizeSchema], rehypePrefixFragmentLinks, rehypeKatex] as any;
-const rehypePluginsNoRaw = [rehypeKatex] as any;
+// `rehypeLocalPathLinks` comes last everywhere: it only splits text into marked links, after the
+// sanitiser and KaTeX have run, so neither ever sees (or has to allow) what it adds.
+const rehypePlugins = [rehypeRaw, [rehypeSanitize, markdownSanitizeSchema], rehypePrefixFragmentLinks, rehypeKatex, rehypeLocalPathLinks] as any;
+const rehypePluginsNoRaw = [rehypeKatex, rehypeLocalPathLinks] as any;
 /**
  * Assistant content goes through the same allow-list, and more: the author's `class`/`style`
  * are stripped right after `rehype-raw` (the stamp telling Markdown's own elements from the
@@ -59,8 +62,9 @@ const rehypePluginsNoRaw = [rehypeKatex] as any;
 const assistantRehypePlugins = [
   rehypeStampMarkdownElements, rehypeRaw, rehypeStripAuthorPresentation, rehypeBlockExternalResources,
   [rehypeSanitize, markdownSanitizeSchema], rehypePrefixFragmentLinks, rehypeKatex, rehypeBlockExternalResources,
+  rehypeLocalPathLinks,
 ] as any;
-const assistantRehypePluginsNoRaw = [rehypeKatex, rehypeBlockExternalResources] as any;
+const assistantRehypePluginsNoRaw = [rehypeKatex, rehypeBlockExternalResources, rehypeLocalPathLinks] as any;
 /** Component map — stable references; dynamic state flows through MdContext */
 const mdComponents = { a: MdLink, img: MdImage, pre: MdPre, code: MdCode, table: MdTable };
 
@@ -107,6 +111,11 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
 /** Link — external links open in new tab; file paths open in editor */
 function MdLink({ href, children, node, ...props }: any) {
   const { openFileOrSearch, card } = useMdContext();
+  // A path found in the text by `rehypeLocalPathLinks`: a link only once the server has checked it.
+  const localPath = node?.properties?.[LOCAL_PATH_PROP];
+  if (typeof localPath === "string") {
+    return <LocalPathLink path={localPath} line={lineFromProp(node.properties.dataPpmLocalLine)}>{children}</LocalPathLink>;
+  }
   const external = Boolean(href?.match(/^(https?:)?\/\//i));
   const target = !external && href ? parseMarkdownFileTarget(href) : null;
   if (card && !target) return <CardLink href={href} node={node} {...props}>{children}</CardLink>;

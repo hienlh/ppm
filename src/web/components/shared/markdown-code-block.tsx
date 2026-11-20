@@ -1,6 +1,8 @@
 import { useSettingsStore } from "@/stores/settings-store";
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useMdContext, FILE_EXT_RE, GLOB_CHARS_RE } from "./markdown-context";
+import { inlineCodePath } from "@/lib/local-path-detect";
+import { LocalPathCode } from "./markdown-local-paths";
 import { highlightToHtml, highlightSync, getActiveShikiTheme } from "@/theme/adapters/shiki-adapter";
 import { copyToClipboard } from "@/lib/clipboard";
 import { runInTerminal } from "@/lib/run-in-terminal";
@@ -128,6 +130,10 @@ export function MdCode({ className, children, node, ...rest }: any) {
 
   // Inline code — resolve a clickable file target: `path`, `path:line`, or `path:start-end`
   const text = String(children ?? "").trim();
+  // A path with a folder in it (`D:\tiktok\story`, `~/Projects`, `src/web/`): clickable once the
+  // server has checked it exists and may be shown — a folder opens the file browser.
+  const quoted = inlineCodePath(text);
+  if (quoted) return <LocalPathCode path={quoted.path} line={quoted.line} {...rest}>{children}</LocalPathCode>;
   let clickPath: string | null = null;
   let line: { start: number; end?: number } | undefined;
 

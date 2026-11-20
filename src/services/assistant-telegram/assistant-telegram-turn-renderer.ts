@@ -15,6 +15,7 @@
  * the user is looking at anyway. A turn told to be silent (the user is at PPM, see
  * `assistant-telegram-silence.ts`) sends its new messages without a sound and finishes in place.
  */
+import { primeTelegramPathLinks } from "../telegram/telegram-path-links.ts";
 import { markdownToTelegramHtml, redactForTelegram, splitTelegramHtml } from "../telegram/telegram-html-format.ts";
 import type { TelegramBotClient } from "../telegram/telegram-bot-client.ts";
 import { escapeTelegramHtml } from "../notification-format.ts";
@@ -185,6 +186,9 @@ export class TurnRenderer {
 
   private async writeFinal(client: TelegramBotClient): Promise<TaskOutcome> {
     this.attempts++;
+    // The final answer's folder and file paths become links into PPM's file browser once
+    // checked; drafts go out without them rather than wait on the disk mid-stream.
+    await primeTelegramPathLinks(this.md);
     const pages = this.pages(true);
     // Decided at the first attempt, so a retried final answer does not change its mind.
     const quiet = this.finalSilent ??= this.isSilent("final");
