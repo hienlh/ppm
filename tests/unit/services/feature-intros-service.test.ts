@@ -205,10 +205,18 @@ describe("Voice messages", () => {
   it("is a setting: Turn on writes voice_message.enabled and touches no tool or other voice setting", () => {
     expect(VOICE.setting).toBe("voice_messages");
     expect(VOICE.tools).toEqual([]);
-    configService.set("voice_message", { review_before_send: false, words: ["Hono"], projects: {} });
+    // cleanup_enabled is false here so the assertion shows the answer leaves it alone;
+    // left out, normalising the config would write its default (true) and prove nothing.
+    configService.set("voice_message", { review_before_send: false, cleanup_enabled: false, words: ["Hono"], projects: {} });
     expect(featureIntrosView().pending.map((i) => i.id)).toContain(VOICE.id);
     expect(answerFeatureIntro(VOICE.id, "on")).toMatchObject({ ok: true, changed: true });
-    expect(configService.get("voice_message")).toEqual({ enabled: true, review_before_send: false, words: ["Hono"], projects: {} });
+    expect(configService.get("voice_message")).toEqual({
+      enabled: true,
+      review_before_send: false,
+      cleanup_enabled: false,
+      words: ["Hono"],
+      projects: {},
+    });
     answerFeatureIntro(VOICE.id, "off");
     expect(enabled()).toBe(true);
   });
