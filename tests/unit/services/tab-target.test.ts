@@ -42,6 +42,13 @@ describe("tab tool targets", () => {
     const missing = await resolveTabTarget("site/nope.html", binding());
     expect(missing).toEqual({ ok: false, error: `There is no file at ${join(project, "site", "nope.html")}. Write the file first, then call again.` });
     expect(await resolveTabTarget("site", binding())).toMatchObject({ ok: false, error: expect.stringContaining("is a folder") });
+    // `open_file` takes a folder: named absolutely, shown relative to the project when inside it.
+    expect(await resolveTabTarget("site", binding(), { folder: true })).toEqual({
+      ok: true, target: { filePath: join(project, "site"), projectName: null, displayPath: "site", html: false, folder: true },
+    });
+    expect(await resolveTabTarget(outside, binding(), { folder: true })).toEqual({
+      ok: true, target: { filePath: outside, projectName: null, displayPath: outside, html: false, folder: true },
+    });
     expect(await resolveTabTarget("notes.md", { sessionId: "s1", projectPath: null, projectName: null }))
       .toMatchObject({ ok: false, error: expect.stringContaining("must be absolute") });
     for (const input of [undefined, 42, "", "   ", "a\0b", "x".repeat(5000)]) {

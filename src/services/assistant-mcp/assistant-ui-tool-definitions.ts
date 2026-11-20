@@ -1,6 +1,6 @@
 import {
   UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_LIST_COMMANDS_TOOL, UI_MOVE_TAB_TOOL, UI_OPEN_TAB_TOOL, UI_READ_TAB_TOOL,
-  UI_REVEAL_PATH_TOOL, UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
+  UI_OPEN_FILE_BROWSER_TOOL, UI_REVEAL_PATH_TOOL, UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import {
   ASSISTANT_MOVE_TAB_DESTINATIONS, ASSISTANT_SPLIT_DIRECTIONS, ASSISTANT_TAB_KINDS, MAX_ASSISTANT_COMMAND_ID_CHARS,
@@ -116,6 +116,21 @@ export const UI_NAV_TOOL_DEFINITIONS = [
       project: PROJECT,
       path: { type: "string", description: "A folder or file of the project, relative to its folder, or absolute." },
     }, ["project", "path"]),
+    annotations: NAV,
+  },
+  {
+    name: UI_OPEN_FILE_BROWSER_TOOL,
+    title: "Open the file browser at a folder",
+    description: "Open PPM's file browser (the File Explorer window on a desktop, the full-screen file browser on a "
+      + "phone) on the chatting device, at any folder on this machine's drives: inside a project or not. A folder opens "
+      + "as itself; a file opens its folder with the file selected. Use it when the user wants to see a folder, find "
+      + "where a file is, or \"open\" a folder that is not a project's. `path` is absolute (\"~\" for the home folder, "
+      + "`~/x` under it). PPM's own folder and the places logins or keys are kept (`~/.ssh`, `~/.aws`…) are refused: "
+      + "ask the user to open those themselves. Opens no file's content (that is ui_open_tab kind \"file\"). Answers "
+      + "the folder opened, the file selected, and whether it shows as a window or a phone's sheet.",
+    inputSchema: object({
+      path: { type: "string", minLength: 1, description: "An absolute folder or file path, e.g. D:\\Projects\\app, ~/Downloads or /srv/data/report.csv." },
+    }, ["path"]),
     annotations: NAV,
   },
 ] as const;

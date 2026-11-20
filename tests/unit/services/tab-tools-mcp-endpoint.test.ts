@@ -89,6 +89,14 @@ describe("tab tools MCP endpoint", () => {
     expect(unknown.error.code).toBe(-32602);
   });
 
+  it("opens a folder in the file browser rather than a tab", async () => {
+    const { call, calls } = setup({ target: { ok: true, target: { filePath: "/proj/src/web", projectName: null, displayPath: "src/web", html: false, folder: true } } });
+    const result = await call("open_file", { path: "src/web", line: 3 });
+    expect(calls).toEqual([{ sessionId: "s1", req: { tool: "open_file", filePath: "/proj/src/web", projectName: null, folder: true }, waitMs: OPEN_FILE_WAIT_MS }]);
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe("Opened the file browser at src/web on the user's device.");
+  });
+
   it("opens a file at a line on the session's devices", async () => {
     const { call, calls, targets } = setup({ target: { ok: true, target: { filePath: "src/config.ts", projectName: "demo", displayPath: "src/config.ts", html: false } } });
     const result = await call("open_file", { path: "src/config.ts", line: 42 });

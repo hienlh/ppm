@@ -13,6 +13,8 @@ import { designTabMetadata } from "@/lib/design/design-tab-metadata";
 import { dbObjectTabTitle, dbTabMetadataFromId, targetOf } from "@/lib/db-tabs";
 import { canonicalSessionId, useChatJumpStore } from "@/stores/chat-jump-store";
 import { TURN_ID_RE } from "../../shared/session-turn-ids";
+import { fileBrowserPathFromLocation } from "../../shared/file-browser-target";
+import { openFileBrowserAt } from "@/lib/file-browser-locate";
 
 // ---------------------------------------------------------------------------
 // URL state types
@@ -35,6 +37,11 @@ export interface UrlState {
    * open in its tab once the project is open, when it is a task id at all.
    */
   openTask?: string | null;
+  /**
+   * `/files?path=<path>` (a Telegram link, a notification): the folder or file to open the OS
+   * file browser at, over whichever project is on screen. Never a project to open.
+   */
+  filesPath?: string | null;
 }
 
 /** A task id as the server mints them (`TASK_ID_PATTERN` in the task routes). */
@@ -78,6 +85,8 @@ export function parseUrlState(location: Pick<Location, "pathname" | "search"> = 
   // an address naming it opens the Assistant instead, and its `openChat` is the Assistant's.
   const assistant = assistantLinkFromLocation(path, location.search);
   if (assistant) return { projectName: null, tabType: null, tabIdentifier: null, openChat: null, assistant };
+  const filesPath = fileBrowserPathFromLocation(path, location.search);
+  if (filesPath) return { projectName: null, tabType: null, tabIdentifier: null, openChat: null, assistant: null, filesPath };
 
   const match = path.match(/^\/project\/([^/]+)(?:\/([^/]+)(\/.*)?)?/);
   if (!match) return { projectName: null, tabType: null, tabIdentifier: null, openChat, assistant: null };
@@ -277,6 +286,16 @@ function onceWindowLayerIsReady(open: () => void): void {
 export function openAssistantFromAddress(link: AssistantDeepLink): void {
   window.history.replaceState(null, "", "/");
   onceWindowLayerIsReady(() => openAssistant(link));
+}
+
+/**
+ * Opens the file browser a `/files?path=` address asked for. The path goes through the server's
+ * check (`POST /api/fs/locate`) like every other way in, so a link to a private store or a
+ * missing path shows why instead of opening. The address names no workspace, so it is dropped.
+ */
+export function openFileBrowserFromAddress(path: string): void {
+  window.history.replaceState(null, "", "/");
+  onceWindowLayerIsReady(() => void openFileBrowserAt(path));
 }
 
 /** Auto-open or focus a tab based on URL state */

@@ -41,6 +41,11 @@ export interface TabOpenFileRequest {
   line?: number;
   /** An HTML page shown by `open_preview`: check it once it has loaded. */
   check?: { screenshot: boolean };
+  /**
+   * `open_file` named a folder: `filePath` is that folder, absolute, and the device opens it in
+   * the OS file browser (the File Explorer window, a phone's full-screen sheet) instead of a tab.
+   */
+  folder?: true;
 }
 
 /** The database tools' `open_query`: a Query tab holding a script, which the user runs. */

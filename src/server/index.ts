@@ -24,6 +24,7 @@ import { chatGlobalRoutes } from "./routes/chat-global.ts";
 import { databaseRoutes } from "./routes/database.ts";
 import { fsBrowseRoutes } from "./routes/fs-browse.ts";
 import { fsOpsRoutes } from "./routes/fs-ops.ts";
+import { fsLocateRoutes } from "./routes/fs-locate.ts";
 import { fsUploadRoutes } from "./routes/fs-upload.ts";
 import { htmlPreviewRoutes } from "./routes/html-preview.ts";
 import { accountsRoutes } from "./routes/accounts.ts";
@@ -301,6 +302,7 @@ app.route("/api/tunnels", tunnelRegistryRoutes);
 // Filesystem operations (browse, list, read, write) — consolidated in fs-browse route
 app.route("/api/fs", fsBrowseRoutes);
 app.route("/api/fs", fsOpsRoutes);
+app.route("/api/fs", fsLocateRoutes);
 app.route("/api/fs", fsUploadRoutes);
 
 // System resource monitoring (SSE + JSON)

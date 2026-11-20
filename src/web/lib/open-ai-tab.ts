@@ -2,6 +2,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { absoluteProjectPath, relativeProjectPath } from "@/stores/file-store";
 import { fsApi } from "@/lib/fs-api";
+import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { basename } from "@/lib/utils";
 import { previewTitle } from "./web-preview-url";
 import { chooseAiTabPlacement, isTabForFile, type AiTabPlacement, type PlacementTab } from "./ai-tab-placement";
@@ -9,7 +10,7 @@ import { latestPreviewLoad, previewKey, waitForPreviewLoad } from "./html-previe
 import { isAssistantProject } from "../../shared/assistant-project";
 import { nextQueryNumber, queryTabMetadata, targetFields } from "./db-tabs";
 import {
-  OPEN_URL_TOOL, RUN_IN_TERMINAL_TOOL, type TabOpenRequest, type TabOpenResult, type TabOpenTerminalRequest, type TabOpenUrlRequest,
+  OPEN_FILE_TOOL, OPEN_URL_TOOL, RUN_IN_TERMINAL_TOOL, type TabOpenRequest, type TabOpenResult, type TabOpenTerminalRequest, type TabOpenUrlRequest,
   type TabTool,
 } from "../../shared/tab-open-protocol";
 import { OPEN_QUERY_TOOL, type DbQueryTabOpen } from "../../shared/db-ai-tools";
@@ -251,6 +252,16 @@ export async function answerTabOpen(req: TabOpenRequest, chat: AiTabChat, send: 
     }
     return;
   }
+  // `open_file` on a folder: the OS file browser, not a tab.
+  if (req.tool === OPEN_FILE_TOOL && req.folder) {
+    try {
+      const id = await openExplorer(req.filePath);
+      reply(id ? { opened: true } : { opened: false, error: "the file browser could not open" });
+    } catch (e) {
+      reply({ opened: false, error: errorText(e) });
+    }
+    return;
+  }
   let opened: ReturnType<typeof openAiTab>;
   try {
     opened = openAiTab({ tool: req.tool, filePath: req.filePath, projectName: req.projectName, line: req.line }, chat);
@@ -284,13 +295,17 @@ export async function answerTabOpen(req: TabOpenRequest, chat: AiTabChat, send: 
 export async function resolveToolCallTarget(
   call: { tool: TabTool; path: string; line?: number },
   projectName: string | undefined,
-): Promise<AiTabTarget> {
+): Promise<AiTabTarget | { folder: string }> {
   const root = projectName ? useProjectStore.getState().projects.find((p) => p.name === projectName)?.path : undefined;
   const raw = call.path.trim();
   const absolute = /^(\/|[a-z]:[/\\]|~(?:[/\\]|$))/i.test(raw);
   if (!absolute && !root) throw new Error("this chat has no project folder");
   const entry = await fsApi.stat(absolute ? raw : absoluteProjectPath(root!, raw));
-  if (entry.kind === "directory") throw new Error(`${raw} is a folder`);
+  // `open_file` opened a folder in the file browser; its card opens it there again.
+  if (entry.kind === "directory") {
+    if (call.tool === OPEN_FILE_TOOL) return { folder: entry.path };
+    throw new Error(`${raw} is a folder`);
+  }
   const relative = root ? relativeProjectPath(root, entry.path) : null;
   return relative
     ? { tool: call.tool, filePath: relative, projectName: projectName!, line: call.line }

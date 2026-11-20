@@ -11,7 +11,9 @@ import { localServerBaseUrl } from "../server-listen-address.ts";
 import { terminalService } from "../terminal.service.ts";
 import { createOpenUrlTool, type OpenUrlTool } from "./open-url-tool.ts";
 import { canonicalTabSession, deviceError, tabOpenBroker, type TabOpenOutcome } from "./tab-open-broker.ts";
-import { resolveTabTarget, type TabTarget, type TabTargetOutcome, type TabToolsBinding } from "./tab-target.ts";
+import {
+  resolveTabTarget, type TabTarget, type TabTargetOptions, type TabTargetOutcome, type TabToolsBinding,
+} from "./tab-target.ts";
 import { tabToolsMcpTokens, type TabToolsTokenBinding } from "./tab-tools-mcp-tokens.ts";
 import {
   OPEN_FILE_TOOL, OPEN_FILE_WAIT_MS, OPEN_PREVIEW_TOOL, OPEN_PREVIEW_WAIT_MS, OPEN_URL_TOOL, READ_TERMINAL_TOOL,
@@ -53,11 +55,12 @@ export function createTabToolsMcpHandler(deps: {
   openUrl: OpenUrlTool;
   /** `search_sessions`, `list_session_turns`, `read_session_turns`. */
   sessionHistory: SessionHistoryTools;
-  resolveTarget?: (input: unknown, binding: TabToolsBinding) => Promise<TabTargetOutcome>;
+  resolveTarget?: (input: unknown, binding: TabToolsBinding, opts?: TabTargetOptions) => Promise<TabTargetOutcome>;
 }) {
   const resolveTarget = deps.resolveTarget ?? resolveTabTarget;
 
   async function openFile(binding: TabToolsBinding, target: TabTarget, args: Json): Promise<Json> {
+    if (target.folder) return openFolder(binding, target);
     let line: number | undefined;
     if (args.line !== undefined && args.line !== null) {
       if (typeof args.line !== "number" || !Number.isInteger(args.line) || args.line < 1 || args.line > MAX_TAB_LINE) {
@@ -71,6 +74,16 @@ export function createTabToolsMcpHandler(deps: {
     if (!outcome.ok) return failure(outcome, target);
     if (!outcome.result.opened) return textResult(`The user's device could not open ${target.displayPath}: ${deviceError(outcome.result.error)}`, true);
     return textResult(`Opened ${target.displayPath}${line ? ` at line ${line}` : ""} in a PPM tab on the user's device.`);
+  }
+
+  /** `open_file` on a folder: the OS file browser at it, on the chatting device. */
+  async function openFolder(binding: TabToolsBinding, target: TabTarget): Promise<Json> {
+    const outcome = await deps.request(binding.sessionId, {
+      tool: "open_file", filePath: target.filePath, projectName: null, folder: true,
+    }, OPEN_FILE_WAIT_MS);
+    if (!outcome.ok) return failure(outcome, target);
+    if (!outcome.result.opened) return textResult(`The user's device could not open ${target.displayPath}: ${deviceError(outcome.result.error)}`, true);
+    return textResult(`Opened the file browser at ${target.displayPath} on the user's device.`);
   }
 
   async function openPreview(binding: TabToolsBinding, target: TabTarget, args: Json): Promise<Json> {
@@ -104,7 +117,7 @@ export function createTabToolsMcpHandler(deps: {
       if (name === READ_TERMINAL_TOOL) return deps.terminal.read(binding, args);
       if (name === RUN_IN_TERMINAL_TOOL) return deps.terminal.run(binding, args);
       if (isSessionHistoryTool(name)) return deps.sessionHistory.call(binding, name, args);
-      const resolved = await resolveTarget(args.path, binding);
+      const resolved = await resolveTarget(args.path, binding, name === OPEN_FILE_TOOL ? { folder: true } : undefined);
       if (!resolved.ok) return textResult(resolved.error, true);
       if (name === OPEN_FILE_TOOL) return openFile(binding, resolved.target, args);
       if (name === OPEN_PREVIEW_TOOL) return openPreview(binding, resolved.target, args);

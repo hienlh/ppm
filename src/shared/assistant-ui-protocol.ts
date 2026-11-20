@@ -19,6 +19,7 @@ export const ASSISTANT_UI_OPS = [
   "move_tab",
   "switch_project",
   "reveal_path",
+  "open_file_browser",
   "describe_tab",
   "list_commands",
   "run_command",
@@ -131,6 +132,24 @@ export interface AssistantRevealPathResult {
   kind: "file" | "folder";
   project: string | null;
   previousProject: string | null;
+}
+
+/**
+ * `open_file_browser`: the OS file browser (the File Explorer window on a desktop, the full-screen
+ * sheet on a phone), which browses the whole disk. The server resolved the path and proved PPM may
+ * show it: `dir` is the folder to open, `select` a file in it to select, or null for the folder.
+ */
+export interface AssistantOpenFileBrowserArgs {
+  dir: string;
+  select: string | null;
+}
+
+/** What the device opened: the folder, the file selected in it, and where it shows. */
+export interface AssistantOpenFileBrowserResult {
+  dir: string;
+  select: string | null;
+  /** A floating window on a desktop, the full-screen sheet on a phone. */
+  surface: "window" | "sheet";
 }
 
 /** The tab a close took away, enough to open it again. */
