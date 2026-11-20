@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.26.21] - 2026-11-21
+
+### Added
+
+- **Voice messages**: record in the composer or send a voice note to the Assistant's Telegram bot; Whisper transcribes it on the host, Claude Haiku fixes misheard terms from the chat's context and word lists, and the bubble plays the audio back. Off until the "PPM has new features" question is answered.
+- **Voice message controls**: review the transcript before it is sent (or press Send to send it as soon as it is ready), turn the Haiku clean-up off in Settings → Voice Input, see how long each step took, and put Whisper's original text back.
+- **A voice message stays in the chat's draft**, so reopening or reloading the chat brings back the recording and its transcript.
+- **Folder and file paths in AI answers are clickable**: a folder opens the file browser, a project file the editor; Telegram answers link them too.
+- **Open the file browser at any folder** from the Assistant (`ui_open_file_browser`, `open_file` on a folder) or from a `/files?path=` link.
+- **Edit the path in the file browser on a phone**, with a chip for each folder on the way.
+
+### Changed
+
+- **The model is told a voice transcript may hold misheard words**, so it asks rather than guesses.
+
+### Fixed
+
+- **Two pinned folders with the same name** now say where each one sits.
+
 ## [0.26.20] - 2026-11-20
 
 ### Added
