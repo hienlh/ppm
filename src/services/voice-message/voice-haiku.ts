@@ -11,11 +11,21 @@ export type VoiceAsk = (input: { systemPrompt: string; prompt: string; timeoutMs
 export const askClaudeHaiku: VoiceAsk = async ({ systemPrompt, prompt, timeoutMs }) => {
   const { providerRegistry } = await import("../../providers/registry.ts");
   const provider = providerRegistry.get("claude") as unknown as {
-    completeOnce?: (input: { prompt: string; systemPrompt: string; model: string; timeoutMs?: number }) => Promise<{ text: string }>;
+    completeOnce?: (input: VoiceHaikuCall) => Promise<{ text: string }>;
   } | undefined;
   if (typeof provider?.completeOnce !== "function") throw new Error("No Claude account is available for the clean-up");
-  return (await provider.completeOnce({ prompt, systemPrompt, model: LOGS_AI_MODEL, timeoutMs })).text;
+  return (await provider.completeOnce(voiceHaikuCall({ prompt, systemPrompt, timeoutMs }))).text;
 };
+
+export interface VoiceHaikuCall { prompt: string; systemPrompt: string; model: string; timeoutMs: number; noThinking: true }
+
+/**
+ * The one-shot a voice clean-up or learning call sends. Thinking is off: with it on, Haiku thought
+ * for ~32 s (≈3.5k tokens) before tidying one sentence, which is what timed clean-ups out.
+ */
+export function voiceHaikuCall(input: { prompt: string; systemPrompt: string; timeoutMs: number }): VoiceHaikuCall {
+  return { ...input, model: LOGS_AI_MODEL, noThinking: true };
+}
 
 /** `work`, or a rejection once `ms` have passed without an answer. */
 export function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {

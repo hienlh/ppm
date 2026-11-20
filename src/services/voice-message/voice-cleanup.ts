@@ -13,7 +13,11 @@ import type { VoiceContext } from "./voice-context.ts";
 import { askClaudeHaiku, withTimeout, type VoiceAsk } from "./voice-haiku.ts";
 import { looksRewritten } from "./voice-word-change.ts";
 
-export const CLEANUP_TIMEOUT_MS = 20_000;
+/**
+ * With thinking off, a clean-up answered in a few seconds when measured; the headroom is for a slow
+ * API moment. Past it the raw transcript is used and the user reads it before it is sent.
+ */
+export const CLEANUP_TIMEOUT_MS = 45_000;
 
 export const CLEANUP_SYSTEM_PROMPT = [
   "You clean a speech-to-text transcript of a user talking to an AI coding assistant.",

@@ -273,6 +273,12 @@ export interface OneShotInput {
   model: string;
   /** Reasoning effort, where the provider takes one. */
   effort?: "low" | "medium" | "high";
+  /**
+   * No extended thinking, where the provider would otherwise think first. A mechanical task (tidying
+   * a transcript) gains nothing from it: Claude Haiku spent ~32 s and ~3.5k thinking tokens on a
+   * one-sentence clean-up before answering.
+   */
+  noThinking?: boolean;
   /** Wall-clock limit for the whole call. */
   timeoutMs?: number;
   /** Ask for an answer shaped by this JSON Schema, natively where the provider can. */

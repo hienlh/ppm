@@ -36,6 +36,11 @@ describe("buildClaudeOneShotOptions", () => {
     expect(o.abortController).toBe(run.abortController);
   });
 
+  it("turns extended thinking off only when the call asks for it", () => {
+    expect((buildClaudeOneShotOptions({ ...base, noThinking: true }, ctx, run) as Record<string, unknown>).thinking).toEqual({ type: "disabled" });
+    expect("thinking" in (buildClaudeOneShotOptions(base, ctx, run) as Record<string, unknown>)).toBe(false);
+  });
+
   it("asks for structured output with room for its tool round trip", () => {
     const o = buildClaudeOneShotOptions({ ...base, jsonSchema: SCHEMA }, ctx, run) as Record<string, unknown>;
     expect(o.outputFormat).toEqual({ type: "json_schema", schema: SCHEMA });

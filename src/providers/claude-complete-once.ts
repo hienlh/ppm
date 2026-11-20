@@ -63,6 +63,7 @@ export function buildClaudeOneShotOptions(
     model: input.model,
     ...(input.systemPrompt !== undefined && { systemPrompt: input.systemPrompt }),
     ...(input.effort && { effort: input.effort }),
+    ...(input.noThinking && { thinking: { type: "disabled" as const } }),
     tools,
     // No MCP server at all: none passed, and none the CLI would find on its own.
     mcpServers: {},
