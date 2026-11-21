@@ -818,6 +818,21 @@ describe("ClaudeAgentSdkProvider", () => {
         expect(events.find((e) => e.type === "done")?.contextWindowPct).toBe(56);
       });
 
+      it("measures against the CLI's own window when a setting makes it smaller than the model's", async () => {
+        const it2 = createMockQueryIterator([
+          { type: "system", subtype: "init", session_id: "x", model: "claude-opus-5-5" } as any,
+          { type: "assistant", message: { model: "claude-opus-5-5", content: [{ type: "text", text: "." }], usage: { input_tokens: 10, cache_read_input_tokens: 279_990, cache_creation_input_tokens: 0, output_tokens: 5 } } } as any,
+          { type: "result", subtype: "success", num_turns: 1, modelUsage: { "claude-opus-5-5": { inputTokens: 10, cacheReadInputTokens: 279_990, outputTokens: 5, contextWindow: 1_000_000 } } } as any,
+        ]);
+        // CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000: /context measures against 500k, modelUsage says 1M.
+        (it2 as any).getContextUsage = async () => ({ categories: [], totalTokens: 280_000, maxTokens: 500_000, percentage: 56, model: "claude-opus-5-5" });
+        mockQueryFn.mockReturnValue(it2);
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        const events: any[] = [];
+        for await (const ev of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) events.push(ev);
+        expect(events.find((e) => e.type === "done")?.contextWindowPct).toBe(56);
+      });
+
       it("refuses a worktree name that is not one PPM makes", async () => {
         mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" } as any]));
         const session = await provider.createSession({ projectPath: "/tmp/my-project" });

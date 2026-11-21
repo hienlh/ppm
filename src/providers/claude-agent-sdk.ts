@@ -2053,6 +2053,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               }
               yield { type: "system" as any, subtype: "worktree", worktree } as any;
             }
+            this.learnCliContextWindow(sessionId, (msg as any).model);
             continue;
           }
 
@@ -2769,8 +2770,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // included — a cached prefix occupies the window like a fresh one) over that model's
           // window. Never `modelUsage`'s token counts: they are summed over every API call of
           // the turn, so a turn of ten tool calls on a 270k context read as 2.7M, i.e. 100%.
+          // The window is the CLI's own when it told us (what its /context and autocompact use, which
+          // CLAUDE_CODE_AUTO_COMPACT_WINDOW can set below the model's), else the model's.
           const modelUsage = (result.modelUsage ?? result.model_usage) as Record<string, any> | undefined;
-          const contextWindow = contextWindowOf(modelUsage, lastContextModel);
+          const contextWindow = this.cliContextWindow.get(sessionId)?.window ?? contextWindowOf(modelUsage, lastContextModel);
           if (lastContextTokens != null && contextWindow > 0) {
             resultContextWindowPct = Math.min(Math.round((lastContextTokens / contextWindow) * 100), 100);
           }
@@ -3048,6 +3051,24 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       log.debug(`session=${sessionId} effort status unavailable: ${(e as Error).message}`);
       return null;
     }
+  }
+
+  /**
+   * The context window each session's CLI measures against, by model: a settings override
+   * (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`) makes it smaller than the window `modelUsage` reports, and
+   * the meter has to agree with the CLI's own `/context`. Asked once per CLI and model, in the
+   * background, so no turn waits for it.
+   */
+  private cliContextWindow = new Map<string, { model: string | undefined; window: number }>();
+  private cliContextWindowAsked = new Map<string, string | undefined>();
+
+  private learnCliContextWindow(sessionId: string, model: string | undefined): void {
+    if (this.cliContextWindowAsked.has(sessionId) && this.cliContextWindowAsked.get(sessionId) === model) return;
+    this.cliContextWindowAsked.set(sessionId, model);
+    void this.readContextUsage(sessionId, "summary").then((u) => {
+      if (u && u.maxTokens > 0 && this.cliContextWindowAsked.get(sessionId) === model) this.cliContextWindow.set(sessionId, { model, window: u.maxTokens });
+      else if (!u) this.cliContextWindowAsked.delete(sessionId);
+    });
   }
 
   /**
