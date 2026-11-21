@@ -6,7 +6,7 @@
  */
 import "../../test-setup.ts";
 import { describe, it, expect, afterEach, spyOn } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { FileIndexRunner, parseWalkOutput, WalkError, type FileIndexRunnerOptions } from "../../../src/services/file-index/file-index-runner.ts";
@@ -206,7 +206,7 @@ describe("reading a walk process's answer", () => {
 });
 
 describe("the walk's limits", () => {
-  it("stops at the most entries it may list, and says so", async () => {
+  it("stops at the most entries it may list, says so, and keeps the shallow ones", async () => {
     const root = tree(10, 10);
     const capped = await walkIndex(root, filter, 256, 25);
     const whole = await walkIndex(root, filter, 256, 1_000);
@@ -215,7 +215,53 @@ describe("the walk's limits", () => {
     expect(capped.truncated).toBe(true);
     expect(whole.entries).toHaveLength(10 + 10 * 10);
     expect(whole.truncated).toBe(false);
-    expect(capped.entries).toEqual(whole.entries.slice(0, 25));
+    // Every top-level folder is listed before any folder's contents fill the cap...
+    for (let d = 0; d < 10; d++) expect(paths(capped.entries)).toContain(`pkg${d}`);
+    // ...and what is kept comes in the same depth-first order as the whole list.
+    const order = new Map(whole.entries.map((e, i) => [e.path, i]));
+    const kept = capped.entries.map((e) => order.get(e.path)!);
+    expect(kept).toEqual([...kept].sort((a, b) => a - b));
+  });
+
+  it("does not let one deep folder that sorts first take every slot", async () => {
+    // The shape of D:\Projects\nxsys: `.tmp/` holds scratch checkouts and sorts before the code.
+    const root = mkdtempSync(join(tmpdir(), "ppm-index-cap-"));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    for (let c = 0; c < 6; c++) {
+      for (let d = 0; d < 4; d++) {
+        const dir = join(root, ".tmp", `checkout${c}`, `src${d}`);
+        mkdirSync(dir, { recursive: true });
+        for (let f = 0; f < 10; f++) writeFileSync(join(dir, `f${f}.ts`), "");
+      }
+    }
+    for (const app of ["backend", "payroll-fe"]) {
+      mkdirSync(join(root, app));
+      for (let f = 0; f < 5; f++) writeFileSync(join(root, app, `main${f}.ts`), "");
+    }
+    const capped = await walkIndex(root, filter, 256, 60);
+
+    expect(capped.truncated).toBe(true);
+    for (const app of ["backend", "payroll-fe"]) {
+      for (let f = 0; f < 5; f++) expect(paths(capped.entries)).toContain(`${app}/main${f}.ts`);
+    }
+  });
+
+  it("lists exactly what a depth-first walk lists when nothing is cut", async () => {
+    const root = tree(3, 2);
+    mkdirSync(join(root, "pkg1", "deep", "deeper"), { recursive: true });
+    writeFileSync(join(root, "pkg1", "deep", "deeper", "x.ts"), "");
+    writeFileSync(join(root, "top.md"), "");
+    const { entries } = await walkIndex(root, filter, 256);
+    const expected: string[] = [];
+    const dfs = (dir: string, rel: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = rel ? `${rel}/${e.name}` : e.name;
+        expected.push(p);
+        if (e.isDirectory()) dfs(join(dir, e.name), p);
+      }
+    };
+    dfs(root, "");
+    expect(paths(entries)).toEqual(expected);
   });
 
   it("keeps every path, kind and ignore flag through the compact encoding", () => {

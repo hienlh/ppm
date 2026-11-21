@@ -97,7 +97,9 @@ fileRoutes.get("/index", async (c) => {
     const build = await fileService.buildIndex(projectPath);
     const max = Number(c.req.query("max"));
     // A large build holds only a sample of its list as JSON (see `IndexBuild`), so it is never sent.
-    if (build.large || (max > 0 && build.count > max)) return c.json(ok<FileIndexTooLarge>({ tooLarge: true, count: build.count }));
+    if (build.large || (max > 0 && build.count > max)) {
+      return c.json(ok<FileIndexTooLarge>({ tooLarge: true, count: build.count, ...(build.truncated && { truncated: true }) }));
+    }
     const gzip = (c.req.header("Accept-Encoding") ?? "").includes("gzip");
     return new Response(gzip ? build.gzip : build.json, {
       headers: {

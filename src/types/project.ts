@@ -38,6 +38,8 @@ export interface FileEntry {
 export interface FileIndexTooLarge {
   tooLarge: true;
   count: number;
+  /** The walk stopped at its entry cap: files past it are in neither the palette nor search. */
+  truncated?: boolean;
 }
 
 /** Entry returned by /files/list (single directory level) */

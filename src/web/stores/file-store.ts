@@ -96,6 +96,11 @@ interface FileStore {
    * empty, and whatever would read it searches on the server instead (`useRemoteFileSearch`).
    */
   indexRemote: boolean;
+  /**
+   * The server stopped listing the project at its entry cap: how many entries it kept, or null.
+   * Files past the cap are in neither the palette nor search, and the palette says so.
+   */
+  indexTruncatedAt: number | null;
   /** Moves each time an index lands, so a search on the server knows to ask again. */
   indexRevision: number;
   /** The project `fileIndex` belongs to (or is being loaded for); null when none is. */
@@ -197,6 +202,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   indexStatus: "idle",
   indexStale: false,
   indexRemote: false,
+  indexTruncatedAt: null,
   indexRevision: 0,
   indexProject: null,
   selectedFiles: [],
@@ -344,7 +350,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
     const epoch = ++indexEpoch;
     const changesSeen = indexChanges;
     if (get().indexProject !== projectName) {
-      set({ indexProject: projectName, fileIndex: [], indexStatus: "loading", indexStale: false, indexRemote: false });
+      set({ indexProject: projectName, fileIndex: [], indexStatus: "loading", indexStale: false, indexRemote: false, indexTruncatedAt: null });
     } else if (get().indexStatus !== "ready") {
       // A list already on screen stays there while its replacement loads.
       set({ indexStatus: "loading" });
@@ -359,6 +365,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
         set({
           fileIndex: remote ? [] : data,
           indexRemote: remote,
+          indexTruncatedAt: remote && data.truncated ? data.count : null,
           indexRevision: get().indexRevision + 1,
           indexStatus: "ready",
           indexStale: indexChanges !== changesSeen,
@@ -413,7 +420,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
 
   invalidateIndex: () => {
     abandonIndexLoad();
-    set({ indexProject: null, indexStatus: "idle", fileIndex: [], indexStale: false, indexRemote: false });
+    set({ indexProject: null, indexStatus: "idle", fileIndex: [], indexStale: false, indexRemote: false, indexTruncatedAt: null });
   },
 
   invalidateFolder: async (projectName: string, folderPath: string) => {
@@ -494,6 +501,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       indexStatus: "idle",
       indexStale: false,
       indexRemote: false,
+      indexTruncatedAt: null,
       indexProject: null,
       selectedFiles: [],
       inlineAction: null,

@@ -70,9 +70,14 @@ export function loadGitignore(projectPath: string): Ignore {
 }
 
 /**
- * Flat list of everything under `rootPath` that the filter keeps, depth-first. Hands its thread
- * back every `entriesPerSlice` entries, so whatever else runs there is not kept waiting. Stops at
- * `maxEntries`, and says so.
+ * Flat list of everything under `rootPath` that the filter keeps, in depth-first order. Hands its
+ * thread back every `entriesPerSlice` entries, so whatever else runs there is not kept waiting.
+ *
+ * Walked breadth-first and sorted back into depth-first order at the end, so that a walk stopped at
+ * `maxEntries` keeps the shallow entries rather than the first subtrees by name. Depth-first, the
+ * cap spent every slot of D:\Projects\nxsys on `.tmp/` (307k entries of scratch checkouts, which
+ * sorts first) and listed none of `backend/`, `payroll-fe/` or `docs/`. An uncut walk lists exactly
+ * what the depth-first walk listed, in the same order.
  */
 export async function walkIndex(
   rootPath: string,
@@ -82,55 +87,66 @@ export async function walkIndex(
 ): Promise<{ entries: FileEntry[]; truncated: boolean }> {
   const ig = filter.useIgnoreFiles ? loadGitignore(rootPath) : null;
   const allExclude = filter.exclude;
-  const results: FileEntry[] = [];
-
-  // Depth-first on an explicit stack, in the order the recursive walk it replaces produced.
-  const stack: { dirPath: string; dirEntries: Dirent[]; next: number }[] = [];
-  const enter = (dirPath: string) => {
-    try { stack.push({ dirPath, dirEntries: readdirSync(dirPath, { withFileTypes: true }), next: 0 }); }
-    catch { /* unreadable — skip */ }
-  };
-  enter(rootPath);
-
+  /** Each entry with its position among its parent's entries, all the way down from the root. */
+  const results: { entry: FileEntry; order: number[] }[] = [];
+  const queue: { dirPath: string; order: number[] }[] = [{ dirPath: rootPath, order: [] }];
+  let truncated = false;
   let sinceYield = 0;
-  while (stack.length > 0) {
-    if (results.length >= maxEntries) return { entries: results, truncated: true };
-    const frame = stack[stack.length - 1]!;
-    const entry = frame.dirEntries[frame.next++];
-    if (!entry) {
-      stack.pop();
-      continue;
-    }
-    if (++sinceYield >= entriesPerSlice) {
-      sinceYield = 0;
-      await new Promise<void>((r) => setTimeout(r, 0));
-    }
 
-    const fullPath = join(frame.dirPath, entry.name);
+  walk: for (let head = 0; head < queue.length; head++) {
+    const dir = queue[head]!;
+    queue[head] = undefined as never; // a visited directory is not needed again
+    let dirEntries: Dirent[];
+    try { dirEntries = readdirSync(dir.dirPath, { withFileTypes: true }); }
+    catch { continue; /* unreadable — skip */ }
+    for (let index = 0; index < dirEntries.length; index++) {
+      if (results.length >= maxEntries) {
+        truncated = true;
+        break walk;
+      }
+      const entry = dirEntries[index]!;
+      if (++sinceYield >= entriesPerSlice) {
+        sinceYield = 0;
+        await new Promise<void>((r) => setTimeout(r, 0));
+      }
+      const listed = visit(dir.dirPath, entry);
+      if (!listed) continue;
+      const order = [...dir.order, index];
+      results.push({ entry: listed, order });
+      if (listed.type === "directory") queue.push({ dirPath: join(dir.dirPath, entry.name), order });
+    }
+  }
+  results.sort((a, b) => compareOrder(a.order, b.order));
+  return { entries: results.map((r) => r.entry), truncated };
+
+  /** The entry the filter keeps for `entry`, or null when it is excluded. */
+  function visit(dirPath: string, entry: Dirent): FileEntry | null {
+    const fullPath = join(dirPath, entry.name);
     const relPath = relative(rootPath, fullPath);
     const relPosix = relPath.split("\\").join("/");
 
     // Apply glob exclusion (check full relative path and bare entry name)
     // These are HARD excludes — .git, node_modules, dist, etc.
-    if (matchesGlob(relPosix, allExclude)) continue;
-    if (matchesGlob(entry.name, allExclude)) continue;
+    if (matchesGlob(relPosix, allExclude)) return null;
+    if (matchesGlob(entry.name, allExclude)) return null;
+
+    if (entry.isDirectory()) return { path: relPosix, name: entry.name, type: "directory" };
 
     // Apply gitignore rules — SOFT exclude only (mark with isIgnored flag).
     // Huge dirs like node_modules/dist/build are already hard-excluded by glob above.
     let isIgnored = false;
-    if (ig) {
-      const checkPath = entry.isDirectory() ? `${relPosix}/` : relPosix;
-      isIgnored = ig.ignores(checkPath) || ig.ignores(relPosix);
-    }
-
-    if (entry.isDirectory()) {
-      results.push({ path: relPosix, name: entry.name, type: "directory" });
-      enter(fullPath);
-    } else {
-      results.push({ path: relPosix, name: entry.name, type: "file", ...(isIgnored && { isIgnored: true }) });
-    }
+    if (ig) isIgnored = ig.ignores(relPosix);
+    return { path: relPosix, name: entry.name, type: "file", ...(isIgnored && { isIgnored: true }) };
   }
-  return { entries: results, truncated: false };
+}
+
+/** Depth-first order: a parent before its children, siblings in the order their directory lists them. */
+function compareOrder(a: number[], b: number[]): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (a[i] !== b[i]) return a[i]! - b[i]!;
+  }
+  return a.length - b.length;
 }
 
 /** The response body for `entries` and a hash of it; gzipping is left to the caller's thread. */

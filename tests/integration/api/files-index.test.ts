@@ -186,6 +186,18 @@ describe("GET /files/index", () => {
     }
   });
 
+  it("tells the browser when the list was cut at the entry cap", async () => {
+    const sample = new TextEncoder().encode(JSON.stringify({ ok: true, data: [] }));
+    const cut = { json: sample, gzip: new Uint8Array(), hash: "cut", count: 300_000, walkMs: 1, large: true, truncated: true };
+    const spy = spyOn(fileService, "buildIndex").mockResolvedValue(cut);
+    try {
+      const body = (await (await req(`/api/project/${projectName}/files/index?max=50000`)).json()) as any;
+      expect(body.data).toEqual({ tooLarge: true, count: 300_000, truncated: true });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("searches the list on the server, best first", async () => {
     writeFileSync(resolve(projectPath, "src/util-extra.ts"), "");
     invalidateIndexCache(projectPath);
