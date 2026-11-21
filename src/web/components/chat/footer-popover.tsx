@@ -3,9 +3,11 @@
  * sheet below `md`.
  *
  * Positioned against the context row (`relative`), not against the chip: the chips on the left sit
- * in a box that clips them when the chat is narrow, and an absolutely positioned child whose
- * containing block lies outside that box escapes the clip. So the chip wrappers must not be
- * `relative` themselves.
+ * in a box that scrolls them sideways when the chat is narrow, and an absolutely positioned child
+ * whose containing block lies outside that box escapes its clip. So the chip wrappers must not be
+ * `relative` themselves. That box also fades its edges with a mask, which no containing block
+ * escapes; `data-footer-popover` is what turns the mask off while a popover is open
+ * (`.footer-chips` in globals.css), so keep it on the panel.
  *
  * It stays mounted for the 100ms its exit animation takes, so closing reads as leaving rather
  * than vanishing. Outside presses and Escape close it; a press on `anchorRef` is left to the

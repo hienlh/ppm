@@ -33,6 +33,7 @@ import { AssistantBackBar } from "@/components/assistant/assistant-back-button";
 import { BackgroundCommandBar } from "./background-command-bar";
 import { ConnectionChip } from "./connection-chip";
 import { useReconnectIndicator } from "@/hooks/use-reconnect-indicator";
+import { useScrollEdgeFades } from "@/hooks/use-scroll-edge-fades";
 import { ActivityChip } from "./activity-chip";
 import { AgentSessionProvider, normalizeProviderId } from "./agent-session-context";
 import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
@@ -245,6 +246,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
   const assistant = isAssistantProject(projectName);
   // A manager chat's Tasks chip: its project's open tasks, while that project's task store is on.
   const tasksSummary = useManagerTasksSummary(assistant ? null : sessionId);
+  const footerChipsRef = useScrollEdgeFades();
 
   /**
    * Every sessionless chat tab (new, `/clear`, a design's chat, a reload mid-resolution)
@@ -1521,9 +1523,16 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           No rules between them. The row is the popovers' anchor, so it is `relative`. */}
       <div className="shrink-0 px-2 pb-1.5 md:px-3 md:pb-3" data-chat-footer="">
         <div className="relative flex min-w-0 items-center gap-2 px-0.5 py-2 max-md:py-1.5" data-chat-context-row="">
-          {/* Padded so the chips' focus rings and widened touch areas (10px past a 26px phone chip,
-              see footer-chip.ts) are not cut by the clip. */}
-          <div className="-my-2.5 flex min-w-0 items-center gap-1.5 overflow-hidden py-2.5 @max-[420px]/chat:gap-1 max-md:gap-1">
+          {/* The left chips scroll sideways when they do not fit (touchpad, Shift+wheel, a finger),
+              with no scrollbar; the side that still hides chips fades (`footer-chips` in
+              globals.css). The right cluster is outside it and stays put. Padded so the chips'
+              focus rings and widened touch areas (10px past a 26px phone chip, see footer-chip.ts)
+              are not cut by the clip. */}
+          <div
+            ref={footerChipsRef}
+            data-footer-chips=""
+            className="footer-chips scrollbar-none -my-2.5 flex min-w-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain py-2.5 @max-[420px]/chat:gap-1 max-md:gap-1"
+          >
             {contextChip}
             {tasksSummary && <ManagerTasksChip summary={tasksSummary} />}
             <ActivityChip

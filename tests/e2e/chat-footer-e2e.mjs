@@ -77,6 +77,14 @@ const MODELS = () => [
   { value: "sonnet", label: "Claude Sonnet 5" },
   { value: "claude-sonnet-5-preview-20261101", label: "claude-sonnet-5-preview-20261101 (1M context)" },
 ];
+const SCHEDULES = () => ["Morning digest", "Check CI", "Release notes", "Nightly e2e", "Ping reviewers"].map((name, i) => ({
+  id: 900 + i, name, cron_expr: `0 ${8 + i} * * *`, provider_id: "claude", project_path: harness.project, prompt: name, permission_mode: "default",
+  max_turns: null, timeout_ms: 600000, enabled: 1, session_id: null, last_run_at: null,
+  next_fire_at: new Date(Date.now() + (i + 1) * 3600_000).toISOString(), created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  kind: "session", mode: "tick", description: "", script: null, target_session_id: state.sessionId, timezone: null, recurring: 1,
+  pending_since: null, paused_reason: null, task_id: null, inputs: [], inputValues: {}, secretsSet: [],
+  status: { state: "idle", pid: null, since: null, restartAt: null, restarts: 0, lastError: null }, target_title: null, held_after_stop: false,
+}));
 const ok = (data) => ({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, data }) });
 
 async function stub(context) {
@@ -107,6 +115,10 @@ async function stub(context) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     }
     if (p.endsWith("/stop-children") && m === "POST") return route.fulfill(ok({ stopped: 2 }));
+    // The manager chat's Tasks chip and the chat's schedules: the chips the reported row carried.
+    if (p === "/api/assistant/managers" && state.extras && state.sessionId) return route.fulfill(ok({ managers: [{ sessionId: state.sessionId, projectName: PROJECT }] }));
+    if (p === "/api/tasks/projects" && state.extras) return route.fulfill(ok([{ name: PROJECT, projectKey: PROJECT, enabled: true, hasManager: true, open: 124, now: 11, snoozed: 0 }]));
+    if (p === "/api/schedules" && state.extras && url.searchParams.get("session")) return route.fulfill(ok(SCHEDULES()));
     return route.fallback();
   });
 }
@@ -571,6 +583,179 @@ async function scenarios(phone) {
   }
 }
 
+/**
+ * The left chips when they do not fit: they scroll sideways (touchpad, Shift+wheel, a finger) while
+ * the right cluster stays put, the hidden side fades, and a chip's popover still opens whole.
+ * `PPM_FOOTER_SHOT_PREFIX` names the shots, so the same walk photographs a build without the
+ * scroller ("before") beside one with it.
+ */
+async function chipOverflow(phone) {
+  const tag = phone ? "phone" : "desktop";
+  const prefix = process.env.PPM_FOOTER_SHOT_PREFIX ?? "after";
+  console.log(`\n== chip overflow, ${tag}`);
+  const { context, page, tabId } = await setupChat(phone);
+  const measure = () => page.evaluate((r) => {
+    const row = document.querySelector(`${r} [data-chat-context-row]`);
+    const el = row.querySelector(":scope > [data-footer-chips]") ?? row.firstElementChild;
+    const cluster = row.querySelector("[data-footer-cluster]").getBoundingClientRect();
+    const s = getComputedStyle(el);
+    return {
+      overflowX: s.overflowX,
+      scrollLeft: Math.round(el.scrollLeft),
+      max: el.scrollWidth - el.clientWidth,
+      fadeStart: el.hasAttribute("data-fade-start"),
+      fadeEnd: el.hasAttribute("data-fade-end"),
+      mask: s.maskImage || s.webkitMaskImage || "none",
+      scrollbar: el.offsetHeight - el.clientHeight,
+      cluster: { left: Math.round(cluster.left), right: Math.round(cluster.right), width: Math.round(cluster.width) },
+      rowRight: Math.round(row.getBoundingClientRect().right),
+      box: (() => { const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; })(),
+    };
+  }, root(tabId));
+  const setScroll = (x) => page.evaluate(({ r, x }) => {
+    const row = document.querySelector(`${r} [data-chat-context-row]`);
+    const el = row.querySelector(":scope > [data-footer-chips]") ?? row.firstElementChild;
+    el.scrollLeft = x;
+  }, { r: root(tabId), x });
+  try {
+    // Every left chip the footer has: the manager chat's tasks, agents and linked sessions,
+    // changed files, schedules, and on a phone the connection.
+    state.extras = true;
+    await page.evaluate(async () => {
+      const { refreshManagerChats } = await import("/hooks/use-manager-chats.ts");
+      await refreshManagerChats();
+      window.dispatchEvent(new CustomEvent("schedules:changed"));
+      window.dispatchEvent(new CustomEvent("tasks:changed", { detail: {} }));
+    });
+    await until("the tasks and schedules chips", async () => (await inFooter(page, tabId, '[data-testid="session-schedules-chip"]').count()) > 0
+      && (await page.locator(`${root(tabId)} [data-chat-context-row] [aria-haspopup]`).count()) >= 4, { timeout: 10000 });
+    await setAgents(page, true);
+    await setChildren(page, true);
+    if (phone) {
+      // A phone drops the chips' words, so it takes the lost connection's "Offline · Retry" as well.
+      refuse = true;
+      await dropSockets();
+      await until("lost", () => inFooter(page, tabId, '[data-reconnect-stage="lost"]').isVisible(), { timeout: 15000 });
+    }
+    await setScroll(0);
+    await sleep(200);
+
+    if (!phone) {
+      // Wide pane first: everything fits, nothing scrolls, no fade.
+      await page.setViewportSize({ width: 1680, height: 860 });
+      await sleep(400);
+      const wide = await measure();
+      check(wide.max <= 1 && !wide.fadeStart && !wide.fadeEnd, `${tag} wide: chips fit, no fade`, JSON.stringify({ max: wide.max, fadeStart: wide.fadeStart, fadeEnd: wide.fadeEnd }));
+      await shot(page, tabId, `${prefix}-desktop-wide`);
+      await page.setViewportSize({ width: 1280, height: 860 });
+      await sleep(400);
+      // A pane narrow enough that the chips overflow but still show their words (above 420px).
+      for (const w of [560, 520, 480, 450, 430]) {
+        await narrow(page, tabId, w);
+        await sleep(150);
+        if ((await measure()).max > 20) break;
+      }
+    }
+
+    const start = await measure();
+    console.log(`  overflow: ${start.max}px hidden, overflow-x ${start.overflowX}`);
+    check(start.max > 20, `${tag}: the left chips overflow the row`, `${start.max}px`);
+    check(/auto|scroll/.test(start.overflowX), `${tag}: the left chips scroll sideways`, start.overflowX);
+    check(start.scrollbar === 0, `${tag}: no scrollbar drawn`, `${start.scrollbar}px`);
+    check(!start.fadeStart && start.fadeEnd && /gradient/.test(start.mask), `${tag}: at the start only the end fades`, JSON.stringify({ fadeStart: start.fadeStart, fadeEnd: start.fadeEnd, mask: start.mask.slice(0, 40) }));
+    check(start.cluster.right <= start.rowRight + 1, `${tag}: the right cluster stays inside the row`, JSON.stringify(start.cluster));
+    await shot(page, tabId, `${prefix}-${tag}-narrow`);
+
+    // Scroll the way a person does: Shift+wheel and a sideways touchpad swipe on a desktop, a
+    // finger on a phone.
+    await setScroll(0);
+    await sleep(100);
+    const cx = start.box.x + Math.min(start.box.w / 2, 60), cy = start.box.y + start.box.h / 2;
+    if (phone) {
+      // A real finger: touch down on a chip, drag 160px to the left over a few frames, lift.
+      const cdp = await context.newCDPSession(page);
+      const touch = (type, x) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x: Math.round(x), y: Math.round(cy) }] });
+      await touch("touchStart", cx + 160);
+      for (let i = 1; i <= 8; i++) { await touch("touchMove", cx + 160 - i * 20); await sleep(16); }
+      await touch("touchEnd", cx);
+      await sleep(400);
+      const swiped = await measure();
+      check(swiped.scrollLeft > 20, `${tag}: a finger swipe scrolls the chips`, `${swiped.scrollLeft}px`);
+    } else {
+      await page.mouse.move(cx, cy);
+      await page.keyboard.down("Shift");
+      await page.mouse.wheel(0, 300);
+      await page.keyboard.up("Shift");
+      await sleep(400);
+      const shifted = await measure();
+      check(shifted.scrollLeft > 20, `${tag}: Shift+wheel scrolls the chips`, `${shifted.scrollLeft}px`);
+      await setScroll(0);
+      await sleep(100);
+      await page.mouse.move(cx, cy);
+      await page.mouse.wheel(300, 0);
+      await sleep(400);
+      const swiped = await measure();
+      check(swiped.scrollLeft > 20, `${tag}: a sideways touchpad swipe scrolls the chips`, `${swiped.scrollLeft}px`);
+    }
+
+    // Halfway: both ends fade. At the end: only the start does. The cluster never moves.
+    await setScroll(Math.round(start.max / 2));
+    await sleep(250);
+    const mid = await measure();
+    check(mid.fadeStart && mid.fadeEnd, `${tag}: midway both ends fade`, JSON.stringify({ fadeStart: mid.fadeStart, fadeEnd: mid.fadeEnd }));
+    await shot(page, tabId, `${prefix}-${tag}-narrow-mid`);
+    await setScroll(start.max + 50);
+    await sleep(250);
+    const end = await measure();
+    check(end.fadeStart && !end.fadeEnd, `${tag}: at the end only the start fades`, JSON.stringify({ fadeStart: end.fadeStart, fadeEnd: end.fadeEnd }));
+    check(JSON.stringify(end.cluster) === JSON.stringify(start.cluster), `${tag}: scrolling does not move the right cluster`, `${JSON.stringify(start.cluster)} → ${JSON.stringify(end.cluster)}`);
+    await shot(page, tabId, `${prefix}-${tag}-narrow-end`);
+
+    // Each chip's popover opens whole while the chips are scrolled.
+    for (const [sel, name] of [
+      ["[data-manager-tasks-chip]", "tasks"],
+      ["[data-activity-chip]", "activity"],
+      ['[data-testid="session-changes-chip"]', "changes"],
+      ['[data-testid="session-schedules-chip"]', "schedules"],
+    ]) {
+      await setScroll(Math.round(start.max / 2));
+      await sleep(150);
+      const chip = inFooter(page, tabId, sel);
+      // A phone's changes chip gives way to the Tasks chip (`yieldNarrow`), so it is not there to press.
+      if (!(await chip.isVisible())) { console.log(`  ${tag}: no ${name} chip shown at this width`); continue; }
+      await chip.click();
+      await sleep(450);
+      const pop = await page.evaluate(({ r, phone }) => {
+        const panel = phone ? [...document.querySelectorAll('[role="dialog"]')].find((d) => d.offsetParent) : document.querySelector(`${r} [data-footer-popover]`);
+        if (!panel) return null;
+        const b = panel.getBoundingClientRect();
+        const row = document.querySelector(`${r} [data-chat-context-row]`);
+        const el = row.querySelector(":scope > [data-footer-chips]") ?? row.firstElementChild;
+        // Points across the panel: each must be the panel itself, not whatever the clip left showing.
+        const pts = [[0.1, 0.1], [0.9, 0.1], [0.5, 0.5], [0.1, 0.9], [0.9, 0.9]].map(([fx, fy]) => [b.left + b.width * fx, b.top + b.height * fy]);
+        const hits = pts.filter(([x, y]) => panel.contains(document.elementFromPoint(x, y))).length;
+        const s = getComputedStyle(el);
+        return { w: Math.round(b.width), h: Math.round(b.height), hits, of: pts.length, mask: s.maskImage || s.webkitMaskImage || "none", scrollerW: Math.round(el.clientWidth) };
+      }, { r: root(tabId), phone });
+      check(!!pop && pop.hits === pop.of && pop.h > 80, `${tag}: the ${name} popover opens whole while the chips are scrolled`, JSON.stringify(pop));
+      if (!phone && pop) check(pop.mask === "none", `${tag}: no mask over an open ${name} popover`, pop.mask.slice(0, 40));
+      await shot(page, tabId, `${prefix}-${tag}-narrow-${name}-open`);
+      await closePop(page);
+    }
+
+    if (!phone) await narrow(page, tabId, 0);
+  } catch (e) {
+    check(false, `${tag}: chip overflow threw`, e.message.split("\n")[0]);
+    await page.screenshot({ path: join(SHOTS, `${prefix}-${tag}-overflow-failure.png`) }).catch(() => {});
+  } finally {
+    refuse = false;
+    state.extras = false;
+    await setChildren(page, false).catch(() => {});
+    await fetch(`${harness.api}/__instant-test/release`, { method: "POST" }).catch(() => {});
+    await context.close();
+  }
+}
+
 /** Under reduced motion nothing animates: the popover has no animation and chips do not scale. */
 async function reducedMotion() {
   const context = await harness.browser.newContext({ viewport: { width: 1280, height: 860 }, reducedMotion: "reduce" });
@@ -599,9 +784,15 @@ try {
   const created = await fetch(`${harness.api}/api/projects`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: harness.project, name: PROJECT }) });
   if (created.status >= 300) throw new Error(`project registration: ${created.status}`);
   const only = process.env.PPM_FOOTER_ONLY;
-  if (only !== "phone") await scenarios(false);
-  if (only !== "desktop") await scenarios(true);
-  if (!only) await reducedMotion();
+  console.log(`scratch servers: ${JSON.stringify(harness.pids())}`);
+  if (only === "overflow") {
+    await chipOverflow(false);
+    await chipOverflow(true);
+  } else {
+    if (only !== "phone") await scenarios(false);
+    if (only !== "desktop") await scenarios(true);
+    if (!only) { await chipOverflow(false); await chipOverflow(true); await reducedMotion(); }
+  }
 } finally {
   await harness.browser.close().catch(() => {});
   await harness.cleanup();

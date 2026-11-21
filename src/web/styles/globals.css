@@ -560,6 +560,36 @@ html, body {
 }
 
 /*
+ * The chat footer's left chips scroll sideways when they do not fit, and the side that still hides
+ * chips fades out over 24px — `useScrollEdgeFades` sets `data-fade-start`/`data-fade-end`. A mask,
+ * not a gradient painted on top, for the same reason as `.chat-scroll-fade` below: what lies behind
+ * the row is the conversation fading out, which no painted colour can match.
+ *
+ * The catch is that a mask cuts everything inside the element, and a chip's popover is inside it
+ * (it escapes the scroll clip only because its containing block is the context row). So the mask
+ * goes while a popover is open; the overflow still clips the chips, just without the fade. A
+ * phone's bottom sheet is portalled to the body and never needs this.
+ */
+@property --footer-fade-start { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --footer-fade-end { syntax: "<length>"; inherits: false; initial-value: 0px; }
+.footer-chips {
+  --footer-fade-start: 0px;
+  --footer-fade-end: 0px;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--footer-fade-start), #000 calc(100% - var(--footer-fade-end)), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 var(--footer-fade-start), #000 calc(100% - var(--footer-fade-end)), transparent);
+  transition: --footer-fade-start 0.15s ease-out, --footer-fade-end 0.15s ease-out;
+}
+.footer-chips[data-fade-start] { --footer-fade-start: 24px; }
+.footer-chips[data-fade-end] { --footer-fade-end: 24px; }
+.footer-chips:has([data-footer-popover]) {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .footer-chips { transition: none; }
+}
+
+/*
  * The conversation fades out inside the chat footer's own top padding rather than in a band of its
  * own above it: the footer is pulled up over the list by that padding, and the list's last 12px
  * (which lie behind it) fade to nothing just where the chips begin. A mask rather than a gradient

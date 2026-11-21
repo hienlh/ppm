@@ -87,6 +87,8 @@ export async function createHtmlPreviewHarness({ serverScript = "tests/e2e/fixtu
       ...(channel ? { channel } : {}),
       ...(executablePath ? { executablePath } : {}),
     });
-    return { browser, sandbox, project, api, web, artifacts, cleanup, restartBackend };
+    // The scratch servers' process ids, for a run that has to report what it started.
+    const pids = () => ({ api: backend.pid, web: frontend.pid });
+    return { browser, sandbox, project, api, web, artifacts, cleanup, restartBackend, pids };
   } catch (error) { await cleanup(); throw error; }
 }
