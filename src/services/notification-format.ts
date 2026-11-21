@@ -67,10 +67,21 @@ export function formatTelegramNotification(payload: NotificationPayload, deviceN
   return text;
 }
 
-/** A system notification has a title and a few lines; the detail goes under the context line. */
+/**
+ * A system notification has a title and a few lines; the detail goes under the context line.
+ * A chat's notification is titled by the chat, so "Chat completed" says which one: the event,
+ * project and machine move to the first line, and the body's own words follow when they say
+ * more than "<project> — <chat title>".
+ */
 export function formatPushNotification(payload: NotificationPayload, deviceName: string): { title: string; body: string } {
   const detail = payload.detail?.trim() ? `\n${truncateText(payload.detail, 200)}` : "";
-  return { title: `${payload.title} · ${deviceName}`, body: `${payload.body}${detail}` };
+  const chat = payload.sessionTitle?.trim();
+  if (!chat) return { title: `${payload.title} · ${deviceName}`, body: `${payload.body}${detail}` };
+  const lead = `${payload.project || "Project"} — `;
+  const said = (payload.body.startsWith(lead) ? payload.body.slice(lead.length) : payload.body).trim();
+  const context = [payload.title, payload.project, deviceName].filter(Boolean).join(" · ");
+  const extra = said && said !== chat ? `\n${said}` : "";
+  return { title: chat, body: `${context}${extra}${detail}` };
 }
 
 /**

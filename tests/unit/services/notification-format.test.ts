@@ -67,6 +67,15 @@ describe("formatPushNotification", () => {
     });
     expect(formatPushNotification(base, "devbox").body).toBe("ppm — Fix <login>");
   });
+
+  it("titles a chat's notification by the chat, with the event, project and machine under it", () => {
+    const done: NotificationPayload = { ...base, sessionTitle: "Fix <login>", detail: "All green." };
+    expect(formatPushNotification(done, "devbox")).toEqual({ title: "Fix <login>", body: "Chat completed · ppm · devbox\nAll green." });
+    const approval: NotificationPayload = { ...base, title: "Waiting for approval", body: "ppm — Bash needs permission", sessionTitle: "Fix <login>", detail: "git push" };
+    expect(formatPushNotification(approval, "devbox")).toEqual({ title: "Fix <login>", body: "Waiting for approval · ppm · devbox\nBash needs permission\ngit push" });
+    const noProject: NotificationPayload = { ...base, project: "", body: "Project — Untitled", sessionTitle: "Untitled" };
+    expect(formatPushNotification(noProject, "devbox")).toEqual({ title: "Untitled", body: "Chat completed · devbox" });
+  });
 });
 
 describe("describeApprovalInput", () => {
