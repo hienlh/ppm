@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import "../../test-setup.ts";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -7,6 +7,7 @@ import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { invalidateIndexCache, clearIndexCache } from "../../../src/services/file-list-index.service.ts";
 import { app } from "../../../src/server/index.ts";
+import { fileService } from "../../../src/services/file.service.ts";
 
 let tmpDir: string;
 let projectPath: string;
@@ -169,6 +170,20 @@ describe("GET /files/index", () => {
     expect(over.data).toEqual({ tooLarge: true, count: all.length });
     const within = (await (await req(`/api/project/${projectName}/files/index?max=${all.length}`)).json()) as any;
     expect(within.data).toEqual(all);
+  });
+
+  it("never sends a large list, whatever `max` says: only a sample of it is kept as JSON", async () => {
+    const sample = new TextEncoder().encode(JSON.stringify({ ok: true, data: [] }));
+    const large = { json: sample, gzip: new Uint8Array(), hash: "large", count: 60_000, walkMs: 1, large: true };
+    const spy = spyOn(fileService, "buildIndex").mockResolvedValue(large);
+    try {
+      for (const query of ["", "?max=1000000"]) {
+        const body = (await (await req(`/api/project/${projectName}/files/index${query}`)).json()) as any;
+        expect(body.data).toEqual({ tooLarge: true, count: 60_000 });
+      }
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("searches the list on the server, best first", async () => {
