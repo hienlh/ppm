@@ -38,9 +38,17 @@ export interface SettingEntry {
   category: string;
   /** "Voice Input → Haiku clean-up". */
   label: string;
+  /** The tier of a change; `cardWhen` can make a `direct` setting ask for some changes only. */
   tier: SettingTier;
-  /** For `card`: why it asks even in Full mode. */
+  /** For `card` (or a change `cardWhen` picks): why it asks even in Full mode. */
   cardReason?: string;
+  /**
+   * For a `direct` setting that asks only in one direction: true when going from `before` to
+   * `after` needs a card (lowering a history limit, switching approval alerts off).
+   */
+  cardWhen?: (before: unknown, after: unknown) => boolean;
+  /** Says when `cardWhen` asks, for `settings_get`. */
+  cardWhenText?: string;
   value: ValueSpec;
   /** The value now, as the pane would show it. */
   read(): unknown | Promise<unknown>;
@@ -68,6 +76,12 @@ export interface RefusedSetting {
 export interface UncoveredCategory {
   category: string;
   reason: string;
+}
+
+/** The tier of this change: the setting's own, or `card` when `cardWhen` says this direction asks. */
+export function changeTier(entry: SettingEntry, before: unknown, after: unknown): SettingTier {
+  if (entry.tier === "card") return "card";
+  return entry.cardWhen?.(before, after) ? "card" : "direct";
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);

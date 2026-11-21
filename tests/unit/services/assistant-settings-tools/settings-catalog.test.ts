@@ -8,7 +8,8 @@ import "../../../test-setup.ts";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { allSettings, coveredCategories, lookupSetting } from "../../../../src/services/assistant-settings-tools/settings-catalog.ts";
-import { checkValue, enumValues, type SettingEntry } from "../../../../src/services/assistant-settings-tools/settings-catalog-types.ts";
+import { changeTier, checkValue, enumValues, type SettingEntry } from "../../../../src/services/assistant-settings-tools/settings-catalog-types.ts";
+import { alwaysAskReason, settingsChangeSummary } from "../../../../src/services/assistant-settings-tools/settings-approval-summary.ts";
 import { SETTINGS_ROUTES, isSettingsFamilyPath, CONFIG_KEY_WRITES } from "../../../../src/services/assistant-settings-tools/settings-tool-routes.ts";
 import { checkRouteCall, ruleProblem } from "../../../../src/services/assistant-mcp/assistant-route-call.ts";
 import { SECRET_CONFIG_KEYS } from "../../../../src/services/config-secret-keys.ts";
@@ -66,12 +67,35 @@ describe("tiers", () => {
       "assistant.db_write_connections", "assistant.instructions", "assistant.persona.name", "assistant.persona.soul",
       "assistant.manager_template", "assistant.manager_default_mode", "assistant.telegram.enabled", "accounts.strategy",
       "design.instructions", "ai.ppm_tools.open_file", "ai.providers.claude.permission_mode",
-      "session_trace.retention_days", "session_trace.max_size_mb", "query_audit.retention_days", "query_audit.max_size_mb",
     ]) expect([key, card(key)]).toEqual([key, "card"]);
   });
   it("changes the everyday ones directly", () => {
     for (const key of ["voice.enabled", "voice.cleanup_enabled", "theme.mode", "notifications.delay_seconds", "assistant.quiet_hours.start", "log_level", "files.exclude"]) {
       expect([key, card(key)]).toEqual([key, "direct"]);
+    }
+  });
+  const entryOf = (key: string) => (lookupSetting(key) as { entry: SettingEntry }).entry;
+  it("asks for a history limit only when it is lowered; raising it or setting the same value is direct", () => {
+    for (const key of ["session_trace.retention_days", "session_trace.max_size_mb", "query_audit.retention_days", "query_audit.max_size_mb"]) {
+      const e = entryOf(key);
+      expect([key, changeTier(e, 30, 7)]).toEqual([key, "card"]);
+      expect([key, changeTier(e, 30, 60)]).toEqual([key, "direct"]);
+      expect([key, changeTier(e, 30, 30)]).toEqual([key, "direct"]);
+    }
+    const e = entryOf("session_trace.retention_days");
+    expect(alwaysAskReason([{ entry: e, before: 30, after: 7 }])).toContain("delete older history");
+    expect(alwaysAskReason([{ entry: e, before: 7, after: 30 }])).toBeUndefined();
+    // The deletion warning shows on a lowering only.
+    expect(settingsChangeSummary([{ entry: e, before: 30, after: 7 }]).warning).toContain("deletes");
+    expect(settingsChangeSummary([{ entry: e, before: 7, after: 30 }]).warning).toBeUndefined();
+  });
+  it("asks to switch the Needs approval alert off, not to switch it on; other alerts stay direct", () => {
+    const approval = entryOf("notifications.events.approval_request");
+    expect(changeTier(approval, true, false)).toBe("card");
+    expect(changeTier(approval, false, true)).toBe("direct");
+    expect(alwaysAskReason([{ entry: approval, before: true, after: false }])).toContain("silences the alert");
+    for (const key of ["notifications.events.done", "notifications.events.question"]) {
+      expect([key, changeTier(entryOf(key), true, false)]).toEqual([key, "direct"]);
     }
   });
   it("Full mode honours a tool's always-ask reason", () => {

@@ -182,4 +182,26 @@ describe("Full mode, end to end", () => {
     expect((asked as { isError?: boolean }).isError).toBe(true);
     expect(getAssistantSettings().auto_readonly_commands).toBe(before);
   });
+
+  it("asks to lower a history limit or silence approval alerts, and not the other way round", async () => {
+    let cards = 0;
+    const ask = approvalAskerFor(sessionId, undefined, createApprovalBroker({ deliver: () => { cards++; return 0; } }), () => false);
+    const c: ToolContext = { sessionId, ask, callRoute: routeCallerFor("settings"), provenanceAtCall: { startedBy: "user_ppm", untrusted: false } };
+    const days = configService.get("session_trace")!.retention_days;
+    // Raising: no card, changed.
+    expect(json(await call("settings_set", c, { changes: [{ key: "session_trace.retention_days", value: days + 5 }] }))).toMatchObject({ outcome: "changed", approval: "full" });
+    expect(cards).toBe(0);
+    // Lowering back to where it was: a card (unanswered here), nothing changed.
+    const lower = await call("settings_set", c, { changes: [{ key: "session_trace.retention_days", value: days }] });
+    expect(cards).toBe(1);
+    expect((lower as { isError?: boolean }).isError).toBe(true);
+    expect(configService.get("session_trace")!.retention_days).toBe(days + 5);
+    // Approval alerts: switching off asks, switching on does not.
+    const off = await call("settings_set", c, { changes: [{ key: "notifications.events.approval_request", value: false }] });
+    expect(cards).toBe(2);
+    expect((off as { isError?: boolean }).isError).toBe(true);
+    configService.set("notifications", { ...(configService.get("notifications") ?? {}), events: { ...((configService.get("notifications") as { events?: object } | undefined)?.events ?? {}), approval_request: false } } as never);
+    expect(json(await call("settings_set", c, { changes: [{ key: "notifications.events.approval_request", value: true }] }))).toMatchObject({ outcome: "changed", approval: "full" });
+    expect(cards).toBe(2);
+  });
 });

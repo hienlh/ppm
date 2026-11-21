@@ -16,6 +16,8 @@ import type { SettingEntry } from "./settings-catalog-types.ts";
 const BOOL = { type: "boolean" } as const;
 /** Lowering a retention limit deletes older traces or query logs at once, and Undo cannot bring them back. */
 const PRUNES = "It can delete older history for good";
+/** A lower limit than before (the same number back again is not lower). */
+const lowered = (before: unknown, after: unknown) => typeof before === "number" && typeof after === "number" && after < before;
 const lowerWarns = () => "A lower limit deletes what is older or larger right away; Undo puts the number back, not what was deleted.";
 const notifications = () => resolveNotificationSettings(configService.get("notifications"));
 const configKey = (key: string) => (value: unknown) => ({ method: "PUT" as const, path: "/api/settings/config-key", body: { key, value } });
@@ -89,6 +91,10 @@ export const CORE_SETTINGS: readonly SettingEntry[] = [
   ...NOTIFICATION_EVENTS.map((event): SettingEntry => ({
     key: `notifications.events.${event}`, category: "notifications",
     label: `Notifications → ${NOTIFICATION_EVENT_COPY[event].label}`, tier: "direct",
+    // Switching approval alerts off would let a card wait unseen: that direction asks.
+    ...(event === "approval_request"
+      ? { cardReason: "It silences the alert that a card is waiting for you", cardWhen: (_b: unknown, after: unknown) => after === false, cardWhenText: "when it is switched off" }
+      : {}),
     value: BOOL,
     read: () => notifications().events[event],
     write: (value) => ({ method: "PUT", path: "/api/notifications/settings", body: { events: { [event]: value } } }),
@@ -119,25 +125,25 @@ export const CORE_SETTINGS: readonly SettingEntry[] = [
     write: (value) => ({ method: "PUT", path: "/api/settings/ai", body: { leftover_processes_idle_minutes: value } }),
   },
   {
-    key: "session_trace.retention_days", category: "storage", label: "Storage → Keep session traces for", tier: "card", cardReason: PRUNES, warn: lowerWarns,
+    key: "session_trace.retention_days", category: "storage", label: "Storage → Keep session traces for", tier: "direct", cardReason: PRUNES, cardWhen: lowered, cardWhenText: "when the limit is lowered", warn: lowerWarns,
     value: { type: "int", min: SESSION_TRACE_MIN_RETENTION_DAYS, max: 3650, unit: "days" },
     read: () => configService.get("session_trace")?.retention_days ?? null,
     write: (value) => ({ method: "PUT", path: "/api/settings/session-trace", body: { retention_days: value } }),
   },
   {
-    key: "session_trace.max_size_mb", category: "storage", label: "Storage → Session traces at most", tier: "card", cardReason: PRUNES, warn: lowerWarns,
+    key: "session_trace.max_size_mb", category: "storage", label: "Storage → Session traces at most", tier: "direct", cardReason: PRUNES, cardWhen: lowered, cardWhenText: "when the limit is lowered", warn: lowerWarns,
     value: { type: "int", min: SESSION_TRACE_MIN_SIZE_MB, max: 102_400, unit: "MB" },
     read: () => configService.get("session_trace")?.max_size_mb ?? null,
     write: (value) => ({ method: "PUT", path: "/api/settings/session-trace", body: { max_size_mb: value } }),
   },
   {
-    key: "query_audit.retention_days", category: "storage", label: "Storage → Keep the query log for", tier: "card", cardReason: PRUNES, warn: lowerWarns,
+    key: "query_audit.retention_days", category: "storage", label: "Storage → Keep the query log for", tier: "direct", cardReason: PRUNES, cardWhen: lowered, cardWhenText: "when the limit is lowered", warn: lowerWarns,
     value: { type: "int", min: 1, max: 3650, unit: "days" },
     read: () => configService.get("query_audit")?.retention_days ?? null,
     write: (value) => ({ method: "PUT", path: "/api/settings/query-audit", body: { retention_days: value } }),
   },
   {
-    key: "query_audit.max_size_mb", category: "storage", label: "Storage → Query log at most", tier: "card", cardReason: PRUNES, warn: lowerWarns,
+    key: "query_audit.max_size_mb", category: "storage", label: "Storage → Query log at most", tier: "direct", cardReason: PRUNES, cardWhen: lowered, cardWhenText: "when the limit is lowered", warn: lowerWarns,
     value: { type: "int", min: 10, max: 102_400, unit: "MB" },
     read: () => configService.get("query_audit")?.max_size_mb ?? null,
     write: (value) => ({ method: "PUT", path: "/api/settings/query-audit", body: { max_size_mb: value } }),

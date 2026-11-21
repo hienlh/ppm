@@ -31,7 +31,11 @@ async function describe(entry: SettingEntry): Promise<Record<string, unknown>> {
   const value = await entry.read();
   return {
     key: entry.key, label: entry.label, value, shown: formatValue(entry, value), allowed: allowed(entry),
-    changes: entry.tier === "direct" ? "without a card in Full mode, with one in Ask mode" : `always with a card (${entry.cardReason})`,
+    changes: entry.tier === "card"
+      ? `always with a card (${entry.cardReason})`
+      : entry.cardWhen
+        ? `without a card in Full mode, except ${entry.cardWhenText} (${entry.cardReason}); with one in Ask mode`
+        : "without a card in Full mode, with one in Ask mode",
     ...(entry.note ? { note: entry.note } : {}),
   };
 }

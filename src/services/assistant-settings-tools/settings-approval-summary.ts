@@ -1,6 +1,6 @@
 import type { ApprovalFact, ApprovalSummary } from "../../shared/assistant-approval.ts";
 import { exactFact } from "../assistant-mcp/assistant-approval-summary.ts";
-import { formatValue, type SettingEntry } from "./settings-catalog-types.ts";
+import { changeTier, formatValue, type SettingEntry } from "./settings-catalog-types.ts";
 
 /**
  * The cards the settings tools show, built from the catalog and the values PPM read — never from
@@ -21,7 +21,8 @@ const isLongText = (c: PlannedChange) => c.entry.value.type === "text" && (Strin
 
 /** Why the whole call asks even in Full mode, or undefined when every change is `direct`. */
 export function alwaysAskReason(changes: readonly PlannedChange[]): string | undefined {
-  const reasons = [...new Set(changes.filter((c) => c.entry.tier === "card").map((c) => c.entry.cardReason ?? "It changes a protected setting"))];
+  const asking = changes.filter((c) => changeTier(c.entry, c.before, c.after) === "card");
+  const reasons = [...new Set(asking.map((c) => c.entry.cardReason ?? "It changes a protected setting"))];
   return reasons.length ? `${reasons.join("; ")} — asks even in Full mode` : undefined;
 }
 
@@ -34,11 +35,13 @@ export function settingsChangeSummary(changes: readonly PlannedChange[], undo = 
       facts.push(exactFact(c.entry.label, "new text below"));
       bodies.push(changes.length > 1 ? `${c.entry.label}:\n${String(c.after)}` : String(c.after));
     } else {
-      facts.push(exactFact(c.entry.label, `${before} → ${formatValue(c.entry, c.after)}`, c.entry.tier === "card" ? "warning" : undefined));
+      facts.push(exactFact(c.entry.label, `${before} → ${formatValue(c.entry, c.after)}`, changeTier(c.entry, c.before, c.after) === "card" ? "warning" : undefined));
     }
     if (c.entry.note) facts.push(exactFact("Note", c.entry.note));
   }
-  const warnings = changes.map((c) => c.entry.warn?.(c.after) ?? null).filter((w): w is string => !!w);
+  // A setting that asks in one direction only warns in that direction (a raised limit deletes nothing).
+  const warns = (c: PlannedChange) => !c.entry.cardWhen || changeTier(c.entry, c.before, c.after) === "card";
+  const warnings = changes.map((c) => (warns(c) ? c.entry.warn?.(c.after) ?? null : null)).filter((w): w is string => !!w);
   const reason = alwaysAskReason(changes);
   if (reason) facts.push(exactFact("Asks because", reason, "warning"));
   const count = changes.length === 1 ? "a setting" : `${changes.length} settings`;

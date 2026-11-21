@@ -1197,8 +1197,11 @@ handlers refuse a call that arrives anyway.
 - **Tiers**: `direct` changes with no card in Full mode (voice, theme, notifications, model and effort,
   quiet hours, digest, file filters, log level); `card` asks even in Full mode, its reason on the card
   (login, every permission switch of the Assistant and of other chats, the Assistant's instructions,
-  persona and manager template, design instructions, account rotation, the Telegram bridge, and the
-  session-trace and query-log limits, since lowering one deletes history Undo cannot bring back). Ask mode asks for everything. A turn PPM started is refused as for every write.
+  persona and manager template, design instructions, account rotation, the Telegram bridge). A
+  `direct` setting can ask in one direction only (`cardWhen`, the user's choice of 2026-11-21): the
+  session-trace and query-log limits ask when lowered (that deletes history Undo cannot bring back;
+  raising one, or setting the same value again, does not ask), and the "Needs approval" alert asks
+  when switched off, never when switched back on. An undo is judged the same way by its direction. Ask mode asks for everything. A turn PPM started is refused as for every write.
 - **Writes** go through the settings family's route caller, so validation, logs and `settings:changed`
   (now also `voice`, `assistant`, `design`) are the pane's; the internal app mounts the broadcast
   middleware too. One card covers a call of up to 10 changes; after Allow every value is read again and
