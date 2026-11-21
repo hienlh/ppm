@@ -16,7 +16,7 @@
  * buttons of a card that offers choices (one per choice, numbered as the text lists them);
  * "Approve change" meets the same bar on the rules diff. None ever stands for text the user did not see.
  */
-import type { AssistantCard } from "../../shared/assistant-cards.ts";
+import type { AssistantCard, CardOption } from "../../shared/assistant-cards.ts";
 import {
   DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, DIGEST_RESURFACED_HEADING, DIGEST_VOICE_LEARNED_HINT, digestVoiceLearnedHeading,
   digestWaitingSummary, type DigestProject, type DigestResurfacedTask, type DigestVoiceLearned,
@@ -184,16 +184,51 @@ export type CardForTelegram = Pick<AssistantCard, "kind" | "projectName" | "prov
   & Partial<Pick<AssistantCard, "status" | "answer">>;
 
 /**
- * A card's Telegram copy. A decision shown whole that would not fit in one message is sent as
- * the preview instead, without the button that stood for the whole of it.
+ * How long each choice's description may be, tried in turn when a card with choices would not fit
+ * in one message. 0 leaves the label alone. A label and its button are never cut: the label is the
+ * button's own text, and the description only says what pressing it does.
+ */
+const DESCRIPTION_CAPS = [200, 120, 60, 0] as const;
+/** Said under choices whose descriptions were cut to fit. */
+export const DESCRIPTIONS_CUT_NOTE = "Some descriptions are cut to fit Telegram; the whole text is on the card in PPM.";
+
+/**
+ * A card's Telegram copy. A card with choices that would not fit in one message has its choices'
+ * descriptions cut, keeping every label and button. Any other decision shown whole that would not
+ * fit is sent as the preview instead, without the button that stood for the whole of it.
  */
 export function formatManagerCard(card: CardForTelegram, detail: CardDetail): FormattedManagerCard {
   const whole = renderCard(card, detail, true);
   const decides = whole.buttons.some((b) => b.op !== "revert");
-  return decides && telegramVisibleLength(whole.html) > TELEGRAM_CARD_ROOM ? renderCard({ ...card, okOffered: false }, detail, false) : whole;
+  if (!decides || telegramVisibleLength(whole.html) <= TELEGRAM_CARD_ROOM) return whole;
+  if (whole.buttons.some((b) => b.op === "choose")) {
+    for (const cap of DESCRIPTION_CAPS) {
+      const cut = renderCard(card, detail, true, cap);
+      if (telegramVisibleLength(cut.html) <= TELEGRAM_CARD_ROOM) return cut;
+    }
+  }
+  return renderCard({ ...card, okOffered: false }, detail, false);
 }
 
-function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boolean): FormattedManagerCard {
+/**
+ * The choices as the card's text lists them, right under its body: one line per choice, "N. label"
+ * in bold as its button says it, then what it does. `cap` cuts each description to that length.
+ */
+function choiceLines(options: readonly CardOption[], counter: { hidden: number }, cap?: number): string[] {
+  let cut = false;
+  const lines = options.map((o, i) => {
+    const label = `<b>${i + 1}. ${clean(oneLine(o.label), counter)}</b>`;
+    if (!o.description) return label;
+    const whole = oneLine(o.description);
+    if (cap === undefined || whole.length <= cap) return `${label}: ${clean(whole, counter)}`;
+    cut = true;
+    return cap === 0 ? label : `${label}: ${clean(truncateText(whole, cap), counter)}`;
+  });
+  if (cut) lines.push(`<i>${escapeTelegramHtml(DESCRIPTIONS_CUT_NOTE)}</i>`);
+  return lines;
+}
+
+function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boolean, descriptionCap?: number): FormattedManagerCard {
   const look = LOOK[card.kind];
   const counter = { hidden: 0 };
   const project = card.projectName ? ` · ${clean(oneLine(card.projectName), counter)}` : "";
@@ -204,23 +239,21 @@ function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boole
   const full = detail === "full";
 
   if (full && card.body) lines.push(bodyHtml(card.body, counter));
+  const decision = card.kind === "needs_decision" || card.kind === "urgent";
+  const options = decision ? card.payload.options ?? [] : [];
+  // Right under the body, so they are read with it rather than found under everything else: a
+  // button holds a short label, the text says what each one does.
+  if (full && options.length) lines.push("", ...choiceLines(options, counter, descriptionCap));
   const pictures = card.payload.images?.length ?? 0;
   if (full && pictures) lines.push(`<i>🖼 ${pictures} picture${pictures === 1 ? "" : "s"} above, numbered as listed.</i>`);
-  if (card.kind === "needs_decision" || card.kind === "urgent") {
+  if (decision) {
     const draft = card.payload.draft;
     if (full && draft) {
       const text = card.okOffered ? draft.text : preview(draft.text);
       lines.push(`<b>To:</b> ${clean(oneLine(draft.to), counter)}`, `<pre>${clean(text, counter)}</pre>`);
       if (!card.okOffered) lines.push(`⚠️ ${escapeTelegramHtml(TOO_LONG_NOTE)}`);
     }
-    const options = card.payload.options ?? [];
     if (full && options.length) {
-      // Listed in the text as well: a button holds a short label, the text says what each one does.
-      lines.push("<b>Choices</b>");
-      options.forEach((o, i) => {
-        const description = o.description ? ` — ${clean(oneLine(o.description), counter)}` : "";
-        lines.push(`${i + 1}. <b>${clean(oneLine(o.label), counter)}</b>${description}`);
-      });
       if (card.okOffered) {
         options.forEach((o, i) => buttons.push({ text: `${i + 1}. ${escapeHiddenCharacters(oneLine(o.label))}`, op: "choose", optionId: o.id }));
       } else {

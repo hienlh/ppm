@@ -26,16 +26,23 @@ interface OkCandidate {
 /** The parts of a decision card a person must read before an OK means anything. */
 function reviewedParts(card: OkCandidate): string[] {
   const draft = card.payload.draft;
-  const options = (card.payload.options ?? []).flatMap((o) => [o.label, o.description ?? ""]);
-  return [card.title, card.body, ...(draft ? [draft.to, draft.text] : []), ...options];
+  const labels = (card.payload.options ?? []).map((o) => o.label);
+  return [card.title, card.body, ...(draft ? [draft.to, draft.text] : []), ...labels];
 }
 
-/** Whether the card's whole decision fits and shows nothing hidden. */
+/**
+ * Whether the card's whole decision fits and shows nothing hidden. A choice's description says what
+ * pressing it does: it must hide nothing, but it does not count towards the fit, because a card too
+ * long for one message keeps its buttons and has its descriptions cut on Telegram instead, with a
+ * line saying so (PPM shows them whole).
+ */
 export function cardOkOffered(card: OkCandidate): boolean {
   if (!OK_CARD_KINDS.includes(card.kind)) return false;
   const parts = reviewedParts(card);
+  const descriptions = (card.payload.options ?? []).map((o) => o.description ?? "");
   let hidden = 0;
   const shown = parts.map((p) => { const r = redactSecretsForTelegram(p); hidden += r.hidden; return r.text; });
+  for (const d of descriptions) hidden += redactSecretsForTelegram(d).hidden;
   const length = (xs: string[]) => xs.reduce((n, s) => n + s.length, 0);
   if (hidden !== 0 || length(parts) > REVIEW_FIT_MAX || length(shown) > REVIEW_FIT_MAX) return false;
   // The whole card as Telegram would get it, OK offered: the formatter sends the preview instead,

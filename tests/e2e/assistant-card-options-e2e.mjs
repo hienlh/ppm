@@ -270,7 +270,7 @@ try {
   ], "one row per choice");
   assert.ok(!labelsOf(shipCopy).includes("OK"), "no OK button");
   for (const r of rows.slice(0, 3)) assert.match(r[0].callback_data, /^a:[A-Za-z0-9_-]{16}$/, "a short random code");
-  assert.ok(shipCopy.text.includes("Choices\n1. Merge and deploy to staging now — Merge PR #4120"), "the choices are listed in the text");
+  assert.ok(shipCopy.text.includes("\n1. Merge and deploy to staging now: Merge PR #4120"), "the choices are listed in the text");
   const tgPage = await browser.newPage({ viewport: { width: 420, height: 400 } });
   await tgPage.setContent(telegramPage([shipCopy]));
   await tgPage.screenshot({ path: join(shotsDir, "05-telegram-card-three-choices.png"), fullPage: true });
