@@ -1129,7 +1129,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           }),
           sessionId,
           stderr: callbacks.stderr,
-          hooks: buildToolHooks({ isBypass, preToolUse: callbacks.preToolUse, fileWrite: callbacks.fileWrite, shellCommand: callbacks.shellCommand, userPromptSubmit: callbacks.userPromptSubmit }),
+          hooks: buildToolHooks({ isBypass, preToolUse: callbacks.preToolUse, fileWrite: callbacks.fileWrite, shellCommand: callbacks.shellCommand, userPromptSubmit: callbacks.userPromptSubmit, heavyGate: callbacks.heavyGate }),
           canUseTool: callbacks.canUseTool,
         } as any,
       });
@@ -1449,6 +1449,27 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     };
 
     /** The same for the files a shell command changes, found by `git status` before and after it. */
+    /**
+     * Holds back a heavy shell command (tests, type checks, builds, e2e) while the machine is low
+     * on memory or another heavy job runs (`memory-guard/heavy-command-gate.ts`). A refusal goes
+     * back to the model as the reason, so it can wait or run less at once.
+     */
+    const heavyCommandGateHook = async (hookInput: any, _toolUseId?: unknown, hookOptions?: { signal?: AbortSignal }) => {
+      const call = shellHookCall(hookInput);
+      if (call?.phase !== "begin" || !call.command) return {};
+      try {
+        const { heavyCommandGate } = await import("../services/memory-guard/heavy-command-gate.ts");
+        const reason = await (await heavyCommandGate()).check(call.command, { signal: hookOptions?.signal });
+        if (reason) {
+          log.warn(`session=${sessionId} held a heavy command: ${reason.slice(0, 160)}`);
+          return preToolUseDecision("deny", reason);
+        }
+      } catch (e) {
+        log.warn(`session=${sessionId} heavy-command gate failed, letting the command run: ${(e as Error).message}`);
+      }
+      return {};
+    };
+
     const shellCommandHook = async (hookInput: any) => {
       const call = shellHookCall(hookInput);
       if (call?.phase === "begin") {
@@ -1468,7 +1489,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       return {};
     };
 
-    const queryHooks = buildToolHooks({ isBypass, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, userPromptSubmit: userPromptSubmitHook });
+    const queryHooks = buildToolHooks({ isBypass, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, userPromptSubmit: userPromptSubmitHook, heavyGate: heavyCommandGateHook });
 
     let assistantContent = "";
     let resultSubtype: string | undefined;
@@ -1731,7 +1752,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // is exactly the process it would have spawned; otherwise it spawns one as always.
       // Never for an Assistant session: a spare was started for an ordinary chat.
       const spare = crashRetryCount === 0 && isFirstMessage && !shouldFork && !assistantPolicy
-        ? this.warmSpares.adopt(sessionId, spawnFingerprint(withSessionTokenMasked(queryOptions)), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, userPromptSubmit: userPromptSubmitHook, stderr: stderrCallback })
+        ? this.warmSpares.adopt(sessionId, spawnFingerprint(withSessionTokenMasked(queryOptions)), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, heavyGate: heavyCommandGateHook, userPromptSubmit: userPromptSubmitHook, stderr: stderrCallback })
         : undefined;
       const channel = spare ? undefined : createMessageChannel();
       const initialCtrl = spare?.controller ?? channel!.controller;

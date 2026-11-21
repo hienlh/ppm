@@ -190,9 +190,20 @@ WantedBy=default.target
 const TASK_NAME = "PPM";
 const WIN_REG_KEY = "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
 
-/** Generate Windows VBScript wrapper content to run PPM hidden */
-export function generateVbsWrapper(config: AutoStartConfig): string {
-  const cmd = buildExecCommand(config);
+/**
+ * The command PPM's Windows task runs: one watchdog check (`__ensure_supervisor__`), which starts
+ * the supervisor when it is not running and PPM is wanted, and otherwise exits at once.
+ */
+export function buildWatchdogCommand(): string[] {
+  if (isCompiledBinary()) return [process.execPath, "__ensure_supervisor__"];
+  return [resolveBunPath(), "run", resolve(import.meta.dir, "..", "index.ts"), "__ensure_supervisor__"];
+}
+
+/** Bumped whenever the task's definition changes; a task registered by an older one is re-registered. */
+export const WINDOWS_TASK_VERSION = 2;
+
+/** Windows VBScript wrapper: runs the watchdog check hidden (no console window flashes every 2 minutes). */
+export function generateVbsWrapper(cmd: string[] = buildWatchdogCommand()): string {
   const exe = cmd[0]!;
   const args = cmd.slice(1).join(" ");
   return `Set objShell = CreateObject("WScript.Shell")
@@ -260,7 +271,7 @@ export function generateTaskXml(vbsPath: string, userId = getCurrentWindowsUserI
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>PPM - starts the PPM supervisor at logon</Description>
+    <Description>PPM - starts PPM at logon, and again within 2 minutes if it went down</Description>
     <URI>\\${TASK_NAME}</URI>
   </RegistrationInfo>
   <Triggers>
@@ -268,6 +279,14 @@ export function generateTaskXml(vbsPath: string, userId = getCurrentWindowsUserI
       <Enabled>true</Enabled>
       <UserId>${user}</UserId>
     </LogonTrigger>
+    <TimeTrigger>
+      <Repetition>
+        <Interval>PT2M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <StartBoundary>2026-01-01T00:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+    </TimeTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">

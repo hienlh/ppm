@@ -546,6 +546,12 @@ export async function startServer(options: {
         if (supervisorPid) {
           try {
             process.kill(supervisorPid, 0); // throws if dead
+            // A pid the OS gave to another program since (status.json outlives its run, a reboot
+            // with Fast Startup included) is a dead supervisor, not a running PPM.
+            const { recordedProcesses, writtenAt } = await import("../services/supervisor-watchdog/recorded-pid.ts");
+            if (!(await recordedProcesses([supervisorPid], writtenAt(statusFile))).has(supervisorPid)) {
+              throw new Error(`PID ${supervisorPid} is no longer the recorded supervisor`);
+            }
             if (!!status.minimalMode !== !!options.minimal) {
               console.error(`  PPM is already running in ${status.minimalMode ? "minimal" : "full"} mode.`);
               console.error(`  To change mode, run: ppm down && ppm start${options.minimal ? " --minimal" : ""}`);
@@ -628,15 +634,32 @@ export async function startServer(options: {
     // Both supervisorPid AND pid are tree-killed — a dead supervisor entry must
     // not stop us from reaping a still-alive orphaned server (the common case
     // after an interrupted upgrade self-replace).
+    // The tunnel and the edge are not on that list: detached, they outlive a dead supervisor still
+    // serving the public URL and port, and the new supervisor adopts them (leftover-recovery.ts).
+    let prevRun: Record<string, unknown> = {};
+    // "Alive" means still the process the record names: a pid reused since is someone else's.
+    let recorded = new Set<number>();
+    const isAlive = (pid: number) => recorded.has(pid);
     if (existsSync(statusFile)) {
       try {
-        const prev = JSON.parse(readFileSync(statusFile, "utf-8"));
+        prevRun = JSON.parse(readFileSync(statusFile, "utf-8"));
+        const { recordedProcesses, writtenAt } = await import("../services/supervisor-watchdog/recorded-pid.ts");
+        const recordedPids = (["supervisorPid", "pid", "tunnelPid", "edgePid"] as const)
+          .map((k) => prevRun[k]).filter((p): p is number => typeof p === "number" && p > 0);
+        recorded = await recordedProcesses(recordedPids, writtenAt(statusFile));
         const { killProcessTree } = await import("../services/windows-process-tree.ts");
-        for (const key of ["supervisorPid", "pid", "tunnelPid"] as const) {
-          const p = prev[key] as number | undefined;
-          if (!p) continue;
-          try { process.kill(p, 0); } catch { continue; } // already dead
-          killProcessTree(p);
+        const { leftoverPidsToKill } = await import("../services/supervisor-watchdog/leftover-recovery.ts");
+        const { statSync } = await import("node:fs");
+        const { uptime } = await import("node:os");
+        const leftovers = leftoverPidsToKill(prevRun, isAlive, {
+          bootAt: Date.now() - uptime() * 1000,
+          statusWrittenAt: statSync(statusFile).mtimeMs,
+        });
+        for (const p of leftovers.pids) killProcessTree(p);
+        if (leftovers.tunnel !== null) {
+          // Only PPM's own cloudflared: a tunnel pid from a stopped run may since name another program.
+          const { isCloudflaredPid } = await import("../services/tunnel-registry.service.ts");
+          if (await isCloudflaredPid(leftovers.tunnel)) killProcessTree(leftovers.tunnel);
         }
       } catch {}
     }
@@ -651,6 +674,14 @@ export async function startServer(options: {
     });
 
     let portInUse = await checkPort();
+    if (portInUse) {
+      const { findPortListenerPid } = await import("../services/windows-process-tree.ts");
+      const { edgeHoldsPort } = await import("../services/supervisor-watchdog/leftover-recovery.ts");
+      if (edgeHoldsPort(prevRun, isAlive, findPortListenerPid(port))) {
+        console.log(`  Port ${port} is held by the previous run's edge forwarder (PID ${prevRun.edgePid}) — keeping it for the new supervisor`);
+        portInUse = false;
+      }
+    }
     if (portInUse && process.platform === "win32") {
       // Orphaned server descendants from a previous run may hold an inherited
       // handle to this port's listening socket (zombie port). Reap them first.
@@ -996,6 +1027,11 @@ if (process.argv.includes("__serve__")) {
   } catch (e) {
     console.warn("[serve] provider bootstrap failed:", (e as Error).message);
   }
+
+  // Low-memory warnings and releasing quiet chats' subprocesses, on every watchdog reading.
+  void import("../services/memory-guard/memory-guard.service.ts")
+    .then(({ startMemoryGuard }) => startMemoryGuard())
+    .catch((e) => console.warn("[serve] memory guard failed to start:", (e as Error).message));
 
   // Each chat's commands run in a systemd slice of the chat's own, so what a chat leaves running
   // can be stopped once it is idle. Not awaited: the probe takes ~10 ms, and a CLI spawned before

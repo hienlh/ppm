@@ -4,7 +4,7 @@
  */
 import { resolve } from "node:path";
 import {
-  readFileSync, writeFileSync, existsSync, unlinkSync, renameSync, openSync, closeSync,
+  readFileSync, writeFileSync, existsSync, unlinkSync, renameSync, openSync, closeSync, statSync,
 } from "node:fs";
 import { constants } from "node:fs";
 import { getPpmDir } from "./ppm-dir.ts";
@@ -45,6 +45,11 @@ function atomicWriteJson(filePath: string, data: unknown) {
   const tmp = filePath + ".tmp." + process.pid;
   writeFileSync(tmp, JSON.stringify(data));
   renameSync(tmp, filePath);
+}
+
+/** When `status.json` was last written (ms), or null when there is none. */
+export function statusWrittenAt(): number | null {
+  try { return statSync(STATUS_FILE()).mtimeMs; } catch { return null; }
 }
 
 export function readStatus(): Record<string, unknown> {

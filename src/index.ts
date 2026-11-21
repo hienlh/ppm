@@ -169,11 +169,13 @@ export async function buildProgram(): Promise<Command> {
  */
 export function resolveEntryMode(
   argv: string[],
-): "supervise" | "serve" | "edge" | "share-host" | "cli" {
+): "supervise" | "serve" | "edge" | "share-host" | "ensure-supervisor" | "cli" {
   if (argv.includes("__supervise__")) return "supervise";
   if (argv.includes("__serve__")) return "serve";
   if (argv.includes("__edge__")) return "edge";
   if (argv.includes("__share_host__")) return "share-host";
+  // PPM's watchdog task (Windows Task Scheduler): starts PPM when its last run died.
+  if (argv.includes("__ensure_supervisor__")) return "ensure-supervisor";
   return "cli";
 }
 
@@ -193,6 +195,9 @@ if (import.meta.main) {
       break;
     case "share-host":
       await import("./services/share-host/share-host-worker.ts");
+      break;
+    case "ensure-supervisor":
+      await (await import("./services/supervisor-watchdog/ensure-supervisor.ts")).ensureSupervisorMain();
       break;
     default: {
       // A command's stdout is its output (`--json`, a pipe): log lines go to stderr.

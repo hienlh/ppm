@@ -18,7 +18,7 @@ import { cleanupStaleBinaryUpgradeArtifacts } from "./binary-upgrade-swap.ts";
 import {
   type SupervisorState,
   getState, setState, waitForResume, triggerResume,
-  readAndDeleteCmd, readStatus, updateStatus, writeStatus,
+  readAndDeleteCmd, readStatus, updateStatus, writeStatus, statusWrittenAt,
   STATUS_FILE, PID_FILE,
 } from "./supervisor-state.ts";
 import { resolveTunnelConfig, type ResolvedTunnelConfig, type TunnelMode } from "./named-tunnel/named-tunnel-config.ts";
@@ -54,6 +54,12 @@ import { waitForReplacement } from "./supervisor-self-replace-wait.ts";
 import { readThreadSnapshot, describeThreadSnapshot, type ThreadSnapshot } from "./process-thread-snapshot.ts";
 import { readMachineCpuTimes, machineBusyFraction, type MachineCpuTimes } from "./machine-cpu.ts";
 import { uptime as osUptime } from "node:os";
+import { previousSupervisorDied, readPreviousRunDeath } from "./restart-news/previous-run-death.ts";
+import { describeCommit, readSystemCommit } from "./system-commit.ts";
+import { readPulse } from "./memory-pulse.ts";
+import {
+  healthMissCounts, MAX_MEMORY_WAIT_MS, MEMORY_POLL_MS, memoryExhausted, oomBackoffMs, oomExitReason,
+} from "./supervisor-memory-guard.ts";
 import { dropStaleRestartRequest, peekRestartRequester, requesterNote, startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
 import { dropOrderedStop, writeOrderedStop } from "./restart-news/ordered-stop-note.ts";
 import {
@@ -178,6 +184,11 @@ let _opts: { port: number; host: string; share: boolean } = { port: 8080, host: 
 
 let serverRestarts = 0;
 let lastServerCrash = 0;
+/** Restarts after an out-of-memory exit, counted apart from crashes (`supervisor-memory-guard.ts`). */
+let oomRestarts = 0;
+let lastOomRestart = 0;
+/** Since when health probes have been failing with memory exhausted; null when memory is fine. */
+let healthLowMemorySince: number | null = null;
 let tunnelRestarts = 0;
 let lastTunnelCrash = 0;
 
@@ -925,6 +936,28 @@ export async function spawnServer(
     return spawnServer(serverArgs, logFd, decision.reason);
   }
 
+  // Out of memory: the machine, not the server, is what failed. Wait for commit to come back and
+  // restart on a backoff of its own, outside the crash budget that pauses PPM for good.
+  const upForS = Math.round((Date.now() - startedAt) / 1000);
+  const exitCommit = await readSystemCommit();
+  if (exitCommit && memoryExhausted(exitCommit)) {
+    const reason = oomExitReason({ exitCode, signal: exitSignal, upForS }, exitCommit, readPulse(getPpmDir(), childPid));
+    if (Date.now() - lastOomRestart > STABLE_WINDOW_MS) oomRestarts = 0;
+    oomRestarts++;
+    const delay = oomBackoffMs(oomRestarts);
+    log("ERROR", `Server went down with the machine out of memory (${describeCommit(exitCommit)}) — ${reason.detail}. Waiting ${Math.round(delay / 1000)}s, then until memory is no longer exhausted (at most ${MAX_MEMORY_WAIT_MS / 60_000} min), before restarting it`);
+    serverBackoffPending = true;
+    memoryWaitSkipped = false;
+    try {
+      await sleepUnlessSkipped(delay);
+      const waited = await waitForFreeMemory();
+      if (waited > 0) log("INFO", `Free memory ${waited >= MAX_MEMORY_WAIT_MS ? "did not come back" : "came back"} after ${Math.round(waited / 1000)}s — restarting the server`);
+    } finally { serverBackoffPending = false; }
+    lastOomRestart = Date.now();
+    if (!shuttingDown) return spawnServer(serverArgs, logFd, reason);
+    return;
+  }
+
   // Crash — apply backoff. A server the health check killed is the watchdog's restart.
   const crashReason = decision.reason;
   const now = Date.now();
@@ -958,7 +991,8 @@ export async function spawnServer(
   const delay = backoffDelay(serverRestarts);
   log("ERROR", `Server crashed (exit ${exitCode}, signal ${exitSignal}, up ${Math.round((Date.now() - startedAt) / 1000)}s) — restart #${serverRestarts}/${MAX_RESTARTS}, restarting in ${delay}ms`);
   serverBackoffPending = true;
-  try { await Bun.sleep(delay); } finally { serverBackoffPending = false; }
+  memoryWaitSkipped = false;
+  try { await sleepUnlessSkipped(delay); } finally { serverBackoffPending = false; }
 
   if (!shuttingDown) return spawnServer(serverArgs, logFd, crashReason);
 }
@@ -968,6 +1002,40 @@ export async function spawnServer(
  * `restart-news/supervisor-start-reason.ts` ask for it only where someone asked for the restart.
  */
 const takeRequest = (): StartReason | null => takeRestartRequest(getPpmDir());
+
+/**
+ * Set by a restart someone asks for (`ppm restart`, PPM Cloud) while the supervisor waits out an
+ * out-of-memory exit: the wait ends and the server starts now. Without it the restart found no
+ * server to bounce and did nothing for up to twelve minutes.
+ */
+let memoryWaitSkipped = false;
+
+/** Sleep `ms`, cut short by {@link memoryWaitSkipped} or a shutdown. */
+async function sleepUnlessSkipped(ms: number): Promise<void> {
+  const until = Date.now() + ms;
+  while (!memoryWaitSkipped && !shuttingDown && Date.now() < until) await Bun.sleep(Math.min(1000, until - Date.now()));
+}
+
+/** Wait until free commit is no longer exhausted (or unreadable), for at most {@link MAX_MEMORY_WAIT_MS}. Returns the ms waited. */
+async function waitForFreeMemory(): Promise<number> {
+  const start = Date.now();
+  while (!shuttingDown && !memoryWaitSkipped && Date.now() - start < MAX_MEMORY_WAIT_MS) {
+    if (!memoryExhausted(await readSystemCommit())) break;
+    await sleepUnlessSkipped(MEMORY_POLL_MS);
+  }
+  return Date.now() - start;
+}
+
+/**
+ * A restart asked for while no server runs: during an out-of-memory wait, end the wait (the pending
+ * spawn then starts the server) instead of starting a second one. True when it did.
+ */
+function skipMemoryWaitForRestart(): boolean {
+  if (!serverBackoffPending || serverChild) return false;
+  memoryWaitSkipped = true;
+  log("INFO", "Restart asked for while the server waits to be restarted — starting it now");
+  return true;
+}
 
 /** Seconds since the machine started; null when the OS will not say (then it is not a boot). */
 function machineUptimeS(): number | null {
@@ -1503,6 +1571,15 @@ function startServerHealthCheck() {
       const err = e as { name?: string; code?: string; message?: string } | null;
       lastProbe = err?.name === "TimeoutError" ? "timeout after 5s" : err?.code ?? err?.message ?? String(e);
     }
+    // A server not answering while the machine is out of memory is paging, not hung, and
+    // killing it frees nothing the culprit holds: those misses do not count, for a while.
+    const probeCommit = await readSystemCommit();
+    const grace = healthMissCounts(memoryExhausted(probeCommit), healthLowMemorySince, Date.now());
+    healthLowMemorySince = grace.lowSince;
+    if (!grace.counts && probeCommit) {
+      log("WARN", `Server health probe on port ${checkPort} failed (${lastProbe}) with the machine out of memory (${describeCommit(probeCommit)}) — not counted; the server is left running`);
+      return;
+    }
     healthFailCount++;
     // Read while the server is still not answering: the main thread's wait is the cause.
     const waitingOn = await describeUnresponsiveServer(serverChild?.pid);
@@ -1731,13 +1808,20 @@ async function adoptTunnel(): Promise<boolean> {
 }
 
 /** Kill stale tunnel PID from status.json (cleanup after failed adoption) */
-function killStaleTunnel() {
+async function killStaleTunnel(): Promise<void> {
   try {
     const status = readStatus();
     const pid = status.tunnelPid as number;
-    if (!pid) return;
-    try { process.kill(pid, "SIGTERM"); } catch {}
-    log("INFO", `Killed stale tunnel (PID: ${pid})`);
+    if (pid) {
+      // Only a cloudflared: the record can be from a run whose pid now names another program
+      // (a dead supervisor's, kept for adoption, when adoption refused it for exactly that).
+      if (await isCloudflaredPid(pid)) {
+        try { process.kill(pid, "SIGTERM"); } catch {}
+        log("INFO", `Killed stale tunnel (PID: ${pid})`);
+      } else {
+        log("INFO", `Stale tunnel record PID ${pid} is not a cloudflared — leaving it alone`);
+      }
+    }
   } catch {}
   updateStatus({ tunnelPid: null, shareUrl: null });
 }
@@ -2090,6 +2174,8 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
           } else if (getState() === "paused" || getState() === "stopped") {
             triggerResume();
             sendResult(true);
+          } else if (skipMemoryWaitForRestart()) {
+            sendResult(true);
           } else {
             sendResult(false, "No server child to restart");
           }
@@ -2344,6 +2430,23 @@ export async function runSupervisor(opts: {
     }
   }
 
+  // ── Windows: a task registered by an older PPM starts PPM at logon only. Re-register it so
+  // its watchdog trigger (`__ensure_supervisor__` every 2 minutes) brings PPM back after the
+  // supervisor itself dies, which nothing inside PPM can do. No admin needed; an isolated
+  // PPM_HOME never touches the real task (`enableAutoStart` refuses).
+  if (process.platform === "win32") {
+    try {
+      const { staleWindowsTaskConfig, enableAutoStart } = await import("./autostart-register.ts");
+      const stale = staleWindowsTaskConfig();
+      if (stale) {
+        await enableAutoStart(stale, { skipStart: true });
+        log("INFO", "Autostart task re-registered with the watchdog trigger (PPM is started again within 2 minutes if it goes down)");
+      }
+    } catch (e) {
+      log("WARN", `Autostart task re-registration failed (non-fatal): ${e}`);
+    }
+  }
+
   // Global exception handlers — supervisor must never crash
   process.on("uncaughtException", (err) => {
     log("ERROR", `Uncaught exception: ${err.stack || err.message}`);
@@ -2357,6 +2460,24 @@ export async function runSupervisor(opts: {
   writeFileSync(PID_FILE(), String(process.pid));
   const prevStatus = readStatus();
   const isUpgrade = prevStatus.state === "upgrading";
+  // Read before the rewrite below erases what the previous run left: whether it died, and of what.
+  const bootInfo = {
+    bootAt: ((up) => (up === null ? null : Date.now() - up * 1000))(machineUptimeS()),
+    statusWrittenAt: statusWrittenAt(),
+  };
+  // Not awaited here: asking the OS for its low-memory reports takes seconds on a struggling
+  // machine, and `ppm start` gives a new supervisor ten seconds to publish its server. Only the
+  // first server's start reason needs it, and the edge and the tunnel come up meanwhile.
+  const previousDeathP = isUpgrade
+    ? Promise.resolve(null)
+    : readPreviousRunDeath(prevStatus, getPpmDir(), bootInfo).then((death) => {
+      if (death) log("WARN", `Previous run did not stop — ${death.kind}: ${death.detail ?? "no detail"}`);
+      return death;
+    });
+  // A supervisor that died (out of memory, killed) leaves its detached edge and tunnel running,
+  // still serving the public port and URL: keep their records, as an upgrade does, so they are
+  // adopted rather than replaced. Adoption checks each one's identity and liveness itself.
+  const keepDetached = isUpgrade || previousSupervisorDied(prevStatus, bootInfo);
   writeStatus({
     supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null,
     // Which database this supervisor's server runs on: the CLI's process commands and its
@@ -2365,18 +2486,18 @@ export async function runSupervisor(opts: {
     minimalMode: !!opts.minimal,
     state: "running", pausedAt: null, pauseReason: null, lastCrashError: null,
     pid: null,
-    tunnelPid: isUpgrade ? (prevStatus.tunnelPid ?? null) : null,
-    shareUrl: isUpgrade ? (prevStatus.shareUrl ?? null) : null,
-    tunnelPort: isUpgrade ? (prevStatus.tunnelPort ?? null) : null,
+    tunnelPid: keepDetached ? (prevStatus.tunnelPid ?? null) : null,
+    shareUrl: keepDetached ? (prevStatus.shareUrl ?? null) : null,
+    tunnelPort: keepDetached ? (prevStatus.tunnelPort ?? null) : null,
     // The edge is detached and survives self-replace exactly like the tunnel,
     // so its PID must survive this wholesale rewrite or the new supervisor
     // would spawn a second edge and collide on the public port.
-    edgePid: isUpgrade ? (prevStatus.edgePid ?? null) : null,
+    edgePid: keepDetached ? (prevStatus.edgePid ?? null) : null,
     // tunnelMode/tunnelWarning survive an upgrade the same way tunnelPid/shareUrl
     // do above — otherwise a live named tunnel would report as unset mode with
     // no warning history the instant the new supervisor takes over.
-    tunnelMode: isUpgrade ? (prevStatus.tunnelMode ?? null) : null,
-    tunnelWarning: isUpgrade ? (prevStatus.tunnelWarning ?? null) : null,
+    tunnelMode: keepDetached ? (prevStatus.tunnelMode ?? null) : null,
+    tunnelWarning: keepDetached ? (prevStatus.tunnelWarning ?? null) : null,
     // Unconditional (not upgrade-gated): every boot of this code understands
     // "retunnel" — its ABSENCE is how phase 3's UI detects a pre-upgrade
     // supervisor that predates the retunnel command entirely.
@@ -2386,7 +2507,7 @@ export async function runSupervisor(opts: {
   // Diagnostic: a cold start (isUpgrade=false) always nulls the tunnel and forces
   // a fresh URL. A genuine upgrade must arrive here with state "upgrading" AND a
   // live tunnelPid for the public URL to survive — log both to catch which path ran.
-  log("INFO", `Startup: isUpgrade=${isUpgrade} prevState=${prevStatus.state} prevTunnelPid=${prevStatus.tunnelPid ?? null} prevShareUrl=${prevStatus.shareUrl ?? null}`);
+  log("INFO", `Startup: isUpgrade=${isUpgrade} keepDetached=${keepDetached} prevState=${prevStatus.state} prevTunnelPid=${prevStatus.tunnelPid ?? null} prevShareUrl=${prevStatus.shareUrl ?? null}`);
 
   // Build __serve__ args. Port 0 = OS-assigned, bound to loopback only: the
   // edge is the sole public listener, and the server publishes whatever port it
@@ -2489,6 +2610,8 @@ export async function runSupervisor(opts: {
     if (serverChild) {
       serverRestartRequested = true; // flag so spawnServer skips backoff
       requestServerShutdown(serverChild, "ppm restart").catch(() => {});
+    } else if (skipMemoryWaitForRestart()) {
+      // A spawn is already pending behind the wait for memory; it starts now.
     } else {
       // Nothing to bounce — the spawn loop is gone. Without this `ppm restart`
       // silently no-ops and only `stop --kill` + `start` recovers.
@@ -2597,6 +2720,8 @@ export async function runSupervisor(opts: {
         log("INFO", `Windows command: restart server only${requesterNote(cmd.requestedBy ?? peekRestartRequester(getPpmDir()))}`);
         if (getState() === "paused" || getState() === "stopped") {
           triggerResume();
+        } else if (skipMemoryWaitForRestart()) {
+          // A spawn is already pending behind the wait for memory; it starts now.
         } else if (serverChild) {
           serverRestartRequested = true;
           // Tree-kill + reap — single-PID kill orphans SDK grandchildren that
@@ -2704,7 +2829,7 @@ export async function runSupervisor(opts: {
       log("INFO", "Tunnel adopted from previous instance — public URL preserved");
     } else {
       log("WARN", "Tunnel adoption failed/skipped — spawning FRESH tunnel (public URL will change)");
-      killStaleTunnel(); // kill orphaned tunnel before spawning new one
+      await killStaleTunnel(); // kill orphaned tunnel before spawning new one
     }
     // Sweep leftover cloudflared orphans (crashed supervisors / pre-fix stale
     // loops) so they don't saturate the network and false-trigger regeneration.
@@ -2713,7 +2838,7 @@ export async function runSupervisor(opts: {
     // Switched off while a tunnel from an earlier boot is still alive: nothing
     // adopts or probes it now, so it would go on serving a stale origin with no
     // supervisor watching it.
-    killStaleTunnel();
+    await killStaleTunnel();
     await reapOrphanedTunnels(null);
   }
 
@@ -2774,7 +2899,7 @@ export async function runSupervisor(opts: {
   }, prevStatus.shareHostPid, { ppmRestarting: true });
 
   // Spawn server + (fresh) tunnel in parallel
-  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd, initialStartReason({ isUpgrade, uptimeS: machineUptimeS(), takeRequest }))];
+  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd, initialStartReason({ isUpgrade, uptimeS: machineUptimeS(), takeRequest, previousDeath: await previousDeathP }))];
   const tunnelLoopStarted = tunnelSharingEnabled && !tunnelAdopted;
   if (tunnelLoopStarted) promises.push(spawnTunnel(_opts.port));
 

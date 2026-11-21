@@ -2,6 +2,7 @@ import { configKeyHasPrefix, isSecretConfigKey } from "./config-secret-keys.ts";
 import { coerceConfigValue, getNestedValue, setNestedValue, type ConfigValueType } from "../cli/utils/config-key-path.ts";
 import { parseLogLevel, LOG_LEVELS } from "../shared/log-levels.ts";
 import { isValidLeftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../shared/leftover-processes.ts";
+import { isValidFreeGB, isValidIdleCliReleaseMinutes, MAX_IDLE_CLI_RELEASE_MINUTES, MAX_MEMORY_FREE_GB } from "../shared/memory-guard.ts";
 
 /**
  * Which config keys a generic "set one key" may write, and for whom: `ppm config set` and the
@@ -48,6 +49,9 @@ const ALLOWED: Readonly<Record<string, ConfigValueType>> = {
   "ai.new_chat_provider_mode": "string",
   "ai.share_provider_context": "boolean",
   "ai.leftover_processes_idle_minutes": "number",
+  "ai.memory_warn_free_gb": "number",
+  "ai.memory_block_free_gb": "number",
+  "ai.idle_cli_release_minutes": "number",
 };
 
 export function configKeyTier(key: string): ConfigKeyTier {
@@ -90,6 +94,12 @@ function checkValue(key: string, value: string | number | boolean, current: Reco
   }
   if (key === "ai.leftover_processes_idle_minutes" && !isValidLeftoverIdleMinutes(value)) {
     return { error: `ai.leftover_processes_idle_minutes must be a whole number from 0 to ${MAX_LEFTOVER_IDLE_MINUTES}` };
+  }
+  if ((key === "ai.memory_warn_free_gb" || key === "ai.memory_block_free_gb") && !isValidFreeGB(value)) {
+    return { error: `${key} must be a number of GB from 0 to ${MAX_MEMORY_FREE_GB} (halves allowed), 0 for off` };
+  }
+  if (key === "ai.idle_cli_release_minutes" && !isValidIdleCliReleaseMinutes(value)) {
+    return { error: `ai.idle_cli_release_minutes must be a whole number from 0 to ${MAX_IDLE_CLI_RELEASE_MINUTES}, 0 for never` };
   }
   if ((key.endsWith(".retention_days") || key.endsWith(".max_size_mb") || key === "port") && (!Number.isInteger(value) || (value as number) < 1)) {
     return { error: `${key} must be a positive whole number` };

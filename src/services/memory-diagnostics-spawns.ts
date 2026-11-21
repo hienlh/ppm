@@ -194,6 +194,13 @@ export class SpawnTracker {
     return undefined;
   }
 
+  /** The pids of live direct children serving chat `session` whose label starts with `labelPrefix`. */
+  pidsForSession(session: string, labelPrefix: string): number[] {
+    const out: number[] = [];
+    for (const c of this.live.values()) if (c.session === session && c.label.startsWith(labelPrefix)) out.push(c.pid);
+    return out;
+  }
+
   /** Wrap the two globals. Safe to call twice. */
   install(): void {
     if (this.installed) return;

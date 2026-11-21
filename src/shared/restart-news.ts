@@ -10,9 +10,11 @@
  * started; `manual` a `ppm start`/`ppm restart` or a restart asked for from a chat; `watchdog` the
  * supervisor killing a server that stopped answering, or anything restarting PPM over its memory
  * that says so; `recycle` a planned restart to give memory back; `crash` the server exiting on its
- * own; `upgrade` a new version; `unknown` when nobody said.
+ * own; `oom` the machine running out of memory, with the evidence in the note (an OS report, the
+ * last free-commit reading, the chat whose processes were growing); `upgrade` a new version;
+ * `unknown` when nobody said.
  */
-export const START_REASON_KINDS = ["boot", "upgrade", "manual", "watchdog", "recycle", "crash", "unknown"] as const;
+export const START_REASON_KINDS = ["boot", "upgrade", "manual", "watchdog", "recycle", "crash", "oom", "unknown"] as const;
 export type StartReasonKind = (typeof START_REASON_KINDS)[number];
 
 export interface RestartEntry {

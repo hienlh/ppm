@@ -240,6 +240,9 @@ export interface AISettings {
   /** Always complete in a server answer; a PUT may send any part of it. */
   session_collab?: Partial<SessionCollabSettings>;
   leftover_processes_idle_minutes?: number;
+  memory_warn_free_gb?: number;
+  memory_block_free_gb?: number;
+  idle_cli_release_minutes?: number;
   providers: Record<string, AIProviderSettings>;
 }
 

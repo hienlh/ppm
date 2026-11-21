@@ -28,7 +28,9 @@ describe("minimal runtime mode", () => {
     expect(args.slice(args.indexOf("__supervise__"))).toEqual(["__supervise__", "3210", "127.0.0.1", "dev", "--share", "--minimal"]);
     expect(generatePlist(config)).toContain("--minimal");
     expect(generateSystemdService(config)).toContain("--minimal");
-    expect(generateVbsWrapper(config)).toContain("--minimal");
+    // Windows: the task runs the watchdog check, which starts PPM with the mode and profile from
+    // status.json / autostart.json, so the wrapper itself carries no flags.
+    expect(generateVbsWrapper()).toContain("__ensure_supervisor__");
     expect(buildExecCommand({ ...config, minimal: false })).not.toContain("--minimal");
   });
 });
