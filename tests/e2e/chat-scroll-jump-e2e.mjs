@@ -45,7 +45,11 @@ const ANSWER_GONE_TOLERANCE_MS = 50;
 /** A streamed answer is drawn in at least this many steps (flushes are ~100 ms apart). */
 const MIN_DRAW_STEPS = 4;
 /** Variants that drop the chat socket mid-run. */
-const DROPS_SOCKET = new Set(["replay", "end-reconnect", "midturn-reconnect", "idle-reconnect"]);
+const DROPS_SOCKET = new Set(["replay", "end-reconnect", "midturn-reconnect", "idle-reconnect", "reading-reconnect"]);
+/** reading-reconnect: the heading being read may move this far when history comes back. */
+const READING_SHIFT_TOLERANCE_PX = 30;
+/** idle-loop: an idle chat may reload its history at most this often in a 10 s window. */
+const MAX_IDLE_HISTORY_READS = 1;
 let failures = 0;
 const check = (ok, label, detail = "") => { console.log(`${ok ? "PASS" : "FAIL"} ${label}${detail ? ` — ${detail}` : ""}`); if (!ok) failures++; };
 
@@ -180,6 +184,32 @@ async function sendAndSettle(page, tabId, text, { settleMs = 1500 } = {}) {
   await waitEnded(page, tabId, before, settleMs);
 }
 
+/** Wheels the transcript up, as a reader would, until the run's own prompt sits near the top. */
+async function readFromTurnStart(page, tabId, prompt) {
+  const root = `[data-tab-pool-id="${tabId}"]`;
+  const box = await page.locator(`${root} .chat-scroll-fade`).boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 40; i++) {
+    const off = await page.evaluate(({ root, prompt }) => {
+      const el = document.querySelector(`${root} .chat-scroll-fade`);
+      const row = [...el.querySelectorAll("[data-msg-id]")].reverse().find((r) => (r.textContent ?? "").includes(prompt));
+      return row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null;
+    }, { root, prompt });
+    if (off === null) throw new Error("the run's prompt is not in the list");
+    if (off >= 0 && off <= 120) return;
+    await page.mouse.wheel(0, off < 0 ? Math.max(-400, off - 40) : 100);
+    await sleep(150);
+  }
+  throw new Error("could not scroll the run's prompt to the top");
+}
+
+/** Where the latest answer's "What I found" heading sits, below the scroller's top. */
+const headingOffset = (page, tabId) => page.evaluate((root) => {
+  const el = document.querySelector(`${root} .chat-scroll-fade`);
+  const h = [...el.querySelectorAll("h1, h2, h3")].filter((n) => /What I found/.test(n.textContent ?? "")).at(-1);
+  return h ? h.getBoundingClientRect().top - el.getBoundingClientRect().top : null;
+}, `[data-tab-pool-id="${tabId}"]`);
+
 /** History reads (`GET …/messages`) the page made since `t`: a refetch replaces every row. */
 const historyReads = (log, t) => log.filter((e) => e.at >= t).length;
 
@@ -251,6 +281,10 @@ try {
     await sampleFrames(page, tabId, `run ${run} deltas=`);
     const runStart = Date.now();
     let extra = "";
+    /** reading-reconnect: how far the heading being read moved when history came back. */
+    let readingShift = null;
+    /** idle-loop: history reloads made in a 10 s idle window. */
+    let idleReads = null;
     if (VARIANT === "idle-reconnect") {
       // The turn ends normally; then the chat socket drops and comes back while idle, as after a
       // network blip. The greeting finds the history stale and refetches it, replacing every row.
@@ -270,6 +304,30 @@ try {
       const dropAt = Date.now();
       await waitEnded(page, tabId, before, 2500);
       extra = `refetches=${historyReads(reads, dropAt)}`;
+    } else if (VARIANT === "reading-reconnect") {
+      // The turn ends; the reader scrolls back up to read the answer from its start, the way a
+      // long answer is read. Then the chat socket drops and comes back (the live log shows this
+      // every few minutes), and the idle greeting reloads history, which hands the turn back as
+      // one message per block instead of the one message the stream drew.
+      await sendAndSettle(page, tabId, `long run ${run} deltas=${300 + (run % 4) * 150}`, { settleMs: 1500 });
+      await readFromTurnStart(page, tabId, `run ${run} deltas=`);
+      await sleep(5600); // past the 5 s in which a just-loaded history counts as fresh
+      const before = await headingOffset(page, tabId);
+      const dropAt = Date.now();
+      await dropChatSockets();
+      await until("the history refetch after the reconnect", async () => historyReads(reads, dropAt) > 0, { timeout: 20000 });
+      await sleep(2500);
+      const afterOffset = await headingOffset(page, tabId);
+      readingShift = afterOffset === null || before === null ? null : Math.round(afterOffset - before);
+      extra = `refetches=${historyReads(reads, dropAt)} headingBefore=${Math.round(before ?? -1)} headingAfter=${Math.round(afterOffset ?? -1)}`;
+    } else if (VARIANT === "idle-loop") {
+      // A chat left open and idle: count the history reloads it makes on its own.
+      const t0 = Date.now();
+      const top0 = await distance(page, tabId);
+      await sleep(10_000);
+      idleReads = historyReads(reads, t0);
+      const top1 = await distance(page, tabId);
+      extra = `historyReadsIn10s=${idleReads} rowAtTop ${top0?.rowAtTop} -> ${top1?.rowAtTop}`;
     } else if (VARIANT === "replay") {
       // The default. Most of the answer is on screen when the chat socket drops (a tunnel blip);
       // the page reconnects while the turn still runs, and the server replays the turn so far.
@@ -342,7 +400,17 @@ try {
     // Enforced on turns streamed without a drop: after a drop the rest of a turn is short, and the
     // count says more about where the drop fell than about how the answer is drawn.
     const drawnOk = DROPS_SOCKET.has(VARIANT) || growth >= MIN_DRAW_STEPS;
-    const ok = after && after.dist <= AT_BOTTOM_PX && answerShown && gone.longest <= ANSWER_GONE_TOLERANCE_MS && drawnOk;
+    let ok;
+    if (VARIANT === "reading-reconnect") {
+      // The reader is not at the bottom: what must hold is the place they were reading.
+      ok = readingShift !== null && Math.abs(readingShift) <= READING_SHIFT_TOLERANCE_PX && answerShown && gone.longest <= ANSWER_GONE_TOLERANCE_MS;
+      extra += ` readingShift=${readingShift}px`;
+    } else if (VARIANT === "idle-loop") {
+      // No turn runs here; an idle chat reloading its history on its own is what is measured.
+      ok = idleReads !== null && idleReads <= MAX_IDLE_HISTORY_READS;
+    } else {
+      ok = after && after.dist <= AT_BOTTOM_PX && answerShown && gone.longest <= ANSWER_GONE_TOLERANCE_MS && drawnOk;
+    }
     // The scroller's own height over the run: a bar above or below it coming and going shows here.
     const chs = trace.frames.map((f) => f.ch);
     extra += ` ch=${Math.min(...chs)}..${Math.max(...chs)} maxDist=${Math.max(...trace.frames.map((f) => Math.round(f.dist)))}`;
@@ -362,8 +430,8 @@ try {
       await page.screenshot({ path: join(OUT, `run-${run}.png`) });
       console.log(`    trace written: run-${run}-trace.json (${around.length} frames, ${writes.length} writes, ${events.length} scroll events)`);
     }
-    // Back to the bottom by hand only if this run left the view up, so every run starts alike.
-    if (!ok) {
+    // Back to the bottom by hand if this run left the view up, so every run starts alike.
+    if (!ok || VARIANT === "reading-reconnect") {
       await page.evaluate((root) => { const el = document.querySelector(`${root} .chat-scroll-fade`); el.scrollTop = el.scrollHeight; }, `[data-tab-pool-id="${tabId}"]`);
       await sleep(400);
     }

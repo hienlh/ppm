@@ -140,6 +140,32 @@ function script(message: string): Script {
   };
 }
 
+/**
+ * The answer the way a Claude transcript hands it back: every block of a reply is a record of
+ * its own, so history holds one assistant message per thinking block, text block and tool call,
+ * with each tool's result folded into its call's message (`mergeToolResultMessages`). The live
+ * stream draws the same turn as one message, which is what a history reload swaps it for.
+ * PPM_SCROLL_SPLIT_HISTORY=0 keeps the single message instead.
+ */
+function asTranscript(msg: ProviderMessage): ProviderMessage[] {
+  if (process.env.PPM_SCROLL_SPLIT_HISTORY === "0" || !msg.events?.length) return [msg];
+  const out: ProviderMessage[] = [];
+  const byCall = new Map<string, ProviderMessage>();
+  for (const ev of msg.events as unknown as Array<{ type: string; content?: string; toolUseId?: string }>) {
+    if (ev.type === "tool_result" && ev.toolUseId && byCall.has(ev.toolUseId)) {
+      (byCall.get(ev.toolUseId)!.events as unknown[]).push(ev);
+      continue;
+    }
+    const part: ProviderMessage = {
+      id: crypto.randomUUID(), role: "assistant", content: ev.type === "text" ? ev.content ?? "" : "",
+      events: [ev] as never, timestamp: msg.timestamp,
+    };
+    if (ev.type === "tool_use" && ev.toolUseId) byCall.set(ev.toolUseId, part);
+    out.push(part);
+  }
+  return out;
+}
+
 const turns: { message: string; at: number; yielded: number; ended?: number; tasksDoneAt?: number; paused?: boolean }[] = [];
 
 class ScrollScriptMock extends MockProvider {
@@ -197,7 +223,7 @@ class ScrollScriptMock extends MockProvider {
       // A few milliseconds apart, batched, so a 400-delta turn takes a couple of seconds.
       if (i % 8 === 0) await sleep(12);
     }
-    history.push(stored);
+    history.push(...asTranscript(stored));
     this.history.set(sessionId, history);
     if (bgbar && !lower.includes("bgbar-after")) yield { type: "background_registry", shells: [] } as never;
     turn.ended = Date.now();
