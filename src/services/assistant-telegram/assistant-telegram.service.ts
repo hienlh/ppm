@@ -62,6 +62,7 @@ import type { AssistantClock } from "../assistant-wake/assistant-clock.ts";
 import { CardReminders, quietWhileInPpm, TelegramSilence } from "./assistant-telegram-silence.ts";
 import { AssistantTelegramTasks, type TaskTelegramDeps } from "./assistant-telegram-task-actions.ts";
 import { AssistantTelegramTaskCreated, type TaskCreatedDeps } from "./assistant-telegram-task-created.ts";
+import { AssistantTelegramSettingsChanges } from "./assistant-telegram-settings-changes.ts";
 import { AssistantTelegramTaskMessages, type TaskMessageDeps } from "./assistant-telegram-task-message.ts";
 import { AssistantTelegramTaskFollowups } from "./assistant-telegram-task-followups.ts";
 import { attachTaskFollowupSink, detachTaskFollowupSink } from "../assistant-cards/task-words-followup.ts";
@@ -157,6 +158,7 @@ interface Running {
   reminders: CardReminders;
   tasks: AssistantTelegramTasks;
   taskCreated: AssistantTelegramTaskCreated;
+  settingsChanges: AssistantTelegramSettingsChanges;
   taskMessages: AssistantTelegramTaskMessages;
   offs: Array<() => void>;
 }
@@ -211,6 +213,7 @@ export class AssistantTelegramBridge {
     const cardReplies = new AssistantTelegramCardReplies({ codes, reply: replyTo });
     const tasks = new AssistantTelegramTasks({ queue, codes, ...opts.tasks });
     const taskCreated = new AssistantTelegramTaskCreated({ queue, codes, ...opts.tasks });
+    const settingsChanges = new AssistantTelegramSettingsChanges({ queue, codes });
     const taskMessages = new AssistantTelegramTaskMessages({
       queue, codes, ...(opts.tasks?.clock ? { clock: opts.tasks.clock } : {}), ...(opts.tasks?.forward ? { forward: opts.tasks.forward } : {}),
       taskAt: (chatId, messageId) => tasks.taskAt(chatId, messageId) ?? taskCreated.taskAt(chatId, messageId),
@@ -240,6 +243,7 @@ export class AssistantTelegramBridge {
         if (taskCreated.owns(press.ref)) return taskCreated.press(chatId, press, group);
         return tasks.press(chatId, press, group, cq);
       },
+      pressSettings: (chatId, press, group) => settingsChanges.press(chatId, press, group),
       showTasks: (chatId, args, reply) => tasks.showDeck(chatId, args, reply),
       taskWords: { wants: (chatId, replyTo) => taskMessages.wants(chatId, replyTo), take: (chatId, m, aim) => taskMessages.take(chatId, m, aim) },
       replyToCard: (chatId, m) => cardReplies.reply(chatId, m),
@@ -262,6 +266,7 @@ export class AssistantTelegramBridge {
       addNotificationSuppressor((sessionId, kind) => kind === "approval" && managerCardReachesPhone(sessionId, managerCards)),
       () => cardOutbound.detach(managerCards),
       () => taskCreated.detach(),
+      () => settingsChanges.detach(),
       () => tasks.stop(),
       () => taskMessages.stop(),
       () => detachTaskFollowupSink(taskFollowups),
@@ -271,7 +276,8 @@ export class AssistantTelegramBridge {
     attachCardFollowupSink(cardFollowups);
     attachTaskFollowupSink(taskFollowups);
     taskCreated.attach();
-    this.run = { poller, queue, state, inbound, mirror, relay, dbNotices, cards, codes, reminders, tasks, taskCreated, taskMessages, offs };
+    settingsChanges.attach();
+    this.run = { poller, queue, state, inbound, mirror, relay, dbNotices, cards, codes, reminders, tasks, taskCreated, settingsChanges, taskMessages, offs };
 
     recoverInterrupted(queue, state);
     mirror.attach();
@@ -309,6 +315,7 @@ export class AssistantTelegramBridge {
     run.cards.forgetChat(chatId);
     run.tasks.forgetChat(chatId);
     run.taskCreated.forgetChat(chatId);
+    run.settingsChanges.forgetChat(chatId);
     run.taskMessages.forgetChat(chatId);
     run.codes.dropChat(chatId);
     run.inbound.forgetChat(chatId);

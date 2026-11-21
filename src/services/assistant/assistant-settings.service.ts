@@ -98,6 +98,14 @@ export function writeAssistantPermissionMode(mode: AssistantPermissionMode): voi
   notifySaved(before, next);
 }
 
+/** "Let the Assistant change settings", as the "PPM has new features" question answers it. */
+export function writeAssistantSettingsTools(on: boolean): void {
+  const before = getAssistantSettings();
+  const next = { ...before, settings_tools: on };
+  configService.set("assistant", next);
+  notifySaved(before, next);
+}
+
 /** Whether two stored URLs (both validated as http/https on the way in) share scheme, host and port. */
 function sameOrigin(a: string, b: string): boolean {
   try {
@@ -176,6 +184,10 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
   const permissionMode = sentKey("permission_mode") ? value.permission_mode : saved.permission_mode;
   if (permissionMode) next.permission_mode = permissionMode;
   else delete next.permission_mode;
+  // The same for the settings tools' switch: absent is "not chosen", and only a save naming it decides.
+  const settingsTools = sentKey("settings_tools") ? value.settings_tools : saved.settings_tools;
+  if (settingsTools !== undefined) next.settings_tools = settingsTools;
+  else delete next.settings_tools;
   configService.set("assistant", next);
   notifySaved(saved, next);
   return { ok: true, settings: maskAssistantSettings(next) };

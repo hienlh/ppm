@@ -13,6 +13,7 @@ import {
 } from "../../shared/assistant-tool-names.ts";
 import { CLAUDE_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_SERVER } from "../../shared/session-collab.ts";
 import { JIRA_CONFIG_GET_TOOL, PPM_STATUS_TOOL, SYSTEM_RESOURCES_TOOL } from "../../shared/assistant-system-tool-names.ts";
+import { SETTINGS_TOOLS } from "../../shared/assistant-settings-tool-names.ts";
 
 /**
  * The Assistant's own tools that answer only with PPM's own data or the user's: the project list
@@ -26,6 +27,9 @@ import { JIRA_CONFIG_GET_TOOL, PPM_STATUS_TOOL, SYSTEM_RESOURCES_TOOL } from "..
 const OWN_TOOLS_WITHOUT_OUTSIDE_TEXT: ReadonlySet<string> = new Set([
   PROJECTS_LIST_TOOL, PROJECT_ADD_TOOL, PPM_CLI_REFERENCE_TOOL, NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,
   TERMINAL_TYPE_TOOL, PPM_STATUS_TOOL, SYSTEM_RESOURCES_TOOL, JIRA_CONFIG_GET_TOOL,
+  // An install's answer is PPM's own words. A setting's value is not counted: a free-text one may
+  // have been written by an earlier turn that had read a page.
+  ...SETTINGS_TOOLS.filter((t) => t === "settings_install" || t === "settings_install_status"),
 ]);
 
 /**

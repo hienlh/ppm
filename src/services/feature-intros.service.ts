@@ -8,7 +8,7 @@
 import { configService } from "./config.service.ts";
 import { getDb } from "./db.service.ts";
 import { createLogger } from "./logger.ts";
-import { getAssistantSettings, writeAssistantPermissionMode } from "./assistant/assistant-settings.service.ts";
+import { getAssistantSettings, writeAssistantPermissionMode, writeAssistantSettingsTools } from "./assistant/assistant-settings.service.ts";
 import { readVoiceSettings, updateVoiceSettings, voiceMessagesEnabled } from "./voice-message/voice-settings.ts";
 import {
   answerFromSwitches, FEATURE_INTRO_SKIP_WINDOW_MS, FEATURE_INTROS, featureIntroById, MAX_FEATURE_INTRO_SKIPS, switchesForAnswer,
@@ -81,6 +81,10 @@ function answerFromSetting(setting: FeatureIntroSetting): FeatureIntroAnswer | n
       const on = readVoiceSettings().self_learning;
       return on === true ? "on" : on === false ? "off" : null;
     }
+    case "assistant_settings_tools": {
+      const on = getAssistantSettings().settings_tools;
+      return on === true ? "on" : on === false ? "off" : null;
+    }
   }
 }
 
@@ -100,6 +104,9 @@ function writeSettingAnswer(setting: FeatureIntroSetting, answer: FeatureIntroAn
       return;
     case "voice_self_learning":
       updateVoiceSettings({ selfLearning: answer === "on" });
+      return;
+    case "assistant_settings_tools":
+      writeAssistantSettingsTools(answer === "on");
       return;
   }
 }

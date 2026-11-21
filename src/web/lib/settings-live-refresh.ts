@@ -5,6 +5,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useKeybindingsStore } from "@/stores/keybindings-store";
 import type { PpmThemeMode } from "@/theme/types";
 import { SETTINGS_CHANGED_EVENT, type SettingsSection } from "../../shared/settings-events";
+import { VOICE_SETTINGS_CHANGED_EVENT } from "./voice-message-client";
 
 /**
  * What this browser does when the server announces `settings:changed {section}` (a screen on
@@ -21,6 +22,9 @@ export async function refreshAppWideSettings(section: SettingsSection): Promise<
     await useSettingsStore.getState().fetchThemes();
   } else if (section === "keybindings") {
     await useKeybindingsStore.getState().loadFromServer();
+  } else if (section === "voice") {
+    // Open composers and the Voice Input pane read the voice settings again.
+    window.dispatchEvent(new CustomEvent(VOICE_SETTINGS_CHANGED_EVENT));
   } else if (section === "ai") {
     // A chat opened next must not start from the AI settings cached before the change.
     clearChatPreparationCache();

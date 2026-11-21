@@ -25,8 +25,9 @@ import { hydrateProjectCache, peekLastProjectRef } from "@/lib/browser-cache/pro
 // Registers the slash-list hydrator before boot hydration runs; the chat tab that
 // otherwise loads this module sits in a lazy chunk.
 import "@/lib/slash-items-cache";
-import { useUrlSync, parseUrlState, autoOpenFromUrl, openAssistantFromAddress, openFileBrowserFromAddress, openVaultFromAddress, requestTurnJumpFromUrl } from "@/hooks/use-url-sync";
+import { useUrlSync, parseUrlState, autoOpenFromUrl, openAssistantFromAddress, openFileBrowserFromAddress, openSettingsFromAddress, openVaultFromAddress, requestTurnJumpFromUrl } from "@/hooks/use-url-sync";
 import { vaultLinkFromSearch } from "@/lib/vault-deep-link";
+import { settingsLinkFromSearch } from "@/lib/settings-deep-link";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { useWakeLock } from "@/hooks/use-wake-lock";
@@ -122,6 +123,7 @@ export function App() {
   const initialUrlRef = useRef(parseUrlState());
   // Read at mount, before anything rewrites the address for the tabs it opens.
   const initialVaultLinkRef = useRef(vaultLinkFromSearch(window.location.search));
+  const initialSettingsLinkRef = useRef(settingsLinkFromSearch(window.location.search));
   // A notification's link to an extension command or panel; run once, after the boot project.
   const [bootDeepLink] = useState(takeDeepLinkFromLocation);
   const bootDeepLinkRanRef = useRef(false);
@@ -257,6 +259,10 @@ export function App() {
         const vaultLink = initialVaultLinkRef.current;
         initialVaultLinkRef.current = null;
         if (vaultLink) openVaultFromAddress(vaultLink);
+        // ?openSettings=<category> (the Assistant's link to a field it may not fill, a Telegram card).
+        const settingsLink = initialSettingsLinkRef.current;
+        initialSettingsLinkRef.current = null;
+        if (settingsLink) openSettingsFromAddress(settingsLink);
       };
       if (projects.length === 0) {
         openAssistantFromUrl();

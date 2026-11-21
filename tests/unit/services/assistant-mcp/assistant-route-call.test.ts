@@ -318,11 +318,14 @@ describe("the internal app", () => {
 
   it("mounts none of the server's other routers, whatever a rule says", async () => {
     const call = createRouteCaller([
-      allowRoute("GET", "/api/settings"), allowRoute("GET", "/api/fs/list", ["path"]), allowRoute("GET", "/api/health"),
+      allowRoute("GET", "/api/settings/ui-prefs"), allowRoute("GET", "/api/fs/list", ["path"]), allowRoute("GET", "/api/health"),
     ]);
-    for (const path of ["/api/settings", "/api/fs/list?path=%2F", "/api/health"]) {
+    for (const path of ["/api/fs/list?path=%2F", "/api/health"]) {
       expect({ path, status: (await call("GET", path)).status }).toEqual({ path, status: 404 });
     }
+    // The settings routers are mounted for the settings tools, behind a gate that lets through
+    // only the panes' own writes: anything else of them is refused before the router runs.
+    expect(await call("GET", "/api/settings/ui-prefs")).toMatchObject({ status: 403, code: "route_not_allowed" });
   });
 
   it("lets nothing but a project's git, chat-session and tag routes through the project router", async () => {

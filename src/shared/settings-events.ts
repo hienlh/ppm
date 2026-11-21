@@ -13,6 +13,9 @@ export const SETTINGS_EVENT_SECTIONS = [
   // Notifications (what and when, ntfy, push devices), the notification bot and its chats,
   // the Assistant's Telegram bot (`clawbot`), MCP servers, and the Claude and Codex accounts.
   "notifications", "telegram", "clawbot", "mcp", "accounts",
+  // Voice messages, the PPM Assistant's own settings and the design chats' instructions: written
+  // from their panes, and by the Assistant's settings tools.
+  "voice", "assistant", "design",
 ] as const;
 
 export type SettingsSection = typeof SETTINGS_EVENT_SECTIONS[number];

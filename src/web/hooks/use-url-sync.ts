@@ -8,6 +8,8 @@ import { openAssistant } from "@/components/assistant/open-assistant";
 import { isAssistantProject } from "../../shared/assistant-project";
 import { assistantLinkFromLocation, type AssistantDeepLink } from "@/lib/assistant-deep-link";
 import { addressWithoutVaultLink, type VaultDeepLink } from "@/lib/vault-deep-link";
+import { addressWithoutSettingsLink, type SettingsDeepLink } from "@/lib/settings-deep-link";
+import { ASSISTANT_SETTINGS_TABS, resolveSettingsLink, useAssistantSettingsTab } from "@/components/settings/assistant-settings-tab-store";
 import { useVaultFocusStore } from "@/stores/vault-focus-store";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { isValidDesignSlug } from "../../services/design/design-slug";
@@ -293,6 +295,19 @@ export function openVaultFromAddress(link: VaultDeepLink): void {
   window.history.replaceState(null, "", addressWithoutVaultLink(window.location.href));
   useVaultFocusStore.getState().focus(link.itemId);
   onceWindowLayerIsReady(() => openSettings("vault"));
+}
+
+/**
+ * Opens the Settings pane an address names (`/?openSettings=<category>`, from the Assistant or a
+ * Telegram card). An unknown pane opens nothing; the parameter is dropped either way.
+ */
+export function openSettingsFromAddress(link: SettingsDeepLink): void {
+  window.history.replaceState(null, "", addressWithoutSettingsLink(window.location.href));
+  const category = resolveSettingsLink(link.category);
+  if (!category) return;
+  const tab = ASSISTANT_SETTINGS_TABS.find((t) => t.id === link.assistantTab);
+  if (category === "assistant" && tab) useAssistantSettingsTab.getState().setTab(tab.id);
+  onceWindowLayerIsReady(() => openSettings(category));
 }
 
 export function openAssistantFromAddress(link: AssistantDeepLink): void {

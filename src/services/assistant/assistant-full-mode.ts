@@ -49,6 +49,11 @@ export interface FullModeAction {
   connectionId?: number;
   /** It reads or writes a folder PPM keeps private (`assistant-private-paths.ts`). */
   touchesPrivate?: boolean;
+  /**
+   * The tool's own reason this action asks whatever the mode (a setting that changes permissions,
+   * an install). The tool decides it from its catalog; this module only honours it.
+   */
+  alwaysAsk?: string;
 }
 
 export type FullModeVerdict =
@@ -73,6 +78,7 @@ export interface FullModeDeps {
  */
 export function hardLimitReason(action: FullModeAction, dbWritable: ReadonlySet<number>): string | null {
   const { tool, input } = action;
+  if (action.alwaysAsk) return action.alwaysAsk;
   if (action.touchesPrivate) return "it reaches a folder PPM keeps private, whose contents could leave in an answer or on Telegram";
   if (tool === GIT_SYNC_TOOL && input.action === "push") return "a push sends commits off this machine";
   if (tool === PUBLIC_LINK_SET_TOOL && input.enabled === true) return "it puts PPM on a public address";

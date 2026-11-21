@@ -360,6 +360,9 @@ app.route("/api/settings/design", designSettingsRoutes);
 // Settings → PPM Assistant, kept apart from every other chat's settings.
 import { assistantSettingsRoutes } from "./routes/assistant-settings.ts";
 app.route("/api/assistant", assistantSettingsRoutes);
+// The settings the Assistant changed, and Undo (Settings → PPM Assistant → Changes).
+import { assistantSettingsChangesRoutes } from "./routes/assistant-settings-changes.ts";
+app.route("/api/assistant/settings-changes", assistantSettingsChangesRoutes);
 app.route("/api/tunnel", tunnelRoutes);
 import { namedTunnelRoutes } from "./routes/named-tunnel.ts";
 app.route("/api/tunnel/named", namedTunnelRoutes);
