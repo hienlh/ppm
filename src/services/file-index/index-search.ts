@@ -1,5 +1,5 @@
 /**
- * Searching a project's file list where it is held — on the index worker — for a list too long
+ * Searching a project's file list where it is held — on its search worker — for a list too long
  * to send to the browser (`REMOTE_FILE_SEARCH_FROM_ENTRIES`). It ranks exactly as the palette
  * ranks a list it holds itself (`score-file-search.ts`), so a project does not start searching
  * differently for crossing the threshold.

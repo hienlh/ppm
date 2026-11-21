@@ -3,7 +3,7 @@
  * Lazy-load file tree listing and flat index building for palette/search.
  * Implements listDir() (1-level) and buildIndex() (recursive) with filter support.
  * Index results are cached per project path; a file change marks them stale (see IndexEntry).
- * The walk itself runs on the file index worker (file-index/), off the thread serving requests.
+ * The walk itself runs in a process of its own (file-index/), off the thread serving requests.
  */
 
 import { existsSync, readdirSync } from "node:fs";
@@ -51,10 +51,25 @@ interface IndexEntry {
   lastWalkMs: number;
   /** A walk took `SLOW_WALK_LOG_MS` or more and said so at INFO; later slow walks stay at DEBUG. */
   slowLogged?: boolean;
+  /** A walk stopped at `MAX_INDEX_ENTRIES` and said so; later ones stay quiet. */
+  truncatedLogged?: boolean;
 }
 
 /** A walk this long is worth a line at INFO, once per project: it keeps a core busy that long. */
 const SLOW_WALK_LOG_MS = 5_000;
+
+/**
+ * A large list (`IndexBuild.large`) is not walked again after every change — a project that big is
+ * usually a pile of checkouts that something writes into all day, and walking it on each change
+ * kept a worker walking half of every hour. It is walked again only when a request uses it and
+ * at least this long, or ten times its last walk, has passed since the last walk ended.
+ */
+const LARGE_REWALK_MIN_MS = 5 * 60_000;
+
+/** When a stale large list may be walked again (see `LARGE_REWALK_MIN_MS`). Exported for tests. */
+export function largeRewalkDue(now: number, lastWalkEndedAt: number, lastWalkMs: number): boolean {
+  return now - lastWalkEndedAt >= Math.max(LARGE_REWALK_MIN_MS, lastWalkMs * 10);
+}
 
 const indexCache = new Map<string, IndexEntry>();
 
@@ -91,7 +106,7 @@ export function markIndexStale(projectPath: string): void {
 
 /**
  * Walk a project nobody has asked about yet, so its first palette opens on a ready list. The
- * walk runs on the index worker; a failure is left to the first request to report.
+ * walk runs in a walk process; a failure is left to the first request to report.
  */
 export function warmIndex(projectPath: string): void {
   if (indexCache.has(projectPath)) return;
@@ -118,7 +133,8 @@ export function refreshDelay(now: number, lastWalkEndedAt: number, lastWalkMs: n
 function scheduleRefresh(projectPath: string, entry: IndexEntry): void {
   // With no list yet the first request walks, and a walk under way reschedules when it ends.
   // Starting a walk and dropping the entry both clear the timer, so one that fires has work to do.
-  if (entry.refreshTimer || !entry.build || entry.building) return;
+  // A large list waits for a request instead (see `LARGE_REWALK_MIN_MS`).
+  if (entry.refreshTimer || !entry.build || entry.building || entry.build.large) return;
   entry.refreshTimer = setTimeout(() => {
     entry.refreshTimer = null;
     startBuild(projectPath, entry);
@@ -263,10 +279,14 @@ export function buildIndex(projectPath: string, graceMs = REBUILD_GRACE_MS): Pro
     indexCache.set(projectPath, entry);
   }
   const held = entry.build;
-  const waits = !held || entry.lastWalkMs <= QUICK_WALK_MS;
+  const waits = !held || (!held.large && entry.lastWalkMs <= QUICK_WALK_MS);
   if (entry.stale) {
+    // A large list is walked again only here, on a request, and not too often.
+    if (held?.large) {
+      if (!entry.building && largeRewalkDue(Date.now(), entry.lastWalkEndedAt, entry.lastWalkMs)) startBuild(projectPath, entry);
+    }
     // A slow list is refreshed on its schedule; this only re-arms one a failed walk left unset.
-    if (!waits) scheduleRefresh(projectPath, entry);
+    else if (!waits) scheduleRefresh(projectPath, entry);
     else if (entry.building) entry.rewalk = true;
     else startBuild(projectPath, entry);
   }
@@ -313,9 +333,15 @@ function startBuild(projectPath: string, entry: IndexEntry): Promise<IndexBuild>
       const slowNow = next.walkMs >= SLOW_WALK_LOG_MS && !entry.slowLogged;
       if (slowNow) entry.slowLogged = true;
       const line = `indexed ${projectPath}: ${next.count} entries in ${Math.round(next.walkMs)} ms (` +
-        `${previous ? `changed=${previous.hash !== next.hash}, ` : ""}${fileIndexRunner.onMainThread ? "main thread" : "worker"})`;
+        `${previous ? `changed=${previous.hash !== next.hash}, ` : ""}` +
+        `${next.peakMB !== undefined ? `walk process, peak ${next.peakMB} MB` : "main thread"})`;
       if (!previous || slowNow) log.info(line);
       else log.debug(line);
+      if (next.truncated && !entry.truncatedLogged) {
+        entry.truncatedLogged = true;
+        log.warn(`${projectPath} stopped at ${next.count} entries — files past them are not in the palette or search. ` +
+          "Add build/cache or checkout directories to the project's search exclude.");
+      }
       if (previous) {
         const changed = previous.hash !== next.hash;
         for (const listener of rebuiltListeners) listener(projectPath, changed);

@@ -25,6 +25,7 @@ import { NewDesignDialogHost, useDesignCommands } from "./command-palette-design
 import { useDbPaletteCommands } from "./command-palette-db-commands";
 import { paletteItemFromCommand, type CommandItem } from "./command-palette-items";
 import { PathModeHeader, PathResultRow } from "./command-palette-path-results";
+import { CommandPaletteTruncatedNotice } from "./command-palette-truncated-notice";
 import { useTaskCodeCommands } from "./command-palette-task-code";
 
 /** Max results to display — prevents rendering thousands of matches */
@@ -80,6 +81,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const indexStatus = useFileStore((s) => s.indexStatus);
   const indexProject = useFileStore((s) => s.indexProject);
   const indexRemote = useFileStore((s) => s.indexRemote);
+  const indexTruncatedAt = useFileStore((s) => s.indexTruncatedAt);
   const loadIndex = useFileStore((s) => s.loadIndex);
   const openIndexReader = useFileStore((s) => s.openIndexReader);
   const fileTree = useFileStore((s) => s.tree);
@@ -494,6 +496,10 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
               retry
             </button>
           </div>
+        )}
+
+        {!pathMode && indexStatus === "ready" && indexTruncatedAt !== null && indexProject === activeProject?.name && (
+          <CommandPaletteTruncatedNotice count={indexTruncatedAt} onOpenSettings={onClose} />
         )}
 
         {/* Filter chips — hidden in path mode */}

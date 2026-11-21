@@ -21,14 +21,18 @@ import {
   clearIndexCache,
   onIndexRebuilt,
   refreshDelay,
+  largeRewalkDue,
   warmIndex,
 } from "../../../src/services/file-list-index.service.ts";
-import { FileIndexRunner, fileIndexRunner, fileIndexWorkerSpec } from "../../../src/services/file-index/file-index-runner.ts";
+import { FileIndexRunner, fileIndexRunner, fileIndexWalkCommand, fileIndexWorkerSpec } from "../../../src/services/file-index/file-index-runner.ts";
 import { walkIndex, type IndexBuild } from "../../../src/services/file-index/index-walk.ts";
 import type { FileEntry } from "../../../src/types/project.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { globalWebSocket } from "../../../src/server/ws/global.ts";
 import { startWatching, stopWatching, onFileChange } from "../../../src/services/file-watcher.service.ts";
+
+/** A runner whose walk process cannot be started, so it walks on this thread. */
+const noWalkProcess = { walkCommand: ["ppm-test-no-such-walk-binary"] };
 
 let root: string;
 const cleanups: Array<() => void> = [];
@@ -99,7 +103,7 @@ describe("the index worker", () => {
     makeTree(200, 40);
     const filter = { exclude: [], useIgnoreFiles: false };
     // Calibrate: how long this machine takes over the walk on each thread.
-    const fallback = new FileIndexRunner(new URL("./no-such-worker.ts", import.meta.url).href);
+    const fallback = new FileIndexRunner(noWalkProcess);
     cleanups.push(() => fallback.close());
     await fallback.run(root, filter); // finds out the worker is missing
     let started = performance.now();
@@ -124,7 +128,7 @@ describe("the index worker", () => {
 
   it("walks on the main thread instead when the worker cannot be started", async () => {
     makeTree(3, 2);
-    const runner = new FileIndexRunner(new URL("./no-such-worker.ts", import.meta.url).href);
+    const runner = new FileIndexRunner(noWalkProcess);
     cleanups.push(() => runner.close());
     const build = await runner.run(root, { exclude: [], useIgnoreFiles: false });
 
@@ -138,7 +142,7 @@ describe("the index worker", () => {
     writeFileSync(join(root, ".gitignore"), "pkg1/\n");
     const filter = { exclude: ["**/pkg3"], useIgnoreFiles: true };
     const onWorker = await fileIndexRunner.run(root, filter);
-    const fallback = new FileIndexRunner(new URL("./no-such-worker.ts", import.meta.url).href);
+    const fallback = new FileIndexRunner(noWalkProcess);
     cleanups.push(() => fallback.close());
     const onMain = await fallback.run(root, filter);
 
@@ -153,6 +157,11 @@ describe("the index worker", () => {
     // The compiled spelling resolves only because the worker is an entry point of the build.
     const pkg = await Bun.file(join(import.meta.dir, "../../../package.json")).json();
     expect(pkg.scripts.build).toContain("src/services/file-index/file-index-worker.ts");
+    // A compiled walk re-invokes the binary, which `src/index.ts` routes to the walk module.
+    expect(fileIndexWalkCommand(true)).toEqual([process.execPath, "__file_index_walk__"]);
+    expect(fileIndexWalkCommand(false).slice(-2)[0]).toEndWith("file-index-walk-process.ts");
+    const entry = await Bun.file(join(import.meta.dir, "../../../src/index.ts")).text();
+    expect(entry).toContain('import("./services/file-index/file-index-walk-process.ts")');
   });
 });
 
@@ -172,7 +181,7 @@ describe("file index rebuild", () => {
     };
     setTimeout(tick, 0);
 
-    const entries = await walkIndex(root, { exclude: [], useIgnoreFiles: false }, 256);
+    const { entries } = await walkIndex(root, { exclude: [], useIgnoreFiles: false }, 256);
     done = true;
 
     expect(entries.length).toBe(40 + 40 * 30);
@@ -413,6 +422,32 @@ describe("keeping the index fresh without being asked", () => {
     expect(refreshDelay(10_000, 0, 80)).toBe(1000);
     expect(refreshDelay(10_000, 9_900, 80)).toBe(1000);
     expect(refreshDelay(10_000, 9_000, 7_000)).toBe(6_000);
+  });
+
+  it("does not walk a large list again after a change, only on a request once enough time has passed", async () => {
+    const walks = controlWalks();
+    const first = buildIndex(root);
+    walks[0]!.resolve({ ...fakeBuild("a", 2_000), large: true, count: 60_000 });
+    const held = await first;
+
+    markIndexStale(root);
+    await Bun.sleep(1300);
+    expect(walks).toHaveLength(1); // a small list would have been walked again by now
+    expect(await buildIndex(root)).toBe(held);
+    expect(walks).toHaveLength(1); // asked too soon after the last walk
+
+    const realNow = Date.now();
+    const clock = spyOn(Date, "now").mockReturnValue(realNow + 6 * 60_000);
+    cleanups.push(() => clock.mockRestore());
+    expect(await buildIndex(root)).toBe(held); // answered with the held list at once...
+    expect(walks).toHaveLength(2); // ...and walked again behind it
+  });
+
+  it("spaces a large list's walks by five minutes, or ten of its walks", () => {
+    expect(largeRewalkDue(4 * 60_000, 0, 2_000)).toBe(false);
+    expect(largeRewalkDue(5 * 60_000, 0, 2_000)).toBe(true);
+    expect(largeRewalkDue(10 * 60_000, 0, 200_000)).toBe(false);
+    expect(largeRewalkDue(34 * 60_000, 0, 200_000)).toBe(true);
   });
 
   it("gives up a scheduled walk when the index is dropped", async () => {

@@ -1,7 +1,7 @@
 /**
  * file-glob.ts
  * VS Code-style glob matching for file excludes. Kept free of any import that reaches the
- * config store or the database, because the file index worker runs it on its own thread.
+ * config store or the database, because the file index walk runs it in a process of its own.
  */
 
 /**
