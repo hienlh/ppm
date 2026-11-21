@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.26.23] - 2026-11-21
+
+### Added
+
+- **The PPM Assistant changes Settings for you**: it reads and changes settings and installs Whisper, language servers, drivers or the WebRTC relay; in Full mode ordinary settings change with no card, while permissions, accounts, history limits and installs always ask. Secrets are never read. Off until the "PPM has new features" question is answered.
+- **Settings changes have history and Undo**: every change the Assistant makes is kept for 90 days in Settings → PPM Assistant → Changes, and can be undone there, from the chat card or from Telegram.
+- **Voice messages learn your words by themselves**: Whisper is given each project's names, task codes and CLAUDE.md terms, and a word the clean-up fixes the same way a few times is learned, with Undo/Restore in Settings → Voice Input. Asked about once voice messages are on.
+- **Learned words fade after 30 unused days**, so a wrong correction does not stay; words you typed or taught by editing never fade.
+- **Monday's morning digest lists the words learned that week.**
+
+### Changed
+
+- **Voice on Telegram says more**: the card lists every word the clean-up changed and how long each step took, a voice note sent while the feature is off gets a button to turn it on, and audio files are read like voice notes.
+- **The clean-up can fix misheard Vietnamese words by context** (its own switch in Settings → Voice Input).
+- **Lowering a history limit or switching off the "Needs approval" notification always asks**; raising a limit or switching it back on does not.
+
 ## [0.26.22] - 2026-11-21
 
 ### Added
