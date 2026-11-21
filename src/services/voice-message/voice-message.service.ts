@@ -8,19 +8,25 @@
  * The feature switch is the callers' to check; this only does the work.
  */
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
-import { VOICE_MAX_SECONDS, whisperVocabularyPrompt, type LearnedWord } from "../../shared/voice-message.ts";
+import { redactLogText } from "../../shared/log-redact.ts";
+import { VOICE_MAX_SECONDS, whisperVocabularyPrompt, type LearnedWord, type VoiceFix } from "../../shared/voice-message.ts";
 import { assistantWorkDir } from "../assistant/assistant-work-dir.ts";
 import { configService } from "../config.service.ts";
 import { createLogger } from "../logger.ts";
 import { getWhisperStatus } from "../speech-to-text/whisper-install.service.ts";
 import { transcribeWav, type TranscribeResult } from "../speech-to-text/whisper-transcribe.service.ts";
 import { toWhisperWav, wavDurationSec } from "./voice-audio.ts";
+import { autoVocabulary } from "./voice-auto-vocabulary-sources.ts";
+import type { RankedTerm } from "./voice-auto-vocabulary.ts";
 import { cleanupTranscript } from "./voice-cleanup.ts";
 import { gatherVoiceContext, type VoiceContext, type VoiceContextInput } from "./voice-context.ts";
 import { askClaudeHaiku, type VoiceAsk } from "./voice-haiku.ts";
 import { extractLearnedWords } from "./voice-learn.ts";
+import { fixesToShow, replacements } from "./voice-learn-from-cleanup.ts";
+import { appendLearnedWords, markLearnedUse, recordCleanupReplacements } from "./voice-learned-store.ts";
 import { VoiceMessageError } from "./voice-message-errors.ts";
-import { appendLearnedWords, readVoiceSettings, vocabularyOf } from "./voice-settings.ts";
+import { readVoiceSettings, selfLearningOn, vocabularyOf } from "./voice-settings.ts";
+import { composeVoiceWords, looksLikePromptEcho } from "./voice-vocabulary.ts";
 
 const log = createLogger("voice-message");
 
@@ -50,6 +56,10 @@ export interface ProcessVoiceResult {
    * so it neither warns nor forces a review.
    */
   cleanupSkipped?: true;
+  /** Words the clean-up replaced ("BPM" → "PPM"), for the Telegram card; absent when none. */
+  fixes?: VoiceFix[];
+  /** Words self-learning learned from this message's clean-up. */
+  learned?: LearnedWord[];
   /** Turning the recording into Whisper's WAV on the host (0 when it already was one). */
   convertMs: number;
   transcribeMs: number;
@@ -62,6 +72,10 @@ export interface VoiceServiceDeps {
   transcribe: (wav: Uint8Array, lang: string, prompt: string) => Promise<TranscribeResult>;
   gatherContext: (input: VoiceContextInput) => Promise<VoiceContext>;
   ask: VoiceAsk;
+  /** The project's picked-up words (self-learning). */
+  autoVocabulary?: (project: string) => Promise<RankedTerm[]>;
+  /** The clock learning stamps and fades words by. */
+  now?: () => Date;
 }
 
 const defaultDeps: VoiceServiceDeps = {
@@ -69,6 +83,7 @@ const defaultDeps: VoiceServiceDeps = {
   transcribe: transcribeWav,
   gatherContext: (input) => gatherVoiceContext(input),
   ask: askClaudeHaiku,
+  autoVocabulary: (project) => autoVocabulary(project),
 };
 
 /** A registered project's folder, the Assistant's work directory, or null for any other name. */
@@ -92,6 +107,13 @@ export async function processVoiceMessage(
   if (input.audio.byteLength > MAX_VOICE_AUDIO_BYTES) throw new VoiceMessageError("too_long", "The recording is too large");
   if (!deps.whisperReady()) throw new VoiceMessageError("whisper_missing", "Whisper is not installed on this host");
 
+  const settings = readVoiceSettings();
+  const selfLearning = selfLearningOn(settings);
+  // Read while the audio converts; a cold list is waited for at most a moment (see autoVocabulary).
+  const autoWords = selfLearning && settings.learn_auto_vocabulary && deps.autoVocabulary
+    ? deps.autoVocabulary(input.project).catch((): RankedTerm[] => [])
+    : Promise.resolve<RankedTerm[]>([]);
+
   const convertStarted = Date.now();
   const wav = await toWhisperWav(input.audio);
   const convertMs = Date.now() - convertStarted;
@@ -101,38 +123,75 @@ export async function processVoiceMessage(
   }
 
   const lang = input.lang && /^(auto|[a-z]{2})$/.test(input.lang) ? input.lang : "vi";
-  const settings = readVoiceSettings();
-  const words = vocabularyOf(settings, input.project);
+  const lists = composeVoiceWords(settings, input.project, {
+    selfLearning, auto: await autoWords, nowMs: (deps.now?.() ?? new Date()).getTime(),
+  });
+  const words = lists.cleanup;
   // Clean-up off: no context is read and Haiku is never asked; the word lists still help Whisper.
   const cleanupOn = settings.cleanup_enabled;
   // Read while Whisper runs: the chat, the docs and the file index cost nothing on the critical path.
   const context = !cleanupOn ? null : deps.gatherContext({
     project: input.project, projectPath, sessionId: input.sessionId, providerId: input.providerId, typed: input.typed, words,
-  }).catch((e): VoiceContext => {
+  }).then((ctx): VoiceContext => ({ ...ctx, corrections: lists.corrections }), (e): VoiceContext => {
     log.warn(`voice context failed, cleaning up without it: ${(e as Error).message}`);
-    return { recentMessages: [], typed: input.typed ?? "", instructions: "", memory: "", fileNames: [], words };
+    return { recentMessages: [], typed: input.typed ?? "", instructions: "", memory: "", fileNames: [], words, corrections: lists.corrections };
   });
 
   let transcript: TranscribeResult;
   try {
-    transcript = await deps.transcribe(wav, lang, whisperVocabularyPrompt(words));
+    transcript = await deps.transcribe(wav, lang, whisperVocabularyPrompt(lists.whisper));
   } catch (e) {
     const message = (e as Error)?.message || "Transcription failed";
     if (!deps.whisperReady()) throw new VoiceMessageError("whisper_missing", message);
     throw new VoiceMessageError("transcribe_failed", message);
   }
-  const raw = transcript.text.trim();
+  const heard = transcript.text.trim();
+  const raw = heard && looksLikePromptEcho(heard, lists.whisper) ? "" : heard;
+  if (heard && !raw) log.info("Whisper wrote its word list back instead of speech; treated as no speech");
   if (!raw) return { raw: "", text: "", cleaned: false, convertMs, transcribeMs: transcript.ms, cleanupMs: 0 };
-  if (!context) return { raw, text: raw, cleaned: false, cleanupSkipped: true, convertMs, transcribeMs: transcript.ms, cleanupMs: 0 };
+  const now = deps.now ?? (() => new Date());
+  // A learned word said again stays; one the clean-up taught and nobody has said for a month fades.
+  const noteUse = (texts: string[]) => {
+    if (!selfLearning) return;
+    try {
+      const faded = markLearnedUse(input.project, texts, now());
+      if (faded.length) log.info(`${faded.length} learned word(s) faded for project "${input.project}" after going unused`);
+    } catch (e) {
+      log.warn(`could not note which learned words were used: ${(e as Error).message}`);
+    }
+  };
+  if (!context) {
+    noteUse([raw]);
+    return { raw, text: raw, cleaned: false, cleanupSkipped: true, convertMs, transcribeMs: transcript.ms, cleanupMs: 0 };
+  }
 
   const started = Date.now();
-  const cleanup = await cleanupTranscript(raw, await context, deps.ask);
+  const cleanup = await cleanupTranscript(raw, await context, deps.ask, undefined, { vietnameseFixes: settings.vietnamese_fixes });
   const cleanupMs = Date.now() - started;
   if (!cleanup.ok) {
     log.warn(`clean-up failed, keeping the raw transcript: ${cleanup.error}`);
+    noteUse([raw]);
     return { raw, text: raw, cleaned: false, cleanupError: cleanup.error, convertMs, transcribeMs: transcript.ms, cleanupMs };
   }
-  return { raw, text: cleanup.text, cleaned: true, convertMs, transcribeMs: transcript.ms, cleanupMs };
+  // Times only: what was said never goes into the log.
+  log.info(`clean-up ok in ${cleanupMs} ms (Whisper ${transcript.ms} ms)`);
+  const fixes = fixesToShow(raw, cleanup.text);
+  let learned: LearnedWord[] = [];
+  // A message with a secret in it teaches nothing: a learned word is stored and sent with every later message.
+  const holdsSecret = (text: string) => redactLogText(text, { home: false, email: false, chats: false }) !== text;
+  if (selfLearning && settings.learn_from_cleanup && !holdsSecret(raw) && !holdsSecret(cleanup.text)) {
+    try {
+      learned = recordCleanupReplacements(input.project, replacements(raw, cleanup.text, lists.known), lists.known, now());
+      if (learned.length) log.info(`learned ${learned.length} word(s) from the clean-up for project "${input.project}"`);
+    } catch (e) {
+      log.warn(`could not record the clean-up's corrections: ${(e as Error).message}`);
+    }
+  }
+  noteUse([raw, cleanup.text]);
+  return {
+    raw, text: cleanup.text, cleaned: true, convertMs, transcribeMs: transcript.ms, cleanupMs,
+    ...(fixes.length ? { fixes } : {}), ...(learned.length ? { learned } : {}),
+  };
 }
 
 export interface LearnFromEditInput {

@@ -58,16 +58,21 @@ export class TelegramVoiceMessages {
     this.pending = new PendingVoices(host.now, (job) => host.onLane(job.chatId, () => this.expired(job)));
   }
 
-  /** Starts reading `message`'s voice for `bundle` (already marked as owned by a voice) and returns. */
-  start(chatId: string, message: TelegramMessage, bundle: VoiceBundle): void {
+  /**
+   * Starts reading `message`'s voice note — or audio file, whose extension `audioExt` names — for
+   * `bundle` (already marked as owned by a voice) and returns.
+   */
+  start(chatId: string, message: TelegramMessage, bundle: VoiceBundle, audioExt?: string): void {
+    const media = message.voice ?? message.audio;
     const job: VoiceJob = {
-      id: randomUUID().slice(0, 12), chatId, bundle, durationSec: message.voice?.duration ?? 0, state: "processing",
+      id: randomUUID().slice(0, 12), chatId, bundle, durationSec: media?.duration ?? 0, state: "processing",
       proposed: "", transcript: "", label: "cleaned", expiresAt: voiceExpiry(this.host.now()),
+      ...(audioExt ? { audioExt } : {}),
     };
     bundle.voice = job.id;
     this.pending.add(job);
-    this.show(job, voiceStatusHtml(this.host.recentPhotoAt(chatId)));
-    void this.read(job, message.voice?.file_id ?? "").then(
+    this.show(job, voiceStatusHtml(this.host.recentPhotoAt(chatId), !!audioExt));
+    void this.read(job, media?.file_id ?? "").then(
       (result) => this.host.onLane(chatId, () => this.ready(job, result)),
       (e) => this.host.onLane(chatId, () => this.failed(job, e)),
     );
@@ -125,7 +130,8 @@ export class TelegramVoiceMessages {
     const bytes = await this.host.client.downloadFile(file.result.file_path, VOICE_MAX_BYTES);
     if (!bytes.ok) throw new Error(bytes.description === "file too large" ? "it is larger than 10 MB." : "it could not be downloaded from Telegram.");
     // Kept with the chat, like a pasted image: the message names this file and PPM plays it back.
-    job.path = join(ensureUploadsDir(), `${randomUUID().slice(0, 8)}-telegram-voice.ogg`);
+    const name = job.audioExt ? `telegram-audio.${job.audioExt}` : "telegram-voice.ogg";
+    job.path = join(ensureUploadsDir(), `${randomUUID().slice(0, 8)}-${name}`);
     await Bun.write(job.path, bytes.result);
     // Forgotten while it downloaded (chat disconnected, bridge stopped): finish() had no file to delete.
     if (job.state === "done") {
@@ -147,9 +153,12 @@ export class TelegramVoiceMessages {
     job.transcript = job.proposed;
     job.label = result.cleaned ? "cleaned" : result.cleanupSkipped ? "plain" : "raw";
     if (result.cleanupError) job.reason = result.cleanupError;
+    if (result.fixes?.length) job.fixes = result.fixes;
+    job.timing = { whisperMs: result.transcribeMs, ...(result.cleaned || result.cleanupError ? { haikuMs: result.cleanupMs } : {}) };
+    if (result.learned?.length) job.learned = result.learned.map((l) => ({ word: l.word, from: l.from }));
     // A transcript Haiku could not tidy is always read first: it may be wrong in ways nobody fixed.
     // One the user chose not to have tidied follows the review setting like a tidied one.
-    if ((result.cleaned || result.cleanupSkipped) && !this.host.deps.reviewBeforeSend()) return this.send(job);
+    if ((result.cleaned || result.cleanupSkipped) && !this.host.deps.reviewBeforeSend()) return this.send(job, true);
     job.state = "review";
     const group = `voice:${job.id}`;
     job.markup = { inline_keyboard: [[
@@ -186,17 +195,25 @@ export class TelegramVoiceMessages {
     else this.host.confirm(job.bundle);
   }
 
-  private async send(job: VoiceJob): Promise<void> {
+  /** `noCard`: sent without a review card, so the "Sent" note carries the fixes and times itself. */
+  private async send(job: VoiceJob, noCard = false): Promise<void> {
     this.pending.finish(job, true);
     const transcript = job.transcript;
-    this.show(job, voiceSentHtml(transcript));
+    const extras = {
+      ...(noCard && job.fixes ? { fixes: job.fixes } : {}),
+      ...(noCard && job.timing ? { timing: job.timing } : {}),
+      ...(job.learned ? { learned: job.learned } : {}),
+    };
+    this.show(job, voiceSentHtml(transcript, extras));
     job.bundle.voice = undefined;
     const part = encodeVoicePart({ path: job.path!, durationSec: job.durationSec, transcript });
     await this.host.deliverBundle(job.chatId, job.bundle, part);
     if (transcript === job.proposed) return;
     // Learned after the message went: the user waits for nothing, and a failure costs only a hint.
     void this.host.deps.learn({ project: ASSISTANT_PROJECT_NAME, before: job.proposed, after: transcript })
-      .then((words) => { if (words.length) this.show(job, voiceSentHtml(transcript, words.map((w) => w.word))); })
+      .then((words) => {
+        if (words.length) this.show(job, voiceSentHtml(transcript, { ...extras, learned: [...(job.learned ?? []), ...words] }));
+      })
       .catch((err) => log.warn(`Telegram chat ${job.chatId}: learning from a corrected transcript failed: ${(err as Error)?.message ?? err}`));
   }
 
@@ -204,6 +221,7 @@ export class TelegramVoiceMessages {
     this.show(job, voiceCardHtml({
       transcript: job.transcript, label: job.label, ...(job.reason ? { reason: job.reason } : {}),
       withIt: withItText(job.bundle.images.length, job.bundle.parts.some((p) => p.trim())),
+      ...(job.fixes ? { fixes: job.fixes } : {}), ...(job.timing ? { timing: job.timing } : {}),
     }), job.markup);
   }
 

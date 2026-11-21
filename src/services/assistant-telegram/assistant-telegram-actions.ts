@@ -79,6 +79,8 @@ export type BridgeAction =
   | { kind: "quiet"; on: boolean }
   /** A voice message's review card: send it (with the transcript as it stands now), or drop it. */
   | { kind: "voice"; id: string; send: boolean }
+  /** "Voice messages are off": turn them on (the same switch as Settings → Voice). */
+  | { kind: "voice_enable" }
   | CardPress
   | ManagerCardPress
   | TaskPress;

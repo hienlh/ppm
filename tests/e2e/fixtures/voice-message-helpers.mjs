@@ -3,7 +3,8 @@
 // an Ogg voice note) made with ffmpeg, and the browser's chat and screenshot helpers.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, copyFile, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
@@ -43,11 +44,42 @@ export function run(cmd, args) {
  * for the seconds in `whisper/delay-seconds` (so the processing state can be seen) and prints one
  * fixed Vietnamese line, plus the two model files `getWhisperStatus()` checks for.
  */
+/**
+ * Windows looks for `whisper-cli.exe` and cannot run a shell script, so there the stand-in is the
+ * same few lines compiled once with `bun build --compile` (kept beside the first install's PPM_HOME
+ * and copied into the others).
+ */
+let compiledWhisper = null;
+async function windowsFakeWhisper(dir) {
+  if (compiledWhisper && existsSync(compiledWhisper)) return compiledWhisper;
+  await mkdir(dir, { recursive: true });
+  const source = join(dir, "fake-whisper-cli.ts");
+  await writeFile(source, [
+    'import { readFileSync, existsSync } from "node:fs";',
+    'import { dirname, join } from "node:path";',
+    'const delay = join(dirname(process.execPath), "..", "delay-seconds");',
+    'if (existsSync(delay)) await Bun.sleep(Number(readFileSync(delay, "utf8")) * 1000);',
+    `console.log(${JSON.stringify(RAW_TRANSCRIPT)});`,
+    "",
+  ].join("\n"), "utf8");
+  const exe = join(dir, "whisper-cli.exe");
+  await run("bun", ["build", "--compile", source, "--outfile", exe]);
+  compiledWhisper = exe;
+  return exe;
+}
+
 export async function installFakeWhisper(ppmHome, delaySeconds = 2) {
   const whisper = join(ppmHome, "whisper");
   const bin = join(whisper, "bin"), models = join(whisper, "models");
   await mkdir(bin, { recursive: true });
   await mkdir(models, { recursive: true });
+  if (process.platform === "win32") {
+    await copyFile(await windowsFakeWhisper(join(ppmHome, "..", "..", "fake-whisper")), join(bin, "whisper-cli.exe"));
+    await writeFile(join(whisper, "delay-seconds"), String(delaySeconds), "utf8");
+    await writeFile(join(models, "ggml-large-v3-turbo-q5_0.bin"), "");
+    await writeFile(join(models, "ggml-silero-v5.1.2.bin"), "");
+    return { delayFile: join(whisper, "delay-seconds") };
+  }
   const cli = join(bin, "whisper-cli");
   await writeFile(cli, [
     "#!/bin/sh",

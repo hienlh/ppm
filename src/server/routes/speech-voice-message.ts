@@ -17,8 +17,12 @@ import {
   learnFromEdit, MAX_VOICE_AUDIO_BYTES, processVoiceMessage, voiceProjectPath,
 } from "../../services/voice-message/voice-message.service.ts";
 import {
-  projectWordsOf, readVoiceSettings, updateVoiceSettings, voiceMessagesEnabled, type VoiceSettingsPatch,
+  projectWordsOf, readVoiceSettings, selfLearningOn, updateVoiceSettings, voiceMessagesEnabled, type VoiceSettingsPatch,
 } from "../../services/voice-message/voice-settings.ts";
+import { autoVocabulary, clearAutoVocabularyCache } from "../../services/voice-message/voice-auto-vocabulary-sources.ts";
+import { whisperPromptPreview } from "../../services/voice-message/voice-vocabulary.ts";
+import { isFaded } from "../../services/voice-message/voice-learned-fade.ts";
+import { WHISPER_PROMPT_MAX_CHARS } from "../../shared/voice-message.ts";
 
 export interface VoiceRouteDeps {
   broadcast: (event: unknown) => void;
@@ -43,16 +47,29 @@ const fail = (c: Context, status: 400 | 409 | 422 | 500, message: string, code?:
 const isStringList = (v: unknown): v is string[] =>
   Array.isArray(v) && v.length <= MAX_LIST_ITEMS && v.every((x) => typeof x === "string");
 
-function settingsView(project: string | undefined, whisperReady: boolean) {
+async function settingsView(project: string | undefined, whisperReady: boolean) {
   const config = readVoiceSettings();
   const own = project ? projectWordsOf(config, project) : { words: [], learned: [] };
+  const selfLearning = selfLearningOn(config);
+  // Only a registered project (or the Assistant) is read: any other name would only fill the cache.
+  const known = !!project && !!voiceProjectPath(project);
+  const auto = known && selfLearning && config.learn_auto_vocabulary ? await autoVocabulary(project!).catch(() => []) : [];
   return {
     enabled: config.enabled === true,
     reviewBeforeSend: config.review_before_send,
     cleanupEnabled: config.cleanup_enabled,
+    selfLearning: config.self_learning === true,
+    learnAutoVocabulary: config.learn_auto_vocabulary,
+    learnFromCleanup: config.learn_from_cleanup,
+    weeklySummary: config.weekly_summary,
+    vietnameseFixes: config.vietnamese_fixes,
     words: config.words,
     projectWords: own.words,
-    projectLearned: own.learned,
+    // A faded word is gone from the list even before the next voice message prunes the row.
+    projectLearned: own.learned.filter((l) => !isFaded(l, Date.now())),
+    projectBlocked: own.blocked ?? [],
+    whisperPrompt: project ? whisperPromptPreview(config, project, { selfLearning, auto }) : [],
+    whisperPromptMaxChars: WHISPER_PROMPT_MAX_CHARS,
     whisperReady,
   };
 }
@@ -62,13 +79,16 @@ function parsePatch(body: unknown): VoiceSettingsPatch | string {
   if (!body || typeof body !== "object" || Array.isArray(body)) return "Expected a JSON object";
   const b = body as Record<string, unknown>;
   const patch: VoiceSettingsPatch = {};
-  for (const key of ["enabled", "reviewBeforeSend", "cleanupEnabled"] as const) {
+  for (const key of [
+    "enabled", "reviewBeforeSend", "cleanupEnabled", "selfLearning", "learnAutoVocabulary", "learnFromCleanup",
+    "weeklySummary", "vietnameseFixes",
+  ] as const) {
     const value = b[key];
     if (value === undefined) continue;
     if (typeof value !== "boolean") return `${key} must be true or false`;
     patch[key] = value;
   }
-  for (const key of ["words", "projectWords", "removeLearned"] as const) {
+  for (const key of ["words", "projectWords", "removeLearned", "restoreBlocked"] as const) {
     const value = b[key];
     if (value === undefined) continue;
     if (!isStringList(value)) return `${key} must be a list of at most ${MAX_LIST_ITEMS} strings`;
@@ -78,22 +98,26 @@ function parsePatch(body: unknown): VoiceSettingsPatch | string {
     if (typeof b.project !== "string" || !voiceProjectPath(b.project)) return "Unknown project";
     patch.project = b.project;
   }
-  if ((patch.projectWords || patch.removeLearned) && !patch.project) return "project is required with projectWords or removeLearned";
+  if ((patch.projectWords || patch.removeLearned || patch.restoreBlocked) && !patch.project) {
+    return "project is required with projectWords, removeLearned or restoreBlocked";
+  }
   return patch;
 }
 
 export function registerVoiceMessageRoutes(routes: Hono, deps: VoiceRouteDeps): void {
-  routes.get("/voice-settings", (c) => c.json(ok(settingsView(c.req.query("project") || undefined, deps.whisperReady()))));
+  routes.get("/voice-settings", async (c) => c.json(ok(await settingsView(c.req.query("project") || undefined, deps.whisperReady()))));
 
   routes.put("/voice-settings", async (c) => {
     const patch = parsePatch(await c.req.json().catch(() => null));
     if (typeof patch === "string") return fail(c, 400, patch);
     updateVoiceSettings(patch);
-    // The master switch is also the feature intro's answer, as a switch saved in Settings → Tools is.
-    if (patch.enabled !== undefined && settleFeaturesDecidedInSettings()) {
+    // A part of self-learning switched (back) on reads its sources fresh, not a list kept from before.
+    if (patch.learnAutoVocabulary !== undefined || patch.selfLearning !== undefined) clearAutoVocabularyCache();
+    // The switches are also the feature intros' answers, as a switch saved in Settings → Tools is.
+    if ((patch.enabled !== undefined || patch.selfLearning !== undefined) && settleFeaturesDecidedInSettings()) {
       deps.broadcast({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
     }
-    return c.json(ok(settingsView(patch.project, deps.whisperReady())));
+    return c.json(ok(await settingsView(patch.project, deps.whisperReady())));
   });
 
   routes.post("/voice-message", async (c) => {

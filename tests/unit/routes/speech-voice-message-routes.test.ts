@@ -66,8 +66,36 @@ describe("/voice-settings", () => {
     ready = false;
     const res = await app().request("/speech/voice-settings?project=demo");
     expect((await json(res)).data).toEqual({
-      enabled: false, reviewBeforeSend: true, cleanupEnabled: true, words: [], projectWords: [], projectLearned: [], whisperReady: false,
+      enabled: false, reviewBeforeSend: true, cleanupEnabled: true,
+      selfLearning: false, learnAutoVocabulary: true, learnFromCleanup: true, weeklySummary: true, vietnameseFixes: true,
+      words: [], projectWords: [], projectLearned: [], projectBlocked: [],
+      whisperPrompt: [], whisperPromptMaxChars: 600, whisperReady: false,
     });
+  });
+
+  it("saves the self-learning switches and counts self-learning as its feature intro's answer", async () => {
+    await put({ enabled: true });
+    events.length = 0;
+    const data = (await json(await put({ selfLearning: true, learnFromCleanup: false, weeklySummary: false, vietnameseFixes: false }))).data;
+    expect(data).toMatchObject({ selfLearning: true, learnFromCleanup: false, weeklySummary: false, vietnameseFixes: false, learnAutoVocabulary: true });
+    expect(events).toEqual([{ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" }]);
+    const intro = (configService.get("feature_intros") as Record<string, { answer?: string; via?: string }>)["voice-self-learning-2026-11"];
+    expect(intro).toMatchObject({ answer: "on", via: "settings" });
+    expect((await put({ learnFromCleanup: "no" })).status).toBe(400);
+  });
+
+  it("undoes a learned word into the undone list and restores it", async () => {
+    configService.set("voice_message", {
+      enabled: true, self_learning: true, review_before_send: true, words: [],
+      projects: { demo: { words: [], learned: [{ word: "PPM", from: "BPM", at: "2026-11-20T10:00:00.000Z", source: "cleanup", hits: 3 }] } },
+    });
+    const undone = (await json(await put({ project: "demo", removeLearned: ["ppm"] }))).data;
+    expect(undone.projectLearned).toEqual([]);
+    expect(undone.projectBlocked).toMatchObject([{ word: "PPM", from: "BPM" }]);
+    const restored = (await json(await put({ project: "demo", restoreBlocked: ["PPM"] }))).data;
+    expect(restored.projectBlocked).toEqual([]);
+    expect(restored.projectLearned).toMatchObject([{ word: "PPM", from: "BPM" }]);
+    expect((await put({ restoreBlocked: ["PPM"] })).status).toBe(400);
   });
 
   it("saves the Haiku clean-up switch and refuses a value that is not a boolean", async () => {

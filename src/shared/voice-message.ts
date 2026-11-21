@@ -15,10 +15,48 @@
 /** Longest recording the composer and the Telegram bridge accept. */
 export const VOICE_MAX_SECONDS = 120;
 
-/** A correction learned from the user editing a transcript: `from` was heard, `word` was meant. */
-export interface LearnedWord { word: string; from: string; at: string }
+/**
+ * Where a learned word came from: the user editing a transcript, or the clean-up fixing the same
+ * misheard word in several messages (self-learning).
+ */
+export type LearnedSource = "edit" | "cleanup";
 
-export interface VoiceProjectWords { words: string[]; learned: LearnedWord[] }
+/**
+ * A correction learned for a project: `from` was heard, `word` was meant. A `term` (a name, an
+ * acronym, an identifier) also goes into Whisper's prompt; a `phrase` (ordinary Vietnamese, say
+ * "ra lệnh") only reaches the clean-up, so Whisper's Vietnamese is never pulled toward a list.
+ * Entries written before self-learning carry only word, from and at: an edit, a term, one hit.
+ */
+export interface LearnedWord {
+  word: string;
+  from: string;
+  at: string;
+  source?: LearnedSource;
+  /** Messages the correction was seen in. */
+  hits?: number;
+  kind?: "term" | "phrase";
+  /** The last voice message that used the word (said it, or needed it fixed again); absent: not since `at`. */
+  lastUsedAt?: string;
+}
+
+/** A correction the clean-up made, counted until it is seen often enough to be learned. */
+export interface VoiceCandidate { from: string; to: string; hits: number; at: string }
+
+/**
+ * A learned word the user undid: never learned again from the clean-up, until restored. `at` is
+ * when it was undone; the rest is the learned entry as it was, so Restore brings it back unchanged.
+ */
+export interface BlockedWord { word: string; from: string; at: string; source?: LearnedSource; hits?: number; kind?: "term" | "phrase" }
+
+export interface VoiceProjectWords {
+  words: string[];
+  learned: LearnedWord[];
+  candidates?: VoiceCandidate[];
+  blocked?: BlockedWord[];
+}
+
+/** One word the clean-up changed: shown on the Telegram card as "Fixed: from → to". */
+export interface VoiceFix { from: string; to: string }
 
 /** Config key `voice_message`. */
 export interface VoiceMessageConfig {
@@ -31,6 +69,19 @@ export interface VoiceMessageConfig {
    * as it is and Haiku is never called. A row written before the switch existed has none: on.
    */
   cleanup_enabled: boolean;
+  /**
+   * Self-learning, as the feature intro or Settings answered; undefined = not chosen = off. With it
+   * on, the switches below choose its parts (all default on).
+   */
+  self_learning?: boolean;
+  /** Pick up words from the project's tasks, chats and CLAUDE.md (the Assistant: every project). */
+  learn_auto_vocabulary: boolean;
+  /** Learn a word once the clean-up fixed it the same way in several messages. */
+  learn_from_cleanup: boolean;
+  /** List the week's learned words in Monday's morning digest. */
+  weekly_summary: boolean;
+  /** The clean-up also fixes misheard Vietnamese words by context. Independent of self-learning. */
+  vietnamese_fixes: boolean;
   /** Words for every project. */
   words: string[];
   /** Keyed by project name; `__assistant__` for the PPM Assistant. */
@@ -129,6 +180,11 @@ export const WHISPER_PROMPT_MAX_CHARS = 600;
  * joined with ", " and cut at a whole word so the hint never ends on half a term.
  */
 export function whisperVocabularyPrompt(words: readonly string[], maxChars = WHISPER_PROMPT_MAX_CHARS): string {
+  return whisperPromptWords(words, maxChars).join(", ");
+}
+
+/** The words {@link whisperVocabularyPrompt} keeps, in order (for showing which ones made it). */
+export function whisperPromptWords(words: readonly string[], maxChars = WHISPER_PROMPT_MAX_CHARS): string[] {
   const seen = new Set<string>();
   const kept: string[] = [];
   let length = 0;
@@ -143,5 +199,5 @@ export function whisperVocabularyPrompt(words: readonly string[], maxChars = WHI
     kept.push(word);
     length += added;
   }
-  return kept.join(", ");
+  return kept;
 }

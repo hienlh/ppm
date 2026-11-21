@@ -6,6 +6,9 @@
  * Claude clean-up, none of which a bridge without a voice message ever needs.
  */
 import { configService } from "../config.service.ts";
+import { settleFeaturesDecidedInSettings } from "../feature-intros.service.ts";
+import { getWhisperStatus } from "../speech-to-text/whisper-install.service.ts";
+import { updateVoiceSettings } from "../voice-message/voice-settings.ts";
 import type { LearnedWord } from "../../shared/voice-message.ts";
 
 export interface VoiceProcessInput {
@@ -26,11 +29,19 @@ export interface VoiceProcessResult {
   cleanupSkipped?: true;
   transcribeMs: number;
   cleanupMs: number;
+  /** Words the clean-up replaced, shown on the card. */
+  fixes?: Array<{ from: string; to: string }>;
+  /** Words self-learning learned from this message's clean-up. */
+  learned?: LearnedWord[];
 }
 
 export interface TelegramVoiceDeps {
-  /** The feature's switch (`voice_message.enabled`); off means voice messages are refused as before. */
+  /** The feature's switch (`voice_message.enabled`); off means a voice message is answered with how to turn it on. */
   enabled(): boolean;
+  /** Whisper is installed, so the "turn voice messages on" button can work. */
+  whisperReady(): boolean;
+  /** The "turn voice messages on" button: the same switch as Settings → Voice. */
+  enable(): void;
   /** Wait for the user to read the transcript before sending. */
   reviewBeforeSend(): boolean;
   /** Throws with `code` "whisper_missing" / "ffmpeg_missing" / … when it cannot read the audio. */
@@ -43,6 +54,12 @@ export interface TelegramVoiceDeps {
 export const defaultTelegramVoiceDeps: TelegramVoiceDeps = {
   enabled: () => configService.get("voice_message")?.enabled === true,
   reviewBeforeSend: () => configService.get("voice_message")?.review_before_send !== false,
+  whisperReady: () => getWhisperStatus().ready,
+  enable: () => {
+    updateVoiceSettings({ enabled: true });
+    // Turned on from Telegram is an answer to the feature's question, as a switch in Settings is.
+    settleFeaturesDecidedInSettings();
+  },
   async process(input) {
     const { processVoiceMessage } = await import("../voice-message/voice-message.service.ts");
     return processVoiceMessage(input);

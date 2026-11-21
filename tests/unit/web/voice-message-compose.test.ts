@@ -131,8 +131,14 @@ describe("voice draft details", () => {
 
   it("reads a settings answer with anything missing as off", () => {
     expect(parseVoiceSettings(null)).toEqual({
-      enabled: false, reviewBeforeSend: true, cleanupEnabled: true, words: [], projectWords: [], projectLearned: [], whisperReady: false,
+      enabled: false, reviewBeforeSend: true, cleanupEnabled: true,
+      selfLearning: false, learnAutoVocabulary: true, learnFromCleanup: true, weeklySummary: true, vietnameseFixes: true,
+      words: [], projectWords: [], projectLearned: [], projectBlocked: [], whisperPrompt: [], whisperPromptMaxChars: 600,
+      whisperReady: false,
     });
+    // A prompt word from an unknown source is dropped rather than drawn in a colour that means nothing.
+    expect(parseVoiceSettings({ whisperPrompt: [{ word: "PPM", source: "learned" }, { word: "x", source: "nope" }] }).whisperPrompt)
+      .toEqual([{ word: "PPM", source: "learned" }]);
     const view = parseVoiceSettings({ enabled: true, reviewBeforeSend: false, words: ["PPM", 3], projectLearned: [{ word: "Hono", from: "hô nô", at: "x" }, { word: 1 }] });
     expect(view.enabled).toBe(true);
     expect(view.reviewBeforeSend).toBe(false);

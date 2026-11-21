@@ -1,4 +1,6 @@
-import { DIGEST_RESURFACED_MAX, digestTitle, type DigestProject, type DigestResurfacedTask } from "../../shared/assistant-digest.ts";
+import {
+  DIGEST_RESURFACED_MAX, digestTitle, type DigestProject, type DigestResurfacedTask, type DigestVoiceLearned,
+} from "../../shared/assistant-digest.ts";
 import type { NewCard } from "../assistant-cards/assistant-cards.service.ts";
 import type { DigestRun } from "./digest-state.ts";
 
@@ -15,6 +17,7 @@ export type DigestWaitingOf = (projectKey: string) => Pick<DigestProject, "waiti
 export function buildDigestCard(
   run: DigestRun, titleOnly: (projectKey: string) => boolean, waitingOf?: DigestWaitingOf,
   resurfaced: readonly DigestResurfacedTask[] = [],
+  voiceLearned: readonly DigestVoiceLearned[] = [],
 ): NewCard {
   const projects: DigestProject[] = Object.keys(run.asked).map((key) => {
     const items = run.answers[key];
@@ -34,7 +37,11 @@ export function buildDigestCard(
     projectPath: null,
     sessionId: null,
     title: digestTitle(projects),
-    payload: { date: run.date, projects, ...(resurfaced.length ? { resurfaced: resurfaced.slice(0, DIGEST_RESURFACED_MAX) } : {}) },
+    payload: {
+      date: run.date, projects,
+      ...(resurfaced.length ? { resurfaced: resurfaced.slice(0, DIGEST_RESURFACED_MAX) } : {}),
+      ...(voiceLearned.length ? { voiceLearned: [...voiceLearned] } : {}),
+    },
     // The main Assistant session hears of it once, as news.
     wake: true,
   };

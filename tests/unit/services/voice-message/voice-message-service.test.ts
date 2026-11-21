@@ -152,3 +152,108 @@ describe("learnFromEdit", () => {
     expect(await code(learnFromEdit({ project: "nope", before, after }))).toBe("invalid_project");
   });
 });
+
+describe("processVoiceMessage with self-learning", () => {
+  const bpm = (over: Partial<VoiceServiceDeps> = {}) => deps({
+    transcribe: async () => ({ text: "setting của BPM được", ms: 4 }),
+    ask: async () => '{"text":"Setting của PPM được."}',
+    autoVocabulary: async () => [{ term: "ppm/53", score: 6, strong: true }, { term: "worktree", score: 1, strong: false }],
+    ...over,
+  });
+
+  it("hands Whisper the picked-up words after the user's own, and passes learned corrections to the clean-up", async () => {
+    updateVoiceSettings({ enabled: true, selfLearning: true, project: "demo", projectWords: ["Hono"] });
+    const prompts: string[] = [];
+    const { d } = bpm({
+      transcribe: async (_wav, _lang, prompt) => { prompts.push(prompt); return { text: "setting của BPM được", ms: 4 }; },
+      // The clean-up also gets the weak words Whisper is not given.
+      ask: async ({ prompt }) => { expect(prompt).toContain("worktree"); return '{"text":"Setting của PPM được."}'; },
+    });
+    const result = await processVoiceMessage({ audio: wav(1), project: "demo" }, d);
+    expect(prompts[0]).toBe("Hono, ppm/53");
+    expect(result.fixes).toEqual([{ from: "BPM", to: "PPM" }]);
+  });
+
+  it("learns a word the clean-up fixed the same way in three messages, and no sooner", async () => {
+    updateVoiceSettings({ enabled: true, selfLearning: true });
+    const { d } = bpm();
+    const first = await processVoiceMessage({ audio: wav(1), project: "demo" }, d);
+    const second = await processVoiceMessage({ audio: wav(1), project: "demo" }, d);
+    const third = await processVoiceMessage({ audio: wav(1), project: "demo" }, d);
+    expect(first.learned).toBeUndefined();
+    expect(second.learned).toBeUndefined();
+    expect(third.learned).toMatchObject([{ word: "PPM", from: "BPM", source: "cleanup", hits: 3, kind: "term" }]);
+    // Once learned, the next message's Whisper prompt carries it.
+    const prompts: string[] = [];
+    await processVoiceMessage({ audio: wav(1), project: "demo" }, bpm({
+      transcribe: async (_wav, _lang, prompt) => { prompts.push(prompt); return { text: "setting của PPM được", ms: 4 }; },
+    }).d);
+    expect(prompts[0]!.split(", ")[0]).toBe("PPM");
+  });
+
+  it("learns nothing from a message that holds a secret", async () => {
+    updateVoiceSettings({ enabled: true, selfLearning: true });
+    const key = `sk-ant-api03-${"x".repeat(40)}`;
+    const { d } = bpm({ ask: async () => `{"text":"Setting của PPM được, key ${key}"}`, transcribe: async () => ({ text: `setting của BPM được, key ${key}`, ms: 4 }) });
+    for (let i = 0; i < 3; i++) expect((await processVoiceMessage({ audio: wav(1), project: "demo" }, d)).learned).toBeUndefined();
+    expect(readVoiceSettings().projects.demo?.candidates ?? []).toEqual([]);
+  });
+
+  it("with self-learning off learns nothing from the clean-up and picks nothing up", async () => {
+    updateVoiceSettings({ enabled: true, selfLearning: false });
+    let asked = false;
+    const prompts: string[] = [];
+    const { d } = bpm({
+      autoVocabulary: async () => { asked = true; return [{ term: "ppm/53", score: 6, strong: true }]; },
+      transcribe: async (_wav, _lang, prompt) => { prompts.push(prompt); return { text: "setting của BPM được", ms: 4 }; },
+    });
+    for (let i = 0; i < 3; i++) expect((await processVoiceMessage({ audio: wav(1), project: "demo" }, d)).learned).toBeUndefined();
+    expect(asked).toBe(false);
+    expect(prompts).toEqual(["", "", ""]);
+    expect(readVoiceSettings().projects.demo?.candidates ?? []).toEqual([]);
+  });
+
+  it("treats Whisper writing its own word list back as no speech", async () => {
+    updateVoiceSettings({ enabled: true, selfLearning: true, project: "demo", projectWords: ["Hono", "Telegram", "Whisper", "Bun"] });
+    const { d, seen } = bpm({ transcribe: async () => ({ text: "Hono, Telegram, Whisper, Bun, ppm/53.", ms: 4 }) });
+    const result = await processVoiceMessage({ audio: wav(1), project: "demo" }, d);
+    expect(result).toMatchObject({ raw: "", text: "" });
+    expect(seen.asks).toBe(0);
+  });
+});
+
+describe("processVoiceMessage fades what nobody says", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const T0 = Date.parse("2026-10-01T10:00:00.000Z");
+  const clock = (days: number) => () => new Date(T0 + days * DAY);
+  const said = (text: string, cleaned: string, days: number): Partial<VoiceServiceDeps> => ({
+    transcribe: async () => ({ text, ms: 4 }),
+    ask: async () => JSON.stringify({ text: cleaned }),
+    autoVocabulary: async () => [],
+    now: clock(days),
+  });
+
+  it("keeps a learned word that is said again, and drops one unused for 30 days, on the injected clock", async () => {
+    updateVoiceSettings({ enabled: true, selfLearning: true });
+    for (let i = 0; i < 3; i++) await processVoiceMessage({ audio: wav(1), project: "demo" }, deps(said("setting của BPM được", "Setting của PPM được.", 0)).d);
+    expect(readVoiceSettings().projects.demo?.learned.map((l) => l.word)).toEqual(["PPM"]);
+    // Day 25: PPM is said (Whisper gets it right now), so it counts as used.
+    await processVoiceMessage({ audio: wav(1), project: "demo" }, deps(said("deploy PPM đi", "Deploy PPM đi.", 25)).d);
+    expect(readVoiceSettings().projects.demo?.learned[0]?.lastUsedAt).toBe(new Date(T0 + 25 * DAY).toISOString());
+    // Day 50: 25 days after its last use, still there.
+    await processVoiceMessage({ audio: wav(1), project: "demo" }, deps(said("không nhắc", "Không nhắc.", 50)).d);
+    expect(readVoiceSettings().projects.demo?.learned.map((l) => l.word)).toEqual(["PPM"]);
+    // Day 56: 31 days unused, so the next message prunes it.
+    await processVoiceMessage({ audio: wav(1), project: "demo" }, deps(said("không nhắc", "Không nhắc.", 56)).d);
+    expect(readVoiceSettings().projects.demo?.learned ?? []).toEqual([]);
+  });
+
+  it("with self-learning off touches no learned word", async () => {
+    configService.set("voice_message", {
+      enabled: true, self_learning: false, review_before_send: true, words: [],
+      projects: { demo: { words: [], learned: [{ word: "PPM", from: "BPM", at: new Date(T0).toISOString(), source: "cleanup", hits: 3 }] } },
+    });
+    await processVoiceMessage({ audio: wav(1), project: "demo" }, deps(said("x", "X.", 90)).d);
+    expect(readVoiceSettings().projects.demo?.learned.map((l) => l.word)).toEqual(["PPM"]);
+  });
+});

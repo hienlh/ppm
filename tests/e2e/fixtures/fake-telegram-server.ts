@@ -8,6 +8,7 @@
  *   POST /photo  { chatId, userId, caption?, extra?, bytesBase64? } → the update (`extra.reply_to_message`
  *                answers a card; `extra.media_group_id` makes one photo of an album)
  *   POST /voice  { chatId, userId, duration?, mime?, extra?, bytesBase64? } → the update (a voice note)
+ *   POST /audio  { chatId, userId, duration?, mime?, fileName?, bytesBase64? } → the update (an audio file)
  *   POST /press  { chatId, userId, messageId, data, stale? }  → the update, or 400 when no such button
  *   POST /fail   { method, failure: { code, retryAfter?, description? } }
  *   GET  /chat?id=<chat>   → { sent, deleted } for that chat
@@ -58,6 +59,15 @@ const control = Bun.serve({
             ...(typeof b.duration === "number" ? { duration: b.duration } : {}),
             ...(typeof b.mime === "string" ? { mime: b.mime } : {}),
             ...(b.extra && typeof b.extra === "object" ? { extra: b.extra as Record<string, unknown> } : {}),
+            ...(typeof b.bytesBase64 === "string" ? { bytes: new Uint8Array(Buffer.from(b.bytesBase64, "base64")) } : {}),
+          }));
+        }
+        case "POST /audio": {
+          const b = await body(req);
+          return json(fake.pushAudio(Number(b.chatId), Number(b.userId), {
+            ...(typeof b.duration === "number" ? { duration: b.duration } : {}),
+            ...(typeof b.mime === "string" ? { mime: b.mime } : {}),
+            ...(typeof b.fileName === "string" ? { fileName: b.fileName } : {}),
             ...(typeof b.bytesBase64 === "string" ? { bytes: new Uint8Array(Buffer.from(b.bytesBase64, "base64")) } : {}),
           }));
         }

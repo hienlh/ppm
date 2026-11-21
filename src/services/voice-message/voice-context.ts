@@ -36,6 +36,8 @@ export interface VoiceContext {
   /** The PPM Assistant only: the registered projects' names and its notebook. */
   projectNames?: string[];
   notebook?: string;
+  /** Corrections learned for this project, newest first: what Whisper wrote and what was meant. */
+  corrections?: Array<{ heard: string; meant: string }>;
 }
 
 export interface VoiceContextInput {

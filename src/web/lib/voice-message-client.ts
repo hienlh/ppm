@@ -3,16 +3,31 @@
  * transcript, and learning from a corrected transcript.
  */
 import { api, getAuthToken } from "@/lib/api-client";
-import type { LearnedWord } from "../../shared/voice-message";
+import type { BlockedWord, LearnedWord } from "../../shared/voice-message";
+
+/** One word of Whisper's prompt and where it came from: typed by the user, learned, or picked up. */
+export interface PromptWord { word: string; source: "typed" | "learned" | "picked" }
 
 export interface VoiceSettingsView {
   enabled: boolean;
   reviewBeforeSend: boolean;
   /** Tidy the transcript with Claude Haiku; off: Whisper's text as it is. */
   cleanupEnabled: boolean;
+  /** Self-learning as chosen (the feature intro or this pane); its parts below. */
+  selfLearning: boolean;
+  learnAutoVocabulary: boolean;
+  learnFromCleanup: boolean;
+  weeklySummary: boolean;
+  /** The clean-up also fixes misheard Vietnamese words. */
+  vietnameseFixes: boolean;
   words: string[];
   projectWords: string[];
   projectLearned: LearnedWord[];
+  /** Learned words the user undid for the project: not learned again until restored. */
+  projectBlocked: BlockedWord[];
+  /** What Whisper's prompt holds for the project, in order. */
+  whisperPrompt: PromptWord[];
+  whisperPromptMaxChars: number;
   whisperReady: boolean;
 }
 
@@ -20,10 +35,16 @@ export interface VoiceSettingsPatch {
   enabled?: boolean;
   reviewBeforeSend?: boolean;
   cleanupEnabled?: boolean;
+  selfLearning?: boolean;
+  learnAutoVocabulary?: boolean;
+  learnFromCleanup?: boolean;
+  weeklySummary?: boolean;
+  vietnameseFixes?: boolean;
   words?: string[];
   project?: string;
   projectWords?: string[];
   removeLearned?: string[];
+  restoreBlocked?: string[];
 }
 
 export interface VoiceTranscript {
@@ -62,13 +83,30 @@ export function parseVoiceSettings(raw: unknown): VoiceSettingsView {
     ? v.projectLearned.filter((l): l is LearnedWord =>
         !!l && typeof l === "object" && typeof (l as LearnedWord).word === "string" && typeof (l as LearnedWord).from === "string")
     : [];
+  const blocked = Array.isArray(v.projectBlocked)
+    ? v.projectBlocked.filter((b): b is BlockedWord =>
+        !!b && typeof b === "object" && typeof (b as BlockedWord).word === "string" && typeof (b as BlockedWord).at === "string")
+    : [];
+  const prompt = Array.isArray(v.whisperPrompt)
+    ? v.whisperPrompt.filter((p): p is PromptWord =>
+        !!p && typeof p === "object" && typeof (p as PromptWord).word === "string"
+        && ["typed", "learned", "picked"].includes((p as PromptWord).source))
+    : [];
   return {
     enabled: v.enabled === true,
     reviewBeforeSend: v.reviewBeforeSend !== false,
     cleanupEnabled: v.cleanupEnabled !== false,
+    selfLearning: v.selfLearning === true,
+    learnAutoVocabulary: v.learnAutoVocabulary !== false,
+    learnFromCleanup: v.learnFromCleanup !== false,
+    weeklySummary: v.weeklySummary !== false,
+    vietnameseFixes: v.vietnameseFixes !== false,
     words: strings(v.words),
     projectWords: strings(v.projectWords),
     projectLearned: learned,
+    projectBlocked: blocked,
+    whisperPrompt: prompt,
+    whisperPromptMaxChars: typeof v.whisperPromptMaxChars === "number" ? v.whisperPromptMaxChars : 600,
     whisperReady: v.whisperReady === true,
   };
 }

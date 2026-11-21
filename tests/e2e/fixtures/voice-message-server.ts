@@ -69,6 +69,24 @@ if (voiceAnswer === "on" || voiceAnswer === "off") {
   if (!result.ok) throw new Error(`Could not answer the voice introduction: ${JSON.stringify(result)}`);
 }
 
+// PPM_VOICE_SELF_LEARNING=seed: self-learning on, with a week of learned words and one undone word,
+// as a user who has had it on for a while would have them (the Settings pane's list has rows to show).
+if (process.env.PPM_VOICE_SELF_LEARNING === "seed") {
+  const { updateVoiceSettings, readVoiceSettings } = await import("../../../src/services/voice-message/voice-settings");
+  updateVoiceSettings({ selfLearning: true });
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+  const learned = [
+    { word: "PPM", from: "BPM", at: hoursAgo(1), source: "cleanup", hits: 3, kind: "term" },
+    { word: "Hono", from: "Hano", at: hoursAgo(3), source: "cleanup", hits: 2, kind: "term" },
+    { word: "ra lệnh", from: "ta lệnh", at: hoursAgo(28), source: "cleanup", hits: 3, kind: "phrase" },
+    { word: "ppm/53", from: "PPM 53", at: hoursAgo(30), source: "cleanup", hits: 2, kind: "term" },
+    { word: "worktree", from: "work tree", at: hoursAgo(96), source: "edit" },
+  ];
+  const config = readVoiceSettings();
+  const lists = { words: [], learned, blocked: [{ word: "Hà Nội", from: "Hano", at: hoursAgo(100) }] };
+  configService.set("voice_message", { ...config, projects: { ...config.projects, alpha: lists, __assistant__: lists } } as never);
+}
+
 // ── Scripted chat provider, also the stand-in for Claude Haiku ──────────────────────────────
 const { MockProvider } = await import("../../../src/providers/mock-provider");
 const { providerRegistry } = await import("../../../src/providers/registry");
@@ -146,6 +164,10 @@ async function testRoute(req: Request, path: string): Promise<Response> {
     return json({ mode: cleanupMode });
   }
   if (path === "/voice-state") return json({ cleanupMode, enabled: configService.get("voice_message")?.enabled ?? null });
+  if (path === "/voice-enabled" && req.method === "POST") {
+    const { updateVoiceSettings } = await import("../../../src/services/voice-message/voice-settings");
+    return json({ enabled: updateVoiceSettings({ enabled: body.enabled === true }).enabled ?? null });
+  }
   return json({ error: `unknown test route ${path}` }, 404);
 }
 

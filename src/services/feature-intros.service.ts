@@ -9,10 +9,10 @@ import { configService } from "./config.service.ts";
 import { getDb } from "./db.service.ts";
 import { createLogger } from "./logger.ts";
 import { getAssistantSettings, writeAssistantPermissionMode } from "./assistant/assistant-settings.service.ts";
-import { readVoiceSettings, updateVoiceSettings } from "./voice-message/voice-settings.ts";
+import { readVoiceSettings, updateVoiceSettings, voiceMessagesEnabled } from "./voice-message/voice-settings.ts";
 import {
   answerFromSwitches, FEATURE_INTRO_SKIP_WINDOW_MS, FEATURE_INTROS, featureIntroById, MAX_FEATURE_INTRO_SKIPS, switchesForAnswer,
-  type FeatureIntroAnswer, type FeatureIntroSetting, type FeatureIntroState, type FeatureIntroStates, type FeatureIntrosView,
+  type FeatureIntro, type FeatureIntroAnswer, type FeatureIntroSetting, type FeatureIntroState, type FeatureIntroStates, type FeatureIntrosView,
 } from "../shared/feature-intros.ts";
 
 const log = createLogger("feature-intros");
@@ -77,7 +77,16 @@ function answerFromSetting(setting: FeatureIntroSetting): FeatureIntroAnswer | n
       const enabled = readVoiceSettings().enabled;
       return enabled === true ? "on" : enabled === false ? "off" : null;
     }
+    case "voice_self_learning": {
+      const on = readVoiceSettings().self_learning;
+      return on === true ? "on" : on === false ? "off" : null;
+    }
   }
+}
+
+/** A question that would mean nothing yet is not asked: self-learning waits for voice messages. */
+function introAskable(intro: FeatureIntro): boolean {
+  return intro.setting !== "voice_self_learning" || voiceMessagesEnabled();
 }
 
 /** Writes a setting-backed feature's answer; nothing else in the setting's group moves. */
@@ -88,6 +97,9 @@ function writeSettingAnswer(setting: FeatureIntroSetting, answer: FeatureIntroAn
       return;
     case "voice_messages":
       updateVoiceSettings({ enabled: answer === "on" });
+      return;
+    case "voice_self_learning":
+      updateVoiceSettings({ selfLearning: answer === "on" });
       return;
   }
 }
@@ -112,7 +124,7 @@ export function featureIntrosView(): FeatureIntrosView {
   return {
     pending: FEATURE_INTROS.filter((intro) => {
       const state = stateOf(states, intro.id);
-      return !state.answer && state.skips < MAX_FEATURE_INTRO_SKIPS;
+      return !state.answer && state.skips < MAX_FEATURE_INTRO_SKIPS && introAskable(intro);
     }),
     isExistingUser: isExistingUser(),
     newInSettings: FEATURE_INTROS
