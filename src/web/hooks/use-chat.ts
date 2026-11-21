@@ -37,6 +37,7 @@ import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary"
 import { getChatClientId } from "@/lib/chat-client-id";
 import { CHAT_CLIENT_ID_PARAM } from "../../shared/chat-client-id";
 import { commitReplayedTurn, replayReplacedIds, type ReplayedTurn } from "@/lib/replay-active-turn";
+import { idleGreetingNeedsHistory } from "@/lib/idle-greeting-refetch";
 import { VAULT_CARD_APPROVAL, VAULT_NOTIFICATION_BODY } from "../../shared/vault";
 
 /** The toast a session-collaboration card raises while its chat is not on screen. */
@@ -1081,7 +1082,9 @@ export function useChat(
     // Live stream frames must be contiguous. A higher number is evidence that
     // a tunnel/proxy skipped a content frame; request one full snapshot and let
     // the replay establish the authoritative cursor below.
-    const streamSeq = (data as any).streamSeq;
+    // A greeting's `streamSeq` is not a frame of the stream but the session's last number, and is
+    // taken up where the greeting is handled; counted here it read as a gap and asked for a resync.
+    const streamSeq = (data as any).type === "session_state" ? undefined : (data as any).streamSeq;
     if (typeof streamSeq === "number") {
       if (replayTruncatedRef.current) {
         // The prefix is unavailable from the bounded buffer. Continue showing
@@ -1330,12 +1333,23 @@ export function useChat(
       // and the full transcript finished loading moments ago — on boot the WS
       // connects right after the mount fetch and this refetch would re-download
       // the entire history (and remount every transcript image) for no reason.
+      // A greeting that names the session's last event number reloads only when this tab missed
+      // one (see `idleGreetingNeedsHistory`), and brings the tab's own number in line with it, so
+      // the next ping does not read a fresh tab's 0 as a gap and ask for a resync every 5 s.
       if (p === "idle") {
         const replayWasTruncated = replayTruncatedRef.current;
         resyncInFlightRef.current = false;
         replayTruncatedRef.current = false;
-        const historyFresh = Date.now() - historyLoadedAtRef.current < 5000;
-        if (replayWasTruncated || !(wasIdle && (historyFresh || initialHistoryPendingRef.current))) refetchRef.current?.();
+        const serverSeq = typeof state.streamSeq === "number" ? state.streamSeq as number : undefined;
+        const needsHistory = idleGreetingNeedsHistory({
+          replayWasTruncated,
+          wasIdle,
+          historyFresh: Date.now() - historyLoadedAtRef.current < 5000 || initialHistoryPendingRef.current,
+          serverSeq,
+          clientSeq: streamSeqRef.current,
+        });
+        if (serverSeq !== undefined) streamSeqRef.current = serverSeq;
+        if (needsHistory) refetchRef.current?.();
         setIsReconnecting(false);
       }
       // If streaming, turn_events message will follow
