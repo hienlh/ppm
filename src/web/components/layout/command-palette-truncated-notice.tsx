@@ -18,7 +18,8 @@ export function CommandPaletteTruncatedNotice({ count, onOpenSettings }: { count
             onOpenSettings?.();
             openSettings("files");
           }}
-          className="inline text-primary underline-offset-2 hover:underline"
+          // A whole 44px row to tap on a phone; inline with the sentence from `md` up.
+          className="block min-h-11 text-left text-primary underline-offset-2 hover:underline md:inline md:min-h-0"
         >
           Exclude large folders in this project&apos;s File Filters
         </button>
