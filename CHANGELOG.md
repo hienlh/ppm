@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.25] - 2026-11-21
+
+### Fixed
+
+- **A chat no longer jumps away from where you were reading after a reconnect**: history is reloaded only when the chat actually missed something while the connection was down.
+
 ## [0.26.24] - 2026-11-21
 
 ### Fixed
