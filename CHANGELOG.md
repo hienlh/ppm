@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.26.27] - 2026-11-22
+
+### Fixed
+
+- **Huge projects no longer bloat the server's memory**: the file index is walked in a short-lived child process and searched on one worker per project, so a folder with hundreds of checkouts stops growing PPM by gigabytes.
+- **A file list cut at 300k entries keeps the shallow files**, and the command palette says when the list was cut, with a link to File Filters.
+- **The chat footer's left chips scroll sideways when they overflow** a narrow pane, with faded edges, instead of the last chip being cut off.
+
 ## [0.26.26] - 2026-11-21
 
 ### Added
