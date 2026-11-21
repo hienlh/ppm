@@ -23,7 +23,7 @@ import { gatherVoiceContext, type VoiceContext, type VoiceContextInput } from ".
 import { askClaudeHaiku, type VoiceAsk } from "./voice-haiku.ts";
 import { extractLearnedWords } from "./voice-learn.ts";
 import { fixesToShow, replacements } from "./voice-learn-from-cleanup.ts";
-import { appendLearnedWords, recordCleanupReplacements } from "./voice-learned-store.ts";
+import { appendLearnedWords, markLearnedUse, recordCleanupReplacements } from "./voice-learned-store.ts";
 import { VoiceMessageError } from "./voice-message-errors.ts";
 import { readVoiceSettings, selfLearningOn, vocabularyOf } from "./voice-settings.ts";
 import { composeVoiceWords, looksLikePromptEcho } from "./voice-vocabulary.ts";
@@ -74,6 +74,8 @@ export interface VoiceServiceDeps {
   ask: VoiceAsk;
   /** The project's picked-up words (self-learning). */
   autoVocabulary?: (project: string) => Promise<RankedTerm[]>;
+  /** The clock learning stamps and fades words by. */
+  now?: () => Date;
 }
 
 const defaultDeps: VoiceServiceDeps = {
@@ -121,7 +123,9 @@ export async function processVoiceMessage(
   }
 
   const lang = input.lang && /^(auto|[a-z]{2})$/.test(input.lang) ? input.lang : "vi";
-  const lists = composeVoiceWords(settings, input.project, { selfLearning, auto: await autoWords });
+  const lists = composeVoiceWords(settings, input.project, {
+    selfLearning, auto: await autoWords, nowMs: (deps.now?.() ?? new Date()).getTime(),
+  });
   const words = lists.cleanup;
   // Clean-up off: no context is read and Haiku is never asked; the word lists still help Whisper.
   const cleanupOn = settings.cleanup_enabled;
@@ -145,13 +149,28 @@ export async function processVoiceMessage(
   const raw = heard && looksLikePromptEcho(heard, lists.whisper) ? "" : heard;
   if (heard && !raw) log.info("Whisper wrote its word list back instead of speech; treated as no speech");
   if (!raw) return { raw: "", text: "", cleaned: false, convertMs, transcribeMs: transcript.ms, cleanupMs: 0 };
-  if (!context) return { raw, text: raw, cleaned: false, cleanupSkipped: true, convertMs, transcribeMs: transcript.ms, cleanupMs: 0 };
+  const now = deps.now ?? (() => new Date());
+  // A learned word said again stays; one the clean-up taught and nobody has said for a month fades.
+  const noteUse = (texts: string[]) => {
+    if (!selfLearning) return;
+    try {
+      const faded = markLearnedUse(input.project, texts, now());
+      if (faded.length) log.info(`${faded.length} learned word(s) faded for project "${input.project}" after going unused`);
+    } catch (e) {
+      log.warn(`could not note which learned words were used: ${(e as Error).message}`);
+    }
+  };
+  if (!context) {
+    noteUse([raw]);
+    return { raw, text: raw, cleaned: false, cleanupSkipped: true, convertMs, transcribeMs: transcript.ms, cleanupMs: 0 };
+  }
 
   const started = Date.now();
   const cleanup = await cleanupTranscript(raw, await context, deps.ask, undefined, { vietnameseFixes: settings.vietnamese_fixes });
   const cleanupMs = Date.now() - started;
   if (!cleanup.ok) {
     log.warn(`clean-up failed, keeping the raw transcript: ${cleanup.error}`);
+    noteUse([raw]);
     return { raw, text: raw, cleaned: false, cleanupError: cleanup.error, convertMs, transcribeMs: transcript.ms, cleanupMs };
   }
   // Times only: what was said never goes into the log.
@@ -162,12 +181,13 @@ export async function processVoiceMessage(
   const holdsSecret = (text: string) => redactLogText(text, { home: false, email: false, chats: false }) !== text;
   if (selfLearning && settings.learn_from_cleanup && !holdsSecret(raw) && !holdsSecret(cleanup.text)) {
     try {
-      learned = recordCleanupReplacements(input.project, replacements(raw, cleanup.text, lists.known), lists.known);
+      learned = recordCleanupReplacements(input.project, replacements(raw, cleanup.text, lists.known), lists.known, now());
       if (learned.length) log.info(`learned ${learned.length} word(s) from the clean-up for project "${input.project}"`);
     } catch (e) {
       log.warn(`could not record the clean-up's corrections: ${(e as Error).message}`);
     }
   }
+  noteUse([raw, cleanup.text]);
   return {
     raw, text: cleanup.text, cleaned: true, convertMs, transcribeMs: transcript.ms, cleanupMs,
     ...(fixes.length ? { fixes } : {}), ...(learned.length ? { learned } : {}),

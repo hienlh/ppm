@@ -27,6 +27,17 @@ export function learnedWhen(at: string, now: Date = new Date()): string {
   return when.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
+/**
+ * When a learned word was learned and last used, as a row shows it: "used today 03:09" once it has
+ * been said since it was learned, else "learned Tue". The other date goes in the title.
+ */
+export function learnedDates(l: LearnedWord, now: Date = new Date()): { text: string; title: string } {
+  const learned = `learned ${learnedWhen(l.at, now)}`;
+  if (!l.lastUsedAt || l.lastUsedAt === l.at) return { text: learned, title: learned };
+  const used = `used ${learnedWhen(l.lastUsedAt, now)}`;
+  return { text: used, title: `${learned}, last ${used}` };
+}
+
 /** What the source badge says: "clean-up · 3×", "your edit". */
 export function learnedSourceLabel(l: LearnedWord): string {
   if (l.source === "cleanup") return `clean-up · ${l.hits ?? 1}×`;
@@ -79,7 +90,7 @@ export function VoiceLearnedWordsList({ learned, blocked, busy, onUndo, onRestor
         blocked.length === 0 ? <Empty>Nothing undone. A word you undo stays here, and is never learned again until you restore it.</Empty> : (
           <ul>
             {[...blocked].sort((a, b) => b.at.localeCompare(a.at)).map((b) => (
-              <Row key={`blocked-${b.word}`} word={b.word} heard={b.from} badge="undone · never again" when={learnedWhen(b.at, now)} dim>
+              <Row key={`blocked-${b.word}`} word={b.word} heard={b.from} badge="undone · never again" when={{ text: `undone ${learnedWhen(b.at, now)}`, title: "" }} dim>
                 <Button variant="outline" size="sm" disabled={busy} onClick={() => onRestore(b.word)} className="h-11 md:h-[30px]">Restore</Button>
               </Row>
             ))}
@@ -91,7 +102,7 @@ export function VoiceLearnedWordsList({ learned, blocked, busy, onUndo, onRestor
         <ul>
           {shown.map((l) => (
             <Row key={`learned-${l.word}`} word={l.word} heard={l.from} badge={learnedSourceLabel(l)}
-              badgeTone={l.source === "cleanup" ? "cleanup" : "edit"} when={learnedWhen(l.at, now)} phrase={l.kind === "phrase"}>
+              badgeTone={l.source === "cleanup" ? "cleanup" : "edit"} when={learnedDates(l, now)} phrase={l.kind === "phrase"}>
               <Button variant="outline" size="sm" disabled={busy} onClick={() => onUndo([l.word])} className="h-11 gap-1.5 md:h-[30px]"
                 aria-label={`Undo learned word ${l.word}`}>
                 <Undo2 className="size-3.5" />Undo
@@ -122,13 +133,13 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 function Row({ word, heard, badge, badgeTone, when, dim, phrase, children }: {
-  word: string; heard: string; badge: string; badgeTone?: "cleanup" | "edit"; when: string; dim?: boolean; phrase?: boolean;
+  word: string; heard: string; badge: string; badgeTone?: "cleanup" | "edit"; when: { text: string; title: string }; dim?: boolean; phrase?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <li className={cn(
       "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-t border-border-soft px-4 py-2.5 first:border-t-0",
-      "md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto_7rem_auto]",
+      "md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto_9.5rem_auto]",
       dim && "text-text-dim",
     )}>
       <span className="min-w-0 truncate text-sm font-semibold" title={phrase ? "Only the clean-up uses this one; Whisper is not told." : undefined}>
@@ -140,9 +151,9 @@ function Row({ word, heard, badge, badgeTone, when, dim, phrase, children }: {
           "whitespace-nowrap rounded-full border px-2 py-0.5 text-[10.5px]",
           badgeTone === "cleanup" ? "border-accent-2/40 text-accent-2" : badgeTone === "edit" ? "border-warning/40 text-warning" : "border-border text-text-3",
         )}>{badge}</span>
-        <span className="text-xs text-text-3 md:hidden">{when}</span>
+        <span className="text-xs text-text-3 md:hidden" title={when.title || undefined}>{when.text}</span>
       </span>
-      <span className="hidden text-xs text-text-3 md:block">{when}</span>
+      <span className="hidden text-xs text-text-3 md:block" title={when.title || undefined}>{when.text}</span>
       <span className="col-start-2 row-start-1 justify-self-end md:col-start-auto md:row-start-auto">{children}</span>
     </li>
   );

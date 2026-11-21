@@ -21,6 +21,7 @@ import {
 } from "../../services/voice-message/voice-settings.ts";
 import { autoVocabulary, clearAutoVocabularyCache } from "../../services/voice-message/voice-auto-vocabulary-sources.ts";
 import { whisperPromptPreview } from "../../services/voice-message/voice-vocabulary.ts";
+import { isFaded } from "../../services/voice-message/voice-learned-fade.ts";
 import { WHISPER_PROMPT_MAX_CHARS } from "../../shared/voice-message.ts";
 
 export interface VoiceRouteDeps {
@@ -64,7 +65,8 @@ async function settingsView(project: string | undefined, whisperReady: boolean) 
     vietnameseFixes: config.vietnamese_fixes,
     words: config.words,
     projectWords: own.words,
-    projectLearned: own.learned,
+    // A faded word is gone from the list even before the next voice message prunes the row.
+    projectLearned: own.learned.filter((l) => !isFaded(l, Date.now())),
     projectBlocked: own.blocked ?? [],
     whisperPrompt: project ? whisperPromptPreview(config, project, { selfLearning, auto }) : [],
     whisperPromptMaxChars: WHISPER_PROMPT_MAX_CHARS,

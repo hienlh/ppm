@@ -221,3 +221,39 @@ describe("processVoiceMessage with self-learning", () => {
     expect(seen.asks).toBe(0);
   });
 });
+
+describe("processVoiceMessage fades what nobody says", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const T0 = Date.parse("2026-10-01T10:00:00.000Z");
+  const clock = (days: number) => () => new Date(T0 + days * DAY);
+  const said = (text: string, cleaned: string, days: number): Partial<VoiceServiceDeps> => ({
+    transcribe: async () => ({ text, ms: 4 }),
+    ask: async () => JSON.stringify({ text: cleaned }),
+    autoVocabulary: async () => [],
+    now: clock(days),
+  });
+
+  it("keeps a learned word that is said again, and drops one unused for 30 days, on the injected clock", async () => {
+    updateVoiceSettings({ enabled: true, selfLearning: true });
+    for (let i = 0; i < 3; i++) await processVoiceMessage({ audio: wav(1), project: "demo" }, deps(said("setting của BPM được", "Setting của PPM được.", 0)).d);
+    expect(readVoiceSettings().projects.demo?.learned.map((l) => l.word)).toEqual(["PPM"]);
+    // Day 25: PPM is said (Whisper gets it right now), so it counts as used.
+    await processVoiceMessage({ audio: wav(1), project: "demo" }, deps(said("deploy PPM đi", "Deploy PPM đi.", 25)).d);
+    expect(readVoiceSettings().projects.demo?.learned[0]?.lastUsedAt).toBe(new Date(T0 + 25 * DAY).toISOString());
+    // Day 50: 25 days after its last use, still there.
+    await processVoiceMessage({ audio: wav(1), project: "demo" }, deps(said("không nhắc", "Không nhắc.", 50)).d);
+    expect(readVoiceSettings().projects.demo?.learned.map((l) => l.word)).toEqual(["PPM"]);
+    // Day 56: 31 days unused, so the next message prunes it.
+    await processVoiceMessage({ audio: wav(1), project: "demo" }, deps(said("không nhắc", "Không nhắc.", 56)).d);
+    expect(readVoiceSettings().projects.demo?.learned ?? []).toEqual([]);
+  });
+
+  it("with self-learning off touches no learned word", async () => {
+    configService.set("voice_message", {
+      enabled: true, self_learning: false, review_before_send: true, words: [],
+      projects: { demo: { words: [], learned: [{ word: "PPM", from: "BPM", at: new Date(T0).toISOString(), source: "cleanup", hits: 3 }] } },
+    });
+    await processVoiceMessage({ audio: wav(1), project: "demo" }, deps(said("x", "X.", 90)).d);
+    expect(readVoiceSettings().projects.demo?.learned.map((l) => l.word)).toEqual(["PPM"]);
+  });
+});

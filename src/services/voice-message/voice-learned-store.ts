@@ -5,6 +5,7 @@
  * explicit correction and lifts the block.
  */
 import type { LearnedWord, VoiceCandidate, VoiceMessageConfig } from "../../shared/voice-message.ts";
+import { isFaded, isStaleCandidate, wordUsedIn } from "./voice-learned-fade.ts";
 import { readyToLearn, type Replacement } from "./voice-learn-from-cleanup.ts";
 import {
   cleanCandidateList, cleanLearnedList, projectWordsOf, readVoiceSettings, VOICE_LIMITS, vocabularyOf, writeVoiceSettings,
@@ -78,7 +79,7 @@ export function recordCleanupReplacements(
     const index = learnedAt.get(word);
     if (index !== undefined) {
       const entry = learned[index]!;
-      learned[index] = { ...entry, hits: Math.min((entry.hits ?? 1) + 1, VOICE_LIMITS.maxHits) };
+      learned[index] = { ...entry, hits: Math.min((entry.hits ?? 1) + 1, VOICE_LIMITS.maxHits), lastUsedAt: at };
       continue;
     }
     const hits = (candidates.get(key)?.hits ?? 0) + 1;
@@ -99,4 +100,35 @@ export function recordCleanupReplacements(
   };
   writeVoiceSettings(config);
   return newlyLearned;
+}
+
+/**
+ * After a voice message: every learned word of `project` that the transcript says (as heard or as
+ * cleaned) is marked used now, then the words the clean-up taught that have gone unused for the
+ * fade window leave the list, and so do candidates not seen in that time. Answers with the words
+ * that faded. Writes only when something changed.
+ */
+export function markLearnedUse(project: string, texts: readonly string[], now = new Date()): LearnedWord[] {
+  if (!validProject(project)) return [];
+  const config = readVoiceSettings();
+  if (!Object.hasOwn(config.projects, project)) return [];
+  const own = projectWordsOf(config, project);
+  const at = now.toISOString();
+  const nowMs = now.getTime();
+  let changed = false;
+  const used = own.learned.map((l) => {
+    if (!texts.some((t) => wordUsedIn(t, l.word))) return l;
+    changed = true;
+    return { ...l, lastUsedAt: at };
+  });
+  const faded = used.filter((l) => isFaded(l, nowMs));
+  const candidates = (own.candidates ?? []).filter((c) => !isStaleCandidate(c, nowMs));
+  if (faded.length || candidates.length !== (own.candidates ?? []).length) changed = true;
+  if (!changed) return [];
+  config.projects = {
+    ...config.projects,
+    [project]: { ...own, learned: used.filter((l) => !isFaded(l, nowMs)), candidates },
+  };
+  writeVoiceSettings(config);
+  return faded;
 }

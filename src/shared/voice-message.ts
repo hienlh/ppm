@@ -35,6 +35,8 @@ export interface LearnedWord {
   /** Messages the correction was seen in. */
   hits?: number;
   kind?: "term" | "phrase";
+  /** The last voice message that used the word (said it, or needed it fixed again); absent: not since `at`. */
+  lastUsedAt?: string;
 }
 
 /** A correction the clean-up made, counted until it is seen often enough to be learned. */

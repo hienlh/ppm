@@ -74,6 +74,8 @@ export function cleanLearnedList(raw: unknown): LearnedWord[] {
     const hits = hitsOf(item.hits);
     if (hits) entry.hits = hits;
     if (item.kind === "term" || item.kind === "phrase") entry.kind = item.kind;
+    const lastUsedAt = isoOrNull(item.lastUsedAt);
+    if (lastUsedAt) entry.lastUsedAt = lastUsedAt;
     const key = word.toLowerCase();
     byWord.delete(key); // re-inserted last, so the order stays oldest → newest
     byWord.set(key, entry);
