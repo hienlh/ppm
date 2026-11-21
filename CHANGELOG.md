@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.26.26] - 2026-11-21
+
+### Added
+
+- **PPM comes back by itself after running out of memory (Windows)**: the autostart task checks every 2 minutes, waits for memory to free up, restarts PPM and says "out of memory" when that is what killed it; it gives up with a notification after 5 starts in 30 minutes and leaves a `ppm stop --kill` alone.
+- **Low memory notification**: under 15 GB free it names the chat whose processes grew fastest and what PPM released; a second one goes out under 10 GB.
+- **Quiet chats give their memory back**: a chat idle for 60 minutes between turns releases its Claude process and the MCP servers under it, and under 10 GB free the longest-quiet ones go first.
+- **Heavy commands wait their turn**: a chat's test run, type check, build or e2e is refused while memory is low and waits (up to 5 minutes) while another heavy job runs on the machine.
+- **The three memory thresholds (15 / 10 GB, 60 minutes) are in Settings → AI Provider.**
+
+### Fixed
+
+- **A supervisor restart keeps the tunnel and its URL**: a new supervisor adopts the previous one's tunnel and edge, and `ppm start`/`ppm restart` no longer kill a live tunnel left behind.
+- **Health checks do not kill a PPM that is only paging** while the machine is out of memory.
+- **A pid reused after a reboot is no longer mistaken for PPM's own** (Windows Fast Startup), so start-up neither kills a stranger nor refuses to start.
+
 ## [0.26.25] - 2026-11-21
 
 ### Fixed
