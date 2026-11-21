@@ -30,6 +30,10 @@ self.onmessage = (event: MessageEvent<IndexRequest>) => {
   if (request.type === "seed") {
     searchable = null; // let the old list go before the new one is built
     searchable = toSearchable(buildEntries({ json: request.json ?? new Uint8Array(), compact: request.compact }));
+    // This thread is idle between keystrokes and its collector is in no hurry: left to itself it
+    // kept each replaced list, ~3 MB a re-seed of 153k entries, measured. A seed comes at most
+    // once per build, so a full collection here is cheap.
+    Bun.gc(true);
     return;
   }
   if (!searchable) {
