@@ -1622,7 +1622,7 @@ Show the events, the delay and the channels
 
 ### `ppm notify set`
 
-Switch an event (done, approval_request, question, collab_approval, schedule, schedule_created, jira, design_review, extension) or a channel (telegram, ntfy) on or off
+Switch an event (done, approval_request, question, collab_approval, schedule, schedule_created, jira, design_review, extension, memory) or a channel (telegram, ntfy) on or off
 
 **Usage:** `ppm notify set [options] <event> <state>`
 
