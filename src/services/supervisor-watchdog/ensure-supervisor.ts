@@ -54,8 +54,16 @@ async function supervisorRuns(pid: unknown, statusWrittenAt: number | null): Pro
   return isRecordedProcess(true, process.platform === "win32" ? p.startedAt : undefined, statusWrittenAt);
 }
 
-export async function runEnsureSupervisor(): Promise<EnsureAction> {
-  const dir = getPpmDir();
+export interface EnsureRunOptions {
+  /** The PPM folder; the process's own (`getPpmDir`) when omitted. */
+  ppmDir?: string;
+  /** What starts PPM and what tells the user it gave up. Tests pass ones that refuse. */
+  start?: typeof startPpm;
+  notifyGaveUp?: typeof notifyGaveUp;
+}
+
+export async function runEnsureSupervisor(opts: EnsureRunOptions = {}): Promise<EnsureAction> {
+  const dir = opts.ppmDir ?? getPpmDir();
   const statusFile = resolve(dir, "status.json");
   const status = readJson<Record<string, unknown>>(statusFile);
   let statusAgeMs: number | null = null;
@@ -88,12 +96,12 @@ export async function runEnsureSupervisor(): Promise<EnsureAction> {
       return decision;
     case "give-up":
       logLine(dir, "ERROR", `PPM was started ${decision.starts} times in 30 minutes and is down again: not starting it again for now`);
-      await notifyGaveUp(decision.starts);
+      await (opts.notifyGaveUp ?? notifyGaveUp)(decision.starts);
       return decision;
     case "start": {
       const waited = decision.afterWaitMs !== undefined ? ` after waiting ${Math.round(decision.afterWaitMs / 1000)}s for memory` : "";
       logLine(dir, "WARN", `PPM is not running (${decision.why === "boot" ? "first run since the machine started" : "its last run did not stop"}) — starting it${waited}`);
-      await startPpm(dir, status, decision);
+      await (opts.start ?? startPpm)(dir, status, decision);
       return decision;
     }
   }
