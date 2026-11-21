@@ -96,7 +96,10 @@ export type ChatWsServerMessage =
   | { type: "error"; message: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "phase_changed"; phase: SessionPhase; elapsed?: number }
-  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown; summary?: import("../shared/assistant-approval").ApprovalSummary } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean; effortStatus?: import("../shared/effort-status").EffortStatus | null; turnStop?: import("../shared/turn-stop").TurnStop | null; permissionMode?: string | null; defaultPermissionMode?: string }
+  | { type: "session_state"; sessionId: string; phase: SessionPhase;
+      /** The last event number the session broadcast; absent from a server older than this field. */
+      streamSeq?: number;
+      pendingApproval: { requestId: string; tool: string; input: unknown; summary?: import("../shared/assistant-approval").ApprovalSummary } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean; effortStatus?: import("../shared/effort-status").EffortStatus | null; turnStop?: import("../shared/turn-stop").TurnStop | null; permissionMode?: string | null; defaultPermissionMode?: string }
   /** What the session's CLI said about its effort when the turn started. */
   | { type: "effort_status"; status: import("../shared/effort-status").EffortStatus }
   /** The turn that just ended was ended by an error. Sent just before its `done`. */
