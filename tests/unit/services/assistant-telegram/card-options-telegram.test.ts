@@ -5,7 +5,7 @@
  * press reaching the same choose action PPM's own button does.
  */
 import { beforeEach, describe, expect, it } from "bun:test";
-import { CHOICES_IN_PPM_NOTE, formatManagerCard } from "../../../../src/services/assistant-telegram/assistant-telegram-card-kinds.ts";
+import { CHOICES_IN_PPM_NOTE, DESCRIPTIONS_CUT_NOTE, formatManagerCard } from "../../../../src/services/assistant-telegram/assistant-telegram-card-kinds.ts";
 import { AssistantTelegramManagerCards } from "../../../../src/services/assistant-telegram/assistant-telegram-manager-cards.ts";
 import { AssistantTelegramCardReplies } from "../../../../src/services/assistant-telegram/assistant-telegram-card-replies.ts";
 import { ButtonCodes } from "../../../../src/services/assistant-telegram/assistant-telegram-button-codes.ts";
@@ -50,9 +50,38 @@ describe("a card with choices, as Telegram gets it", () => {
       { text: "3. Drop the change", op: "choose", optionId: "drop" },
     ]);
     const text = visible(f.html);
-    expect(text).toContain("Choices\n1. Merge now — Merge PR #4120 and deploy to staging.\n2. Wait for review");
-    expect(text).toContain("3. Drop the change");
+    // Right under the body, one line each: the button's own text, then what it does.
+    expect(text).toContain("Staging is green.\n\n1. Merge now: Merge PR #4120 and deploy to staging.\n2. Wait for review: Leave it for the second reviewer.\n3. Drop the change\n");
+    expect(text).not.toContain("Choices");
+    expect(f.html).toContain("<b>1. Merge now</b>: Merge PR #4120");
     expect(text).toContain("Reply to this message to answer in your own words.");
+  });
+
+  it("escapes a choice's label and description before formatting them", () => {
+    const f = formatManagerCard(card({ payload: { options: [
+      { id: "a", label: "Ship <b>now</b> & tag", description: "Runs `deploy <prod>` & tags it." },
+      { id: "b", label: "Wait" },
+    ] } }), "full");
+    expect(f.html).toContain("<b>1. Ship &lt;b&gt;now&lt;/b&gt; &amp; tag</b>: Runs `deploy &lt;prod&gt;` &amp; tags it.");
+    expect(visible(f.html)).toContain("1. Ship <b>now</b> & tag: Runs `deploy <prod>` & tags it.");
+  });
+
+  it("cuts the descriptions of a card too long for one message, and keeps every label and button", () => {
+    const long = (n: number) => `${"Description words that explain what this choice does. ".repeat(6)}#${n}`.slice(0, 300);
+    const labels = Array.from({ length: 6 }, (_, i) => `Choice ${i + 1}: ${"a long label ".repeat(5)}`.slice(0, 80).trim());
+    const c = card({
+      body: "Plan paragraph that goes on for a while. ".repeat(60),
+      payload: { options: labels.map((label, i) => ({ id: `o${i}`, label, description: long(i) })) },
+    });
+    expect(c.okOffered).toBe(true);
+    const f = formatManagerCard(c, "full");
+    expect(f.buttons.map((b) => b.optionId)).toEqual(["o0", "o1", "o2", "o3", "o4", "o5"]);
+    const text = visible(f.html);
+    expect(text.length).toBeLessThanOrEqual(4096);
+    for (const [i, label] of labels.entries()) expect(text).toContain(`${i + 1}. ${label}`);
+    expect(text).toContain(DESCRIPTIONS_CUT_NOTE);
+    expect(text).not.toContain(CHOICES_IN_PPM_NOTE);
+    expect(text).not.toContain(long(0));
   });
 
   it("offers no button when the card is not shown whole, and says how to answer", () => {

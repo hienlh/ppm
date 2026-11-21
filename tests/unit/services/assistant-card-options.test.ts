@@ -89,12 +89,21 @@ describe("report_to_assistant with options", () => {
     expect(a!.description).not.toContain("<ppm-user-words-v1>");
   });
 
-  it("tells the manager when its choices are too long to be buttons", () => {
+  it("keeps the buttons of a long card, whose descriptions Telegram cuts instead", () => {
     const { env, made } = reportEnv();
     const long = Array.from({ length: 6 }, (_, i) => ({ id: `o${i}`, label: `Choice ${i}`, description: "d".repeat(300) }));
     const r = fileReport(env, caller, { kind: "needs_decision", title: "x", body: "b".repeat(2000), options: long });
-    expect(r).toMatchObject({ ok: true, note: CHOICES_NOT_PRESSABLE_NOTE });
+    expect(r.ok && r.note).toBeFalsy();
+    expect(cardOkOffered(made[0]!)).toBe(true);
     expect(made[0]!.payload.options).toHaveLength(6);
+  });
+
+  it("tells the manager when its choices cannot be buttons", () => {
+    const { env, made } = reportEnv();
+    const secret = [{ id: "a", label: "Use key", description: "AKIAABCDEFGHIJKLMNOP" }, { id: "b", label: "Wait" }];
+    const r = fileReport(env, caller, { kind: "needs_decision", title: "x", body: "b", options: secret });
+    expect(r).toMatchObject({ ok: true, note: CHOICES_NOT_PRESSABLE_NOTE });
+    expect(made[0]!.payload.options).toHaveLength(2);
   });
 
   it("warns, and builds no button, when the text lists choices instead", () => {
@@ -203,7 +212,8 @@ describe("pressing a choice", () => {
     expect(withChoices().okOffered).toBe(true);
     const secret = [{ id: "a", label: "Use key", description: "AKIAABCDEFGHIJKLMNOP" }, { id: "b", label: "Wait" }];
     expect(withChoices(secret).okOffered).toBeUndefined();
-    expect(cardOkOffered({ kind: "needs_decision", title: "x", body: "", payload: { options: [{ id: "a", label: "A", description: "d".repeat(300) }, { id: "b", label: "B", description: "e".repeat(3400) }] } })).toBe(false);
+    // A long description does not take the buttons away: Telegram cuts it, PPM shows it whole.
+    expect(cardOkOffered({ kind: "needs_decision", title: "x", body: "", payload: { options: [{ id: "a", label: "A", description: "d".repeat(300) }, { id: "b", label: "B", description: "e".repeat(3400) }] } })).toBe(true);
   });
 
   it("forwards the stored choice once, as the user's words; a second press is told who answered", async () => {

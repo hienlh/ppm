@@ -38,7 +38,7 @@ const log = createLogger("assistant-cards");
 /** Told to a manager whose choices could not be buttons (too long together, or a hidden value). */
 export const CHOICES_NOT_PRESSABLE_NOTE = "These choices are too long to show whole on the user's phone, or a part of the "
   + "card was hidden as a secret, so they are listed without buttons and the user must reply in words. Shorten the "
-  + "body, labels or descriptions to give the user buttons.";
+  + "body or labels, or take the secret out, to give the user buttons.";
 
 /** Told to a manager whose card lists choices in its text instead of in `options`. */
 export const CHOICES_IN_TEXT_NOTE = "This card lists choices in its text, so the user gets no button for them. "
