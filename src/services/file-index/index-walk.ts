@@ -1,7 +1,7 @@
 /**
  * The walk behind a project's flat file index, and what is served from it.
  *
- * Runs on the file index worker (`file-index-worker.ts`), or on the main thread where no worker
+ * Runs in the file index walk process (`file-index-walk-process.ts`), or on the main thread where none
  * could be started. It must stay free of any import that reaches the config store or the
  * database: the filter arrives already resolved.
  */
@@ -53,6 +53,8 @@ export interface IndexBuild {
   truncated?: boolean;
   /** The whole list of a large build, as `encodeCompact` writes it. */
   compact?: Uint8Array<ArrayBuffer>;
+  /** Peak resident memory of the process that walked, when it was a walk process of its own. */
+  peakMB?: number;
 }
 
 export function loadGitignore(projectPath: string): Ignore {

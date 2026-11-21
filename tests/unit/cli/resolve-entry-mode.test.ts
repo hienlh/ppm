@@ -17,6 +17,9 @@ describe("resolveEntryMode — binary daemon sentinel routing", () => {
   it("routes __ensure_supervisor__ to the watchdog check", () => {
     expect(resolveEntryMode(["C:\ppm.exe", "__ensure_supervisor__"])).toBe("ensure-supervisor");
   });
+  it("routes __file_index_walk__ to the file index walk", () => {
+    expect(resolveEntryMode(["/opt/ppm/bin/ppm", "__file_index_walk__"])).toBe("file-index-walk");
+  });
   it("treats normal CLI commands as cli", () => {
     expect(resolveEntryMode(["ppm", "start"])).toBe("cli");
     expect(resolveEntryMode(["ppm", "upgrade", "--check"])).toBe("cli");

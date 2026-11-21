@@ -3,7 +3,7 @@
  * Lazy-load file tree listing and flat index building for palette/search.
  * Implements listDir() (1-level) and buildIndex() (recursive) with filter support.
  * Index results are cached per project path; a file change marks them stale (see IndexEntry).
- * The walk itself runs on the file index worker (file-index/), off the thread serving requests.
+ * The walk itself runs in a process of its own (file-index/), off the thread serving requests.
  */
 
 import { existsSync, readdirSync } from "node:fs";
@@ -106,7 +106,7 @@ export function markIndexStale(projectPath: string): void {
 
 /**
  * Walk a project nobody has asked about yet, so its first palette opens on a ready list. The
- * walk runs on the index worker; a failure is left to the first request to report.
+ * walk runs in a walk process; a failure is left to the first request to report.
  */
 export function warmIndex(projectPath: string): void {
   if (indexCache.has(projectPath)) return;
@@ -333,7 +333,8 @@ function startBuild(projectPath: string, entry: IndexEntry): Promise<IndexBuild>
       const slowNow = next.walkMs >= SLOW_WALK_LOG_MS && !entry.slowLogged;
       if (slowNow) entry.slowLogged = true;
       const line = `indexed ${projectPath}: ${next.count} entries in ${Math.round(next.walkMs)} ms (` +
-        `${previous ? `changed=${previous.hash !== next.hash}, ` : ""}${fileIndexRunner.onMainThread ? "main thread" : "worker"})`;
+        `${previous ? `changed=${previous.hash !== next.hash}, ` : ""}` +
+        `${next.peakMB !== undefined ? `walk process, peak ${next.peakMB} MB` : "main thread"})`;
       if (!previous || slowNow) log.info(line);
       else log.debug(line);
       if (next.truncated && !entry.truncatedLogged) {

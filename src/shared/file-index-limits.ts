@@ -2,7 +2,7 @@
  * Where a project's file list is searched: in the browser, or on the server where it is held.
  *
  * Shared because both ends act on the same number: the browser asks for the list only up to it,
- * and the index worker keeps a list that long ready to search.
+ * and the server keeps a list that long on a search worker, ready to search.
  */
 
 /**

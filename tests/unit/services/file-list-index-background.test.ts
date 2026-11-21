@@ -24,12 +24,15 @@ import {
   largeRewalkDue,
   warmIndex,
 } from "../../../src/services/file-list-index.service.ts";
-import { FileIndexRunner, fileIndexRunner, fileIndexWorkerSpec } from "../../../src/services/file-index/file-index-runner.ts";
+import { FileIndexRunner, fileIndexRunner, fileIndexWalkCommand, fileIndexWorkerSpec } from "../../../src/services/file-index/file-index-runner.ts";
 import { walkIndex, type IndexBuild } from "../../../src/services/file-index/index-walk.ts";
 import type { FileEntry } from "../../../src/types/project.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { globalWebSocket } from "../../../src/server/ws/global.ts";
 import { startWatching, stopWatching, onFileChange } from "../../../src/services/file-watcher.service.ts";
+
+/** A runner whose walk process cannot be started, so it walks on this thread. */
+const noWalkProcess = { walkCommand: ["ppm-test-no-such-walk-binary"] };
 
 let root: string;
 const cleanups: Array<() => void> = [];
@@ -100,7 +103,7 @@ describe("the index worker", () => {
     makeTree(200, 40);
     const filter = { exclude: [], useIgnoreFiles: false };
     // Calibrate: how long this machine takes over the walk on each thread.
-    const fallback = new FileIndexRunner(new URL("./no-such-worker.ts", import.meta.url).href);
+    const fallback = new FileIndexRunner(noWalkProcess);
     cleanups.push(() => fallback.close());
     await fallback.run(root, filter); // finds out the worker is missing
     let started = performance.now();
@@ -125,7 +128,7 @@ describe("the index worker", () => {
 
   it("walks on the main thread instead when the worker cannot be started", async () => {
     makeTree(3, 2);
-    const runner = new FileIndexRunner(new URL("./no-such-worker.ts", import.meta.url).href);
+    const runner = new FileIndexRunner(noWalkProcess);
     cleanups.push(() => runner.close());
     const build = await runner.run(root, { exclude: [], useIgnoreFiles: false });
 
@@ -139,7 +142,7 @@ describe("the index worker", () => {
     writeFileSync(join(root, ".gitignore"), "pkg1/\n");
     const filter = { exclude: ["**/pkg3"], useIgnoreFiles: true };
     const onWorker = await fileIndexRunner.run(root, filter);
-    const fallback = new FileIndexRunner(new URL("./no-such-worker.ts", import.meta.url).href);
+    const fallback = new FileIndexRunner(noWalkProcess);
     cleanups.push(() => fallback.close());
     const onMain = await fallback.run(root, filter);
 
@@ -154,6 +157,11 @@ describe("the index worker", () => {
     // The compiled spelling resolves only because the worker is an entry point of the build.
     const pkg = await Bun.file(join(import.meta.dir, "../../../package.json")).json();
     expect(pkg.scripts.build).toContain("src/services/file-index/file-index-worker.ts");
+    // A compiled walk re-invokes the binary, which `src/index.ts` routes to the walk module.
+    expect(fileIndexWalkCommand(true)).toEqual([process.execPath, "__file_index_walk__"]);
+    expect(fileIndexWalkCommand(false).slice(-2)[0]).toEndWith("file-index-walk-process.ts");
+    const entry = await Bun.file(join(import.meta.dir, "../../../src/index.ts")).text();
+    expect(entry).toContain('import("./services/file-index/file-index-walk-process.ts")');
   });
 });
 

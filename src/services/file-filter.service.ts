@@ -71,5 +71,5 @@ function dedup(arr: string[]): string[] {
   return [...new Set(arr)];
 }
 
-// Matching lives in its own module so the file index worker can use it without the config store.
+// Matching lives in its own module so the file index walk process can use it without the config store.
 export { matchesGlob } from "./file-glob.ts";

@@ -92,7 +92,7 @@ fileRoutes.get("/index", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     outlastFirstWalk(c);
-    // The body is serialised and gzipped once per walk, on the index worker: nxsys-workspace's
+    // The body is serialised and gzipped once per walk, in the walk process: nxsys-workspace's
     // is 22 MB, which cost ~120 ms of the event loop to serialise and compress per download.
     const build = await fileService.buildIndex(projectPath);
     const max = Number(c.req.query("max"));
