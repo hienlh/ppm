@@ -85,7 +85,8 @@ const MAX_INDEX_SEARCH_LIMIT = 500;
  * Returns flat array of all project files {path, name} for palette/search.
  * Result is cached; a file change marks it stale, and the stale list is served while it rebuilds.
  * With `max`, a project holding more entries than that answers `FileIndexTooLarge` instead of the
- * list, to be searched with `/files/index/search`.
+ * list, to be searched with `/files/index/search`; a list of `REMOTE_FILE_SEARCH_FROM_ENTRIES` or
+ * more always does, since only a sample of it is kept as JSON.
  */
 fileRoutes.get("/index", async (c) => {
   try {
@@ -95,7 +96,8 @@ fileRoutes.get("/index", async (c) => {
     // is 22 MB, which cost ~120 ms of the event loop to serialise and compress per download.
     const build = await fileService.buildIndex(projectPath);
     const max = Number(c.req.query("max"));
-    if (max > 0 && build.count > max) return c.json(ok<FileIndexTooLarge>({ tooLarge: true, count: build.count }));
+    // A large build holds only a sample of its list as JSON (see `IndexBuild`), so it is never sent.
+    if (build.large || (max > 0 && build.count > max)) return c.json(ok<FileIndexTooLarge>({ tooLarge: true, count: build.count }));
     const gzip = (c.req.header("Accept-Encoding") ?? "").includes("gzip");
     return new Response(gzip ? build.gzip : build.json, {
       headers: {
