@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.24] - 2026-11-21
+
+### Fixed
+
+- **Card choices on Telegram sit right under the card body**, one line each with the button's label and its description, instead of a "Choices" list at the very end.
+- **A long card keeps its buttons**: long descriptions no longer take away every choice; Telegram shortens them and points to PPM, while labels and buttons are never cut.
+
 ## [0.26.23] - 2026-11-21
 
 ### Added
