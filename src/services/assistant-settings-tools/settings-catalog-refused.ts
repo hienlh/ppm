@@ -1,6 +1,7 @@
 import { configService } from "../config.service.ts";
 import { getAssistantSettings } from "../assistant/assistant-settings.service.ts";
 import { getPPMBotBot } from "../telegram-bots.ts";
+import { getConfigValue } from "../db.service.ts";
 import type { RefusedSetting, UncoveredCategory } from "./settings-catalog-types.ts";
 
 /**
@@ -21,6 +22,7 @@ export const REFUSED_SETTINGS: readonly RefusedSetting[] = [
   { key: "telegram.bot_token", category: "notifications", label: "Notifications → Telegram bot token", reason: SECRET, isSet: () => hasText((configService.get("telegram") as { bot_token?: string } | undefined)?.bot_token) },
   { key: "ntfy.server", category: "notifications", label: "Notifications → ntfy server and topic", reason: "A new server drops the stored token, which only the user can type again: the user sets ntfy up in Settings → Notifications." },
   { key: "ntfy.token", category: "notifications", label: "Notifications → ntfy access token", reason: SECRET, isSet: () => hasText((configService.get("ntfy") as { token?: string } | undefined)?.token) },
+  { key: "fcm", category: "notifications", label: "Notifications → Firebase (Android app)", reason: SECRET, isSet: () => hasText(getConfigValue("fcm")) },
   { key: "assistant.telegram.bot_token", category: "assistant", label: "PPM Assistant → Telegram bot token", reason: SECRET, isSet: () => hasText(getPPMBotBot().bot_token) },
   { key: "assistant.mcp_servers", category: "assistant", label: "PPM Assistant → MCP servers", reason: "Their commands, environment and headers can hold secrets and run programs: the user edits them in Settings → PPM Assistant." },
   { key: "assistant.settings_tools", category: "assistant", label: "PPM Assistant → Let the Assistant change settings", reason: "Only the user turns these tools on or off." },

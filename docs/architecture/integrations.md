@@ -1,4 +1,4 @@
-# Integrations (Telegram, Jira)
+# Integrations (Telegram, Firebase, Jira)
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
@@ -24,6 +24,27 @@ tables and the `/api/settings/clawbot*` routes all configure the Assistant's Tel
 them would only force everyone to reconnect. Treat them as key names, not as subsystems. PPMBot's
 coordinator, its `ppm bot` CLI and its `bot_tasks` delegation no longer exist; their tables are
 left in place, unused.
+
+## Firebase (Android app)
+
+Browsers get push through standard Web Push (`src/services/web-push/`), which needs no Firebase
+project. The PPM Android app gets it through Firebase Cloud Messaging instead, with **the install's
+own Firebase project**: nothing Firebase-specific is in the APK. The user pastes the Android app's
+`google-services.json` (package `com.hienlh.ppm`) and a service-account key into Settings →
+Notifications → Firebase (Android app); both are kept in the config row `fcm` (`src/services/fcm/`),
+which sits outside `CONFIG_TABLE_KEYS` and is in `SECRET_CONFIG_KEYS`. `GET /api/notifications/fcm`
+answers only `{ configured, projectId, android: { apiKey, appId, senderId, projectId, storageBucket } }`
+— public values the app needs to initialise Firebase — and never anything from the service account.
+The app registers its FCM token with `POST /api/notifications/push/subscribe { kind: "fcm", token,
+label, deviceId? }`, into the same list as browsers, so Settings lists, tests and removes it like any
+device. Delivery signs an RS256 assertion with the service account's key on WebCrypto, trades it at
+Google's token endpoint for an access token (cached until five minutes before it expires) and sends
+a **data-only** FCM HTTP v1 message whose `data.ppm` is the same `WebPushPayload` JSON a service
+worker gets (body, then title, cut to keep it under 3,500 bytes); the app draws the notification
+itself. A token FCM calls `UNREGISTERED` (or a 404, or an `INVALID_ARGUMENT` naming the token) is
+removed, as an expired Web Push endpoint is; any other failure is recorded on the device by HTTP
+status and Google's error code only. Both Google addresses can be pointed at a fake for tests, and
+only at a loopback address (`PPM_FCM_OAUTH_BASE`, `PPM_FCM_API_BASE`).
 
 ---
 

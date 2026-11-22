@@ -15,6 +15,8 @@ export const SECRET_CONFIG_KEYS: readonly string[] = [
   "auth.token",
   "telegram.bot_token",
   "ntfy.token",
+  // The Firebase row (its own config row, never loaded into the config object): the service account is a credential.
+  "fcm",
   // Whole list: env and header values are secrets, and so may be a command's arguments.
   "assistant.mcp_servers",
   // A provider's API key, whichever provider: `*` stands for one key segment.
