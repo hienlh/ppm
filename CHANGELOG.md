@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.31] - 2026-11-23
+
+### Fixed
+
+- **A chat's schedules chip lists the schedules its AI created**, script and prompt schedules included; each row opens in Schedules.
+- **Approvals and questions from chats a manager opened show up in Waiting on you**, answerable from the PPM Assistant and Telegram, and session-tool cards now wait an hour instead of ten minutes.
+
 ## [0.26.30] - 2026-11-23
 
 ### Fixed
