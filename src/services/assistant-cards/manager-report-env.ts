@@ -8,8 +8,9 @@ import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { currentQuietWindowStart } from "../assistant-wake/wake-quiet-hours.ts";
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import { assistantCards } from "./assistant-cards.service.ts";
-import { countSessionCardsSince, findOpenUrgentTitled } from "./assistant-cards-db.ts";
-import { DIGEST_NOT_ASKED, fileReport, type ReportEnv } from "./manager-report-tool.ts";
+import { countSessionCardsSince, findOpenSessionCardsWithText, findOpenUrgentTitled } from "./assistant-cards-db.ts";
+import { DIGEST_NOT_ASKED, fileReport, sameReport, type ReportEnv } from "./manager-report-tool.ts";
+import { createLogger } from "../logger.ts";
 import { readShotSync } from "../design/shots/design-shots.service.ts";
 import { projectKey } from "../project-name-for-path.ts";
 
@@ -17,6 +18,7 @@ import { projectKey } from "../project-name-for-path.ts";
 export const NOT_A_MANAGER = "Only a project's manager chat can report to PPM Assistant. Answer the user in this chat instead.";
 
 type DigestAnswerHandler = ReportEnv["digestAnswer"];
+const log = createLogger("assistant-cards");
 
 const NO_DIGEST: DigestAnswerHandler = () => ({ ok: false, message: DIGEST_NOT_ASKED });
 let digestAnswers: DigestAnswerHandler = NO_DIGEST;
@@ -32,6 +34,13 @@ export const reportEnv: ReportEnv = {
   openUrgentTitled: (sessionId, title, since) => {
     const row = findOpenUrgentTitled(sessionId, title, since);
     return row ? assistantCards.toCard(row) : null;
+  },
+  openIdentical: (sessionId, card) => {
+    for (const row of findOpenSessionCardsWithText(sessionId, card.kind, card.title, card.body ?? "")) {
+      const open = assistantCards.toCard(row);
+      if (sameReport(open, card)) return open;
+    }
+    return null;
   },
   shotOf: (id, projectPath) => {
     const shot = readShotSync(id);
@@ -49,7 +58,10 @@ export const isReportingManager = (sessionId: string): boolean => managerChats.i
 /** The tool call: refused unless the caller is a manager chat, checked against the live table. */
 export function reportToAssistantCall(sessionId: string, args: unknown, env: ReportEnv = reportEnv): Json {
   const row = managerChats.forSession(sessionId);
-  if (!row) return textResult(NOT_A_MANAGER, true);
+  if (!row) {
+    log.info(`report from session ${sessionId} refused: not a manager chat`);
+    return textResult(NOT_A_MANAGER, true);
+  }
   const result = fileReport(env, { sessionId: row.sessionId, projectName: row.projectName, projectPath: row.projectPath }, args);
   if (!result.ok) return textResult(result.message, true);
   return textResult(JSON.stringify({

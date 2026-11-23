@@ -33,6 +33,7 @@ function reportEnv() {
     now: () => 1_000_000,
     countSince: () => 0,
     openUrgentTitled: () => null,
+    openIdentical: () => null,
     quietWindowStart: () => null,
     digestAnswer: () => ({ ok: false, message: "no" }),
     // As the real store answers: offered only where the whole decision fits and nothing is hidden.
