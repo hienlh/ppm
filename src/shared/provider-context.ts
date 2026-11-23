@@ -6,6 +6,18 @@ export function withSharedContext(message: string, context?: string): string {
   return context ? `${START}\n${context.replaceAll(END, "[end context]")}\n${END}\n\n${message}` : message;
 }
 
+/**
+ * `message` with `extra` added inside its shared-context block (or in a new one), so it is
+ * stripped from history, titles and search like the rest of the block. Wrapping an already
+ * wrapped message instead would leave the second block in the visible text.
+ */
+export function withAddedSharedContext(message: string, extra: string): string {
+  const close = `\n${END}\n\n`;
+  const end = message.startsWith(`${START}\n`) ? message.indexOf(close) : -1;
+  if (end < 0) return withSharedContext(message, extra);
+  return `${message.slice(0, end)}\n\n${extra.replaceAll(END, "[end context]")}${message.slice(end)}`;
+}
+
 export function stripSharedContext(message: string): string {
   if (!message.startsWith(`${START}\n`)) return message;
   const end = message.indexOf(`${END}\n\n`);

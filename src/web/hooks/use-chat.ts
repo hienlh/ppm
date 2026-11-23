@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { BackgroundAgentStatus } from "../../shared/background-agent-status";
 import type { PromptCacheState } from "../../shared/prompt-cache-idle";
-import type { TurnStop } from "../../shared/turn-stop";
+import { isSessionMissingMessage, type TurnStop } from "../../shared/turn-stop";
 import { sessionPermissionFromGreeting, type SessionPermissionState } from "@/lib/session-permission";
 import { isAssistantProject } from "../../shared/assistant-project";
 import { approvalAfterGreeting, approvalDrawsAsCard, approvalFromWire, approvalQuestions, type ApprovalRequest } from "@/lib/approval-request";
@@ -671,6 +671,13 @@ export function useChat(
         break;
       }
 
+      case "session_recovered": {
+        // One line at the head of the answer: the turn goes on in a new Claude session.
+        streamingEventsRef.current.push(ev as ChatEvent);
+        syncMessages();
+        break;
+      }
+
       case "status_update": {
         const label = ev.accountLabel ? ` (${ev.accountLabel})` : "";
         setStatusMessage(`${ev.message}${label}`);
@@ -842,6 +849,9 @@ export function useChat(
           break;
         }
         if (!isReplayingRef.current) attemptRef.current?.fail();
+        // Claude Code lost this chat: the turn-stop note at the end of the conversation says so
+        // and offers the way out, so no error line repeats it (designs/resume-recovery-notices).
+        if (isSessionMissingMessage(ev.message)) break;
         if (isReplayingRef.current) {
           // The answer on screen is about to be swapped out: the error goes into the one being
           // rebuilt, or — when that has nothing yet — is drawn on its own at the swap, as live.

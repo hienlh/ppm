@@ -6,6 +6,7 @@
 import { afterAll, afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { act } from "react";
 import { installDom, uninstallDom, mount, type Mounted } from "../../helpers/react-dom";
+import { sessionMissingMessage } from "../../../src/shared/turn-stop";
 
 installDom();
 afterAll(uninstallDom);
@@ -74,4 +75,15 @@ it("drops the stop when the next message goes out, and when another turn starts"
   await emit({ type: "turn_stop", stop });
   await emit({ type: "phase_changed", phase: "thinking" });
   expect(chat.turnStop).toBeNull();
+});
+
+it("draws no error line for a chat Claude Code lost: the turn-stop note says it instead", async () => {
+  const missing = { message: sessionMissingMessage("off"), subtype: "error_session_missing", at: 2 };
+  await emit({ type: "phase_changed", phase: "streaming" });
+  await emit({ type: "turn_stop", stop: missing });
+  await emit({ type: "error", message: missing.message });
+  await emit({ type: "done", sessionId: "session", resultSubtype: "error_session_missing" });
+  await emit({ type: "phase_changed", phase: "idle" });
+  expect(chat.messages.some((m) => m.role === "system" || m.events?.some((e) => e.type === "error"))).toBe(false);
+  expect(chat.turnStop).toEqual(missing);
 });

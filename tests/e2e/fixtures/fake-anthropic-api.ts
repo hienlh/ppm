@@ -13,6 +13,8 @@ export interface FakeAnthropicApi {
   requests: Array<{ at: number; path: string; token: string; status: number }>;
   /** Access tokens issued so far, oldest first; only the last one is accepted. */
   issued: string[];
+  /** Every text block of the newest user message of each accepted `/v1/messages` call, joined. */
+  prompts: string[];
   stop: () => void;
 }
 
@@ -22,15 +24,32 @@ function sse(event: string, data: unknown): Uint8Array {
   return enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+/** What the person typed: PPM's shared-context block in front of it is not echoed back. */
+function withoutSharedContext(text: string): string {
+  return text.replace(/^<ppm-shared-context>[\s\S]*?<\/ppm-shared-context>\s*/, "");
+}
+
 function lastUserText(body: any): string {
   const messages: any[] = Array.isArray(body?.messages) ? body.messages : [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m?.role !== "user") continue;
-    if (typeof m.content === "string") return m.content;
+    if (typeof m.content === "string") return withoutSharedContext(m.content);
     // The CLI puts system reminders in their own blocks before what the user typed.
     const texts = (m.content ?? []).filter((b: any) => b?.type === "text" && !String(b.text).startsWith("<system-reminder>"));
-    if (texts.length) return String(texts[texts.length - 1].text);
+    if (texts.length) return withoutSharedContext(String(texts[texts.length - 1].text));
+  }
+  return "";
+}
+
+/** All the text the newest user message carried: shared context, history, then what was typed. */
+function lastUserMessageText(body: any): string {
+  const messages: any[] = Array.isArray(body?.messages) ? body.messages : [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== "user") continue;
+    if (typeof m.content === "string") return m.content;
+    return (m.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => String(b.text)).join("\n");
   }
   return "";
 }
@@ -65,6 +84,7 @@ function streamReply(text: string, model: string, chunkDelayMs: number): Readabl
 export function startFakeAnthropicApi(opts: { firstToken: string; slowChunkDelayMs?: number }): FakeAnthropicApi {
   const issued = [opts.firstToken];
   const requests: FakeAnthropicApi["requests"] = [];
+  const prompts: string[] = [];
   const slowDelay = opts.slowChunkDelayMs ?? 1500;
 
   const server = Bun.serve({
@@ -93,6 +113,7 @@ export function startFakeAnthropicApi(opts: { firstToken: string; slowChunkDelay
         }
         const body = await req.json().catch(() => ({}));
         const prompt = lastUserText(body);
+        prompts.push(lastUserMessageText(body));
         note(200);
         const slow = /\bslow\b/i.test(prompt);
         const reply = slow
@@ -120,5 +141,5 @@ export function startFakeAnthropicApi(opts: { firstToken: string; slowChunkDelay
     },
   });
 
-  return { url: `http://127.0.0.1:${server.port}`, requests, issued, stop: () => server.stop(true) };
+  return { url: `http://127.0.0.1:${server.port}`, requests, issued, prompts, stop: () => server.stop(true) };
 }

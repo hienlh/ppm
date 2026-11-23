@@ -204,6 +204,8 @@ interface MessageInputProps {
   promptCache?: PromptCacheState | null;
   /** The chat is reconnecting or offline: what is sent now waits for the connection. */
   offline?: boolean;
+  /** Placeholder while idle, when the chat has something to say about the next message. */
+  idlePlaceholder?: string;
 }
 
 export const MessageInput = memo(function MessageInput({
@@ -261,6 +263,7 @@ export const MessageInput = memo(function MessageInput({
   onThinkingChange,
   promptCache,
   offline = false,
+  idlePlaceholder,
   configurationPending = false,
 }: MessageInputProps) {
   // A chat an extension bound runs in the mode the server clamped it to, and offers only those modes.
@@ -1136,7 +1139,7 @@ export const MessageInput = memo(function MessageInput({
   // Review on and the transcript not there yet: nothing to read, so nothing to send.
   const voiceHolds = voiceMsg.decide() === "hold";
   const showCancel = isStreaming && !hasContent;
-  const placeholder = offline ? "Will send when reconnected..." : isStreaming ? "Follow-up or Stop..." : "Ask anything...";
+  const placeholder = offline ? "Will send when reconnected..." : isStreaming ? "Follow-up or Stop..." : idlePlaceholder ?? "Ask anything...";
 
   return (
     <div data-onboarding="chat-input">

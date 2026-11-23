@@ -44,6 +44,8 @@ import { ChatTaskStrip } from "@/components/ppm-tasks/chat-strip/chat-task-strip
 import { useManagerTasksSummary } from "@/components/ppm-tasks/chip/use-manager-tasks-summary";
 import { SessionSchedulesChip } from "./session-schedules-chip";
 import { CONTINUE_AFTER_STOP, TurnStopBar } from "./turn-stop-bar";
+import { openSettings } from "@/components/settings/open-settings";
+import { isSessionMissingStop } from "../../../shared/turn-stop";
 import { SessionChangesContext, useSessionChangesValue } from "./session-changes-context";
 import { useSessionFileChanges } from "@/hooks/use-session-file-changes";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
@@ -1513,6 +1515,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
       <TurnStopBar
         stop={phase === "idle" ? turnStop : null}
         onContinue={() => sendMessage(CONTINUE_AFTER_STOP, { permissionMode })}
+        onNewChat={() => handleNewSession()}
+        onOpenAccounts={() => openSettings("accounts")}
+        onOpenRecoverySettings={() => openSettings("ai-provider")}
       />
 
       {/* MCP servers this session cannot use until someone signs in (a project-scoped flow) */}
@@ -1693,6 +1698,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
             onThinkingChange={setThinking}
             promptCache={promptCache}
             offline={connectionStage !== "hidden"}
+            idlePlaceholder={phase === "idle" && turnStop && isSessionMissingStop(turnStop) ? "Message to start fresh…" : undefined}
           />
         </div>
       </div>

@@ -23,6 +23,7 @@ const TOP: Readonly<Record<string, ConfigValueType>> = {
   share_provider_context: "boolean",
   tab_tools: "boolean",
   hide_builtin_cron: "boolean",
+  resume_recovery: "boolean",
   leftover_processes_idle_minutes: "number",
   memory_warn_free_gb: "number",
   memory_block_free_gb: "number",
