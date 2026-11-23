@@ -156,6 +156,8 @@ describe("creating a schedule", () => {
     expect(routes.writes()).toEqual([{ method: "POST", path: "/api/schedules", body: {
       name: "Nightly", cron_expr: "0 7 * * *", project_path: WEB, prompt: PROMPT,
       permission_mode: "bypassPermissions", max_turns: null, timeout_ms: 1_800_000, enabled: true,
+      // Not on the card: it only lists the schedule in this Assistant chat's footer chip.
+      created_by_session_id: "s-1",
     } }]);
     expect(out).toMatchObject({ created: true, schedule: { id: 99, project: "web", prompt: PROMPT } });
   });
