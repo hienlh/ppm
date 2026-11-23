@@ -229,7 +229,7 @@ async function hardStop() {
     }
   } catch {}
 
-  let status: { pid?: number; tunnelPid?: number; supervisorPid?: number } | null = null;
+  let status: { pid?: number; tunnelPid?: number; supervisorPid?: number; edgePid?: number } | null = null;
 
   if (existsSync(statusFile())) {
     try { status = JSON.parse(readFileSync(statusFile(), "utf-8")); } catch {}
@@ -242,9 +242,10 @@ async function hardStop() {
   const supervisorPid = status?.supervisorPid ?? null;
   const serverPid = status?.pid ?? null;
   const tunnelPid = status?.tunnelPid ?? null;
+  const edgePid = status?.edgePid ?? null;
   const fallbackPid = isNaN(pidFromFile) ? null : pidFromFile;
 
-  if (!supervisorPid && !serverPid && !tunnelPid && !fallbackPid) {
+  if (!supervisorPid && !serverPid && !tunnelPid && !edgePid && !fallbackPid) {
     console.log("No PPM daemon running.");
     cleanup();
     return;
@@ -271,6 +272,12 @@ async function hardStop() {
   }
   if (tunnelPid) {
     try { process.kill(tunnelPid, 0); killPid(tunnelPid, "tunnel"); } catch {}
+  }
+  // The edge forwarder is spawned detached so it survives an upgrade's self-replace, so the
+  // supervisor's death never takes it down. Left running it holds the public port, and the next
+  // `ppm start` waited four retries before reclaiming it as a stale PPM process.
+  if (edgePid) {
+    try { process.kill(edgePid, 0); killPid(edgePid, "edge"); } catch {}
   }
 
   // Windows fallback: kill orphan cloudflared processes — but only OURS.
