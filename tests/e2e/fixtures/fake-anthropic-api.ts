@@ -24,15 +24,20 @@ function sse(event: string, data: unknown): Uint8Array {
   return enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+/** What the person typed: PPM's shared-context block in front of it is not echoed back. */
+function withoutSharedContext(text: string): string {
+  return text.replace(/^<ppm-shared-context>[\s\S]*?<\/ppm-shared-context>\s*/, "");
+}
+
 function lastUserText(body: any): string {
   const messages: any[] = Array.isArray(body?.messages) ? body.messages : [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m?.role !== "user") continue;
-    if (typeof m.content === "string") return m.content;
+    if (typeof m.content === "string") return withoutSharedContext(m.content);
     // The CLI puts system reminders in their own blocks before what the user typed.
     const texts = (m.content ?? []).filter((b: any) => b?.type === "text" && !String(b.text).startsWith("<system-reminder>"));
-    if (texts.length) return String(texts[texts.length - 1].text);
+    if (texts.length) return withoutSharedContext(String(texts[texts.length - 1].text));
   }
   return "";
 }

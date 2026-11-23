@@ -96,6 +96,16 @@ const server = Bun.serve<SocketData>({
       const { sessionId } = await req.json() as { sessionId: string };
       return Response.json({ removed: deleteTranscript(sessionId) });
     }
+    if (url.pathname === "/__resume-test/release-cli" && req.method === "POST") {
+      // What releasing a quiet chat's subprocess (or a restart) does: the next message needs a new
+      // CLI, which has to resume from the transcript. A live CLI holds the chat in memory instead.
+      const { sessionId } = await req.json() as { sessionId: string };
+      const { providerRegistry } = await import("../../../src/providers/registry");
+      const claude = providerRegistry.get("claude") as any;
+      const had = !!claude?.hasStreamingSession?.(sessionId);
+      claude?.closeStreamingSession?.(sessionId);
+      return Response.json({ released: had });
+    }
     if (url.pathname === "/__resume-test/shutdown" && req.method === "POST") {
       // Close every live CLI first: on Windows the CLI subprocesses outlive a killed server.
       const { providerRegistry } = await import("../../../src/providers/registry");

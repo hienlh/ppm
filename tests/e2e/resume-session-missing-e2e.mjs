@@ -2,8 +2,8 @@
 // a fake Anthropic API (`fixtures/resume-session-missing-server.ts`): Claude's config folder is a
 // sandbox, the API key is made up, no live credentials, nothing outside a temp directory.
 //
-// The transcript is deleted the way a wiped or reinstalled `~/.claude` deletes it, then the chat
-// is continued. With "Recover chats Claude Code lost" (asked once as a new feature, answered here):
+// The transcript is deleted the way a wiped or reinstalled `~/.claude` deletes it, the chat's CLI
+// is released (as a restart or PPM's idle release does), then the chat is continued. With "Recover chats Claude Code lost" (asked once as a new feature, answered here):
 //   off — one clear line and a stop bar offering "Start fresh here" / "New chat", no raw
 //         "No conversation found", no second "SDK error"; the next message starts a new session;
 //   on  — one line saying a new session was started, the fake API receives the kept history in
@@ -131,7 +131,10 @@ try {
   await sleep(1500);
   const removed = (await api("/__resume-test/delete-transcript", { method: "POST", body: JSON.stringify({ sessionId }) })).removed;
   assert.equal(removed.length, 1, "the chat's transcript was not where the CLI writes it");
-  record("a real CLI turn wrote the transcript under the sandboxed CLAUDE_CONFIG_DIR, and it was deleted", { removed });
+  // A live CLI holds the chat in memory and never re-reads the file; the next message must need a
+  // new one, as after a restart or once PPM released the quiet chat's subprocess.
+  assert.equal((await api("/__resume-test/release-cli", { method: "POST", body: JSON.stringify({ sessionId }) })).released, true);
+  record("a real CLI turn wrote the transcript under the sandboxed CLAUDE_CONFIG_DIR; it was deleted and the chat's CLI released", { removed });
 
   await send(desktop, "Continue from where you left off.");
   if (MODE === "before") {
@@ -172,13 +175,15 @@ try {
     assert.equal((await state()).resumeRecovery, true);
     const removedAgain = (await api("/__resume-test/delete-transcript", { method: "POST", body: JSON.stringify({ sessionId }) })).removed;
     assert.equal(removedAgain.length, 1);
+    assert.equal((await api("/__resume-test/release-cli", { method: "POST", body: JSON.stringify({ sessionId }) })).released, true);
     const beforeRecovered = (await state()).prompts.length;
     const repliesBefore = await desktop.getByText(/^Reply to:/).count();
     await send(desktop, "Continue from where you left off.");
     const notice = desktop.locator("[data-testid=session-recovered-notice]");
     await notice.waitFor({ timeout: 120000 });
-    // The fake echoes the start of the message it got, which now opens with the kept history.
     await until("the recovered turn answered", async () => (await desktop.getByText(/^Reply to:/).count()) > repliesBefore, 120000);
+    // The fake echoes what was typed (the history rides in the shared-context block in front of it).
+    await desktop.getByText("Reply to: Continue from where you left off.").first().waitFor({ timeout: 10000 });
     await phone.locator("[data-testid=session-recovered-notice]").waitFor({ timeout: 30000 });
     assert.equal(await notice.count(), 1, "more than one notice");
     assert.equal(await desktop.locator("[data-testid=turn-stop-bar]").count(), 0, "a stop bar is shown after recovery");
