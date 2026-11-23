@@ -525,17 +525,30 @@ Two wrong turns, so nobody repeats them:
 What changed: PPM is released with Bun 1.3.12 (the Windows binaries embed the builder's runtime,
 and `scripts/release.sh` now refuses to build with a leaking one), and `bun-runtime-advisory.ts`
 logs a `WARN` at start in every PPM process on a runtime measured to leak, telling the user to run
-`bun upgrade`. Why 1.3.12 and not newer, from the unit suite run against each:
+`bun upgrade`. Why 1.3.12 and not newer at the time (08/11/2026), from the unit suite run against each:
 
 - 1.3.13 rejects a TLS connection made over an existing socket with `ERR_TLS_CERT_ALTNAME_INVALID`
   (`tls-identity-check.test.ts`), which is how a database is reached through an SSH tunnel.
   1.3.11, 1.3.12 and 1.4.4 pass.
-- Bun 1.4.x starts at about a quarter of the private bytes, but from somewhere in 1.4.1–1.4.4
-  `node:child_process` no longer goes through `Bun.spawn`, so the memory monitor's spawn tracker
-  stops seeing the Claude SDK's children (`memory-watchdog.test.ts` catches it). Move to 1.4 only
-  together with a fix for that.
+- Bun 1.4.x starts at about a quarter of the private bytes. This bullet used to say that from
+  somewhere in 1.4.1–1.4.4 `node:child_process` no longer goes through `Bun.spawn`, blinding the
+  memory monitor's spawn tracker. Re-measured on Windows on 23/11/2026 it does not reproduce: on
+  1.4.4 x64 and x64-baseline the `memory-watchdog.test.ts` child_process case passed 5 runs of 5,
+  and a probe wrapping `Bun.spawn` saw every `node:child_process` spawn, with `"ignore"` stdio and
+  with a log fd alike. Linux and macOS were not re-measured.
 - From 1.3.11 `statSync().mtimeMs` carries sub-millisecond digits on Windows, which a `Date` passed
   to `utimesSync` cannot put back. Only a test depended on that round trip.
+
+**Update 23/11/2026: 1.3.12 still leaks memory, and PPM moves to 1.4.4 on Windows.** 1.3.12 closed
+the handles but kept the 32 MB blocks. Two scratch PPM stacks side by side for 3.8 hours under the
+same light load (a health request through the edge every 30 s): on 1.3.12 the supervisor grew
+150 MB/h, the edge 236 MB/h and the server 108 MB/h, in 32 MB-shaped steps; on 1.4.4 all three were
+flat within ±1 MB/h and started at 271/141/533 MB against 527/424/671. Live, a 1.3.12 supervisor
+and server reached 7.9 GB each after 30 hours. 1.4.4 also passes the TLS test above and no longer
+lets a child inherit the parent's sockets even without `windows-socket-inheritance.ts`. So the
+advisory now asks for 1.4.4 on Windows (which also makes `release.sh` build with it), and the
+supervisor recycles itself or the server at a quiet moment when either passes its limit on an older
+runtime (`process-recycle-policy.ts`). Data: `plans/reports/debugger-261123-ppm62-bun144-soak/`.
 
 One trap when comparing Bun versions on this machine: a `bun.exe` anywhere but `~/.bun/bin` reads a
 freshly written file 25–50x slower the first time (855 µs against 31 µs for the same 1.3.10

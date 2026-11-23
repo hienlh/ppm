@@ -63,8 +63,9 @@ AHEAD=$(git rev-list --count "origin/main..HEAD")
 
 # `bun build --compile` embeds the builder's own runtime in every binary, so a
 # Bun known to leak on Windows would ship that leak to every binary install.
+# That is anything before 1.4.4 (see bun-runtime-advisory.ts for the measurements).
 bun -e "const { bunRuntimeAdvisory } = await import('./src/services/bun-runtime-advisory.ts'); process.exit(bunRuntimeAdvisory(Bun.version, 'win32') ? 1 : 0)" || \
-  fail "Bun $(bun --version) leaks memory on Windows and would be embedded in the binaries — run \`bun upgrade\` first."
+  fail "Bun $(bun --version) leaks memory on Windows and would be embedded in the binaries — run \`bun upgrade\` (1.4.4 or later) first."
 
 echo "  ✓ on main · clean · in sync with origin · version $VERSION"
 
