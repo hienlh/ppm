@@ -487,6 +487,16 @@ export interface ClaudeLimitResets {
 }
 
 /** Result subtype from SDK ResultMessage */
+/** One earlier turn a recovered chat sent to its new Claude session, as "What was sent" lists it. */
+export interface ResumeHandoffEntry {
+  /** The turn's place in the conversation, 1 for the first. */
+  n: number;
+  user: string;
+  answer: string;
+  /** "Edit ×3, Bash", when tools ran. */
+  tools?: string;
+}
+
 export type ResultSubtype =
   | "success"
   | "error_max_turns"
@@ -549,10 +559,10 @@ export type ChatEvent =
   | { type: "session_migrated"; oldSessionId: string; newSessionId: string }
   /**
    * Claude Code no longer had this conversation, so PPM started a new Claude session under the
-   * same id and sent along the history it kept (`resume-handoff.ts`): `turns` earlier turns,
-   * `sent` the block itself, shown behind "What was sent".
+   * same id and sent along the history it kept (`resume-handoff.ts`): `turns` earlier turns, each
+   * as `entries` shows it behind "What was sent" (oldest first, as clipped in what was sent).
    */
-  | { type: "session_recovered"; turns: number; omittedTurns: number; sent: string }
+  | { type: "session_recovered"; turns: number; omittedTurns: number; entries: ResumeHandoffEntry[] }
   /**
    * A message the browser sent has opened a turn (or, for a steered Codex message, joined the
    * running one). `turnId` is the id the turn index gives that turn; `clientMessageId` is the

@@ -6,6 +6,7 @@ import { describe, it, expect } from "bun:test";
 import {
   cliSignedOutMessage, isCliSignInRequest, isEchoOfResultError, isSessionMissingResult, resultErrorText, resumeRecoveryOn, sessionMissingMessage,
 } from "../../../src/providers/claude-session-missing.ts";
+import { isSessionMissingMessage, sessionMissingRecoveryOff } from "../../../src/shared/turn-stop.ts";
 
 /** The result CLI 2.1.322 printed for `--resume <unknown id>` in an empty config dir (trimmed). */
 const NO_CONVERSATION = {
@@ -29,21 +30,25 @@ describe("isSessionMissingResult", () => {
 });
 
 describe("resumeRecoveryOn", () => {
-  it("is off until chosen", () => {
-    expect(resumeRecoveryOn(undefined)).toBe(false);
-    expect(resumeRecoveryOn({})).toBe(false);
-    expect(resumeRecoveryOn({ resume_recovery: false })).toBe(false);
+  it("is on unless switched off", () => {
+    expect(resumeRecoveryOn(undefined)).toBe(true);
+    expect(resumeRecoveryOn({})).toBe(true);
     expect(resumeRecoveryOn({ resume_recovery: true })).toBe(true);
+    expect(resumeRecoveryOn({ resume_recovery: false })).toBe(false);
   });
 });
 
 describe("sessionMissingMessage", () => {
-  it("says what the next message does, and where to turn recovery on when it is off", () => {
+  it("says what the next message does, and marks a stop that recovery being on would have saved", () => {
     const off = sessionMissingMessage("off");
-    expect(off.split("\n")[0]).toBe("Claude Code on this computer no longer has this conversation.");
+    expect(off.split("\n")[0]).toBe("Claude Code no longer has this chat's history.");
     expect(off).toContain("next message starts a new session");
-    expect(off).toContain("Settings → AI Provider");
-    expect(sessionMissingMessage("no-history")).toContain("PPM has no copy of it either");
+    expect(sessionMissingRecoveryOff({ message: off, at: 0 })).toBe(true);
+    const none = sessionMissingMessage("no-history");
+    expect(none).toContain("PPM kept no copy");
+    expect(sessionMissingRecoveryOff({ message: none, at: 0 })).toBe(false);
+    expect(isSessionMissingMessage(off) && isSessionMissingMessage(none)).toBe(true);
+    expect(isSessionMissingMessage("Agent encountered an error during execution.")).toBe(false);
   });
 });
 

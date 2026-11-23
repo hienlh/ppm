@@ -2070,8 +2070,7 @@ describe("ClaudeAgentSdkProvider — a conversation Claude Code no longer has", 
   });
   afterEach(() => { delete ai().resume_recovery; });
 
-  it("with recovery on, starts a new session under the same id carrying the kept history, in one line", async () => {
-    ai().resume_recovery = true;
+  it("by default, starts a new session under the same id carrying the kept history, in one line", async () => {
     const session = await provider.createSession({});
     seedTrace(session.id);
     provider.markAsResumed(session.id);
@@ -2092,11 +2091,12 @@ describe("ClaudeAgentSdkProvider — a conversation Claude Code no longer has", 
     expect(sent.trimEnd().endsWith("Continue from where you left off.")).toBe(true);
     expect(events.filter((e) => e.type === "error")).toEqual([]);
     const notice = events.find((e) => e.type === "session_recovered") as any;
-    expect(notice).toMatchObject({ turns: 1, omittedTurns: 0 });
+    expect(notice).toMatchObject({ turns: 1, omittedTurns: 0, entries: [{ n: 1, user: "Plan the migration", answer: "Step one is the schema." }] });
     expect((events.find((e) => e.type === "done") as any).resultSubtype).toBe("success");
   });
 
   it("with recovery off, stops with one clear line and lets the next message start a new session", async () => {
+    ai().resume_recovery = false;
     const session = await provider.createSession({});
     seedTrace(session.id);
     provider.markAsResumed(session.id);
@@ -2108,8 +2108,8 @@ describe("ClaudeAgentSdkProvider — a conversation Claude Code no longer has", 
     expect(mockQueryFn).toHaveBeenCalledTimes(1);
     const errors = events.filter((e) => e.type === "error").map((e) => (e as any).message);
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toStartWith("Claude Code on this computer no longer has this conversation.");
-    expect(errors[0]).toContain("Settings → AI Provider");
+    expect(errors[0]).toStartWith("Claude Code no longer has this chat's history.");
+    expect(errors[0]).toContain("Recovery is off in Settings → AI Provider");
     expect((events.find((e) => e.type === "done") as any).resultSubtype).toBe("error_session_missing");
 
     mockQueryFn.mockImplementationOnce(() => createMockQueryIterator(answered("Fresh start."), 0));
@@ -2120,17 +2120,15 @@ describe("ClaudeAgentSdkProvider — a conversation Claude Code no longer has", 
   });
 
   it("says PPM has no copy either when the trace holds nothing, even with recovery on", async () => {
-    ai().resume_recovery = true;
     const session = await provider.createSession({});
     provider.markAsResumed(session.id);
     mockQueryFn.mockImplementationOnce(() => createMockQueryIterator([noConversation(session.id)], 0));
     const events = await drain(session.id, "Continue from where you left off.");
     expect(mockQueryFn).toHaveBeenCalledTimes(1);
-    expect(events.filter((e) => e.type === "error").map((e) => (e as any).message)[0]).toContain("PPM has no copy of it either");
+    expect(events.filter((e) => e.type === "error").map((e) => (e as any).message)[0]).toContain("PPM kept no copy");
   });
 
   it("after a restart, a chat with no transcript carries its kept history instead of starting blank", async () => {
-    ai().resume_recovery = true;
     const id = crypto.randomUUID();
     seedTrace(id);
     await provider.resumeSession(id);
@@ -2146,6 +2144,7 @@ describe("ClaudeAgentSdkProvider — a conversation Claude Code no longer has", 
   });
 
   it("after a restart with recovery off, says the history is gone instead of answering as if it remembered", async () => {
+    ai().resume_recovery = false;
     const id = crypto.randomUUID();
     seedTrace(id);
     await provider.resumeSession(id);

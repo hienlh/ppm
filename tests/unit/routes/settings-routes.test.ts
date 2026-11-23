@@ -248,20 +248,21 @@ describe("PUT /settings/ai", () => {
     expect(configService.load().ai.hide_builtin_cron).toBe(true);
   });
 
-  it("saves whether a lost Claude chat is recovered, as a boolean only, and settles its feature question", async () => {
+  it("saves whether a lost Claude chat is recovered, as a boolean only, on until switched off", async () => {
     const app = createApp();
     const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
-    configService.set("feature_intros", {});
+    // Unset means on; the switch stores an explicit false to turn it off.
     expect(configService.get("ai").resume_recovery).toBeUndefined();
-    for (const value of ["true", 1, null]) expect((await put({ resume_recovery: value })).status).toBe(400);
-    const res = await put({ resume_recovery: true });
+    for (const value of ["false", 0, null]) expect((await put({ resume_recovery: value })).status).toBe(400);
+    const res = await put({ resume_recovery: false });
     expect(res.status).toBe(200);
-    expect((await res.json()).data.resume_recovery).toBe(true);
-    expect(configService.load().ai.resume_recovery).toBe(true);
-    expect((configService.get("feature_intros") as any)["resume-recovery-2026-11"]).toMatchObject({ answer: "on", via: "settings" });
+    expect((await res.json()).data.resume_recovery).toBe(false);
+    expect(configService.load().ai.resume_recovery).toBe(false);
     expect((await put({ share_provider_context: true })).status).toBe(200);
+    expect(configService.load().ai.resume_recovery).toBe(false);
+    expect((await put({ resume_recovery: true })).status).toBe(200);
     expect(configService.load().ai.resume_recovery).toBe(true);
   });
 

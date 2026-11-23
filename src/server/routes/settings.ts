@@ -336,7 +336,7 @@ settingsRoutes.put("/ai", async (c) => {
     configService.set("ai", updated);
     configService.save();
     // A switch of an introduced feature set here is the user's answer: no device asks again.
-    if ((body.ppm_tools || typeof body.resume_recovery === "boolean") && settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
+    if (body.ppm_tools && settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
 
     return c.json(ok(withResolvedSessionCollab(stripSensitiveFields(updated))));
   } catch (e) {

@@ -16,6 +16,26 @@ export interface TurnStop {
 /** Claude Code no longer had the conversation and PPM did not carry it over (`claude-session-missing.ts`). */
 export const isSessionMissingStop = (stop: TurnStop): boolean => stop.subtype === "error_session_missing";
 
+/** The first line of every "gone from Claude Code" stop: the headline the chat's note shows. */
+export const SESSION_MISSING_HEAD = "Claude Code no longer has this chat's history";
+const RECOVERY_OFF_MARK = "Recovery is off";
+
+/**
+ * The stop's text: first line the headline, the rest the detail. `off` says recovery is switched
+ * off (the note then offers to switch it on); `no-history` is recovery on with nothing kept.
+ */
+export function sessionMissingMessage(reason: "off" | "no-history"): string {
+  return reason === "off"
+    ? `${SESSION_MISSING_HEAD}.\nYour next message starts a new session. ${RECOVERY_OFF_MARK} in Settings → AI Provider.`
+    : `${SESSION_MISSING_HEAD}, and PPM kept no copy.\nYour next message starts a new session.`;
+}
+
+/** An error event carrying that stop: the chat shows the note instead of an error line. */
+export const isSessionMissingMessage = (text: string): boolean => text.startsWith(SESSION_MISSING_HEAD);
+
+/** The stop came with recovery switched off, so turning it on would have saved this chat. */
+export const sessionMissingRecoveryOff = (stop: TurnStop): boolean => stop.message.includes(RECOVERY_OFF_MARK);
+
 /** A Claude CLI running on its own sign-in, signed out (`cliSignedOutMessage`). */
 export const isCliSignedOutStop = (stop: TurnStop): boolean => stop.message.startsWith("Claude Code on this computer is signed out.");
 
@@ -23,7 +43,7 @@ export const isCliSignedOutStop = (stop: TurnStop): boolean => stop.message.star
 export function describeTurnStop(stop: TurnStop): { title: string; detail: string | null } {
   if (isSessionMissingStop(stop)) {
     const [, ...rest] = stop.message.split("\n").map((line) => line.trim()).filter(Boolean);
-    return { title: "This conversation is gone from Claude Code", detail: rest.length > 0 ? rest.join(" ") : null };
+    return { title: SESSION_MISSING_HEAD, detail: rest.length > 0 ? rest.join(" ") : null };
   }
   if (stop.subtype === "error_max_turns") {
     const limit = /maximum number of turns \((\d+)\)/i.exec(stop.message)?.[1];

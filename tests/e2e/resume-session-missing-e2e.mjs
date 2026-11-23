@@ -3,11 +3,15 @@
 // sandbox, the API key is made up, no live credentials, nothing outside a temp directory.
 //
 // The transcript is deleted the way a wiped or reinstalled `~/.claude` deletes it, the chat's CLI
-// is released (as a restart or PPM's idle release does), then the chat is continued. With "Recover chats Claude Code lost" (asked once as a new feature, answered here):
-//   off — one clear line and a stop bar offering "Start fresh here" / "New chat", no raw
-//         "No conversation found", no second "SDK error"; the next message starts a new session;
-//   on  — one line saying a new session was started, the fake API receives the kept history in
-//         that session's first request, and the turn is answered.
+// is released (as a restart or PPM's idle release does), then the chat is continued.
+//   default (Recover lost Claude chats is on) — one quiet note says a new session was started,
+//         "What was sent" lists the kept turns, the fake API receives them in that session's
+//         first request, the turn is answered, and the next message resumes normally;
+//   switched off — a note (no error line, no raw "No conversation found", no "SDK error")
+//         offers Start fresh here / New chat, the composer reads "Message to start fresh…", and
+//         the next message starts a new session with nothing carried over.
+// Four pages watch the chat at once — 390 and 1440, light and dark — because the recovered note
+// is live (it is not in the transcript), so it can only be photographed as it happens.
 // MODE=before runs the first part against a checkout without the change, for its screenshots.
 //
 // Run with node (Playwright hangs under Bun):
@@ -48,7 +52,6 @@ const web = `http://127.0.0.1:${port}`;
 const env = {
   ...process.env, PPM_HOME: ppm, HOME: home, USERPROFILE: home, PPM_HTML_TEST_REAL_HOME: homedir(),
   PPM_HTML_TEST_PORT: String(port), PPM_RESUME_WEB_DIR: webDir,
-  ...(MODE === "after" ? { PPM_FIXTURE_LEAVE_INTROS: "resume-recovery-2026-11" } : {}),
 };
 delete env.PPM_ALLOW_PROD_DB;
 const backend = spawn(BUN, ["tests/e2e/fixtures/resume-session-missing-server.ts"], { env, cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
@@ -98,46 +101,47 @@ try {
 
   const tourDismissed = () => { if (window.top === window) localStorage.setItem("ppm-onboarding-v1", JSON.stringify({ version: 1, status: "dismissed", familiarity: null, goal: null, currentStep: null, completed: [], skipped: [], projectName: null, sessionId: null })); };
   const errors = [];
-  async function openPage(viewport, phone) {
-    const context = await browser.newContext({ viewport, serviceWorkers: "block", deviceScaleFactor: 2, ...(phone ? { isMobile: true, hasTouch: true } : {}) });
+  async function openPage(width, scheme) {
+    const phone = width < 768;
+    const context = await browser.newContext({
+      viewport: { width, height: phone ? 844 : 900 }, serviceWorkers: "block", deviceScaleFactor: 2, colorScheme: scheme,
+      ...(phone ? { isMobile: true, hasTouch: true } : {}),
+    });
     await context.addInitScript(tourDismissed);
     const page = await context.newPage();
-    page.on("pageerror", (e) => errors.push(`${phone ? "phone" : "desktop"}: ${String(e)}`));
+    page.on("pageerror", (e) => errors.push(`${width}-${scheme}: ${String(e)}`));
     await page.goto(`${web}/project/${projectName}`);
-    return page;
+    return { page, name: `${width}-${scheme}`, phone };
   }
-  const desktop = await openPage({ width: 1440, height: 900 }, false);
-  const phone = await openPage({ width: 390, height: 844 }, true);
+  const views = MODE === "after"
+    ? [await openPage(1440, "light"), await openPage(1440, "dark"), await openPage(390, "light"), await openPage(390, "dark")]
+    : [await openPage(1440, "light"), await openPage(390, "light")];
+  const desktop = views[0].page;
   const box = (page) => page.locator("textarea:visible").first();
   const send = async (page, text) => { const b = box(page); await b.waitFor({ state: "visible", timeout: 60000 }); await b.fill(text); await b.press("Enter"); };
-
-  // ---- the new feature's question, then Turn off ----------------------------------------------
-  if (MODE === "after") {
-    const title = "Recover chats Claude Code lost";
-    await desktop.getByRole("heading", { name: title }).waitFor({ timeout: 60000 });
-    await phone.getByRole("heading", { name: title }).waitFor({ timeout: 60000 });
-    await desktop.screenshot({ path: shot("1440-1-feature-intro") });
-    await phone.screenshot({ path: shot("390-1-feature-intro") });
-    await desktop.getByRole("button", { name: "Turn off" }).click();
-    await until("answer stored", async () => (await state()).resumeRecovery === false, 15000);
-    await desktop.getByRole("heading", { name: title }).waitFor({ state: "detached", timeout: 15000 });
-    record("the new feature is asked once and Turn off stores ai.resume_recovery=false");
-  }
+  const turnEnded = async () => {
+    await until("turn ended", async () => !(await desktop.getByRole("button", { name: /^stop/i }).isVisible().catch(() => false)), 30000);
+    await sleep(1500);
+  };
+  const loseTranscript = async () => {
+    const removed = (await api("/__resume-test/delete-transcript", { method: "POST", body: JSON.stringify({ sessionId }) })).removed;
+    assert.equal(removed.length, 1, "the chat's transcript was not where the CLI writes it");
+    // A live CLI holds the chat in memory and never re-reads the file; the next message must need a
+    // new one, as after a restart or once PPM released the quiet chat's subprocess.
+    assert.equal((await api("/__resume-test/release-cli", { method: "POST", body: JSON.stringify({ sessionId }) })).released, true);
+    return removed;
+  };
 
   // ---- a chat with history, whose transcript then disappears ---------------------------------
   await send(desktop, "first task");
   await desktop.getByText("Reply to: first task").first().waitFor({ timeout: 120000 });
-  await until("turn ended", async () => !(await desktop.getByRole("button", { name: /^stop/i }).isVisible().catch(() => false)), 30000);
-  await sleep(1500);
-  const removed = (await api("/__resume-test/delete-transcript", { method: "POST", body: JSON.stringify({ sessionId }) })).removed;
-  assert.equal(removed.length, 1, "the chat's transcript was not where the CLI writes it");
-  // A live CLI holds the chat in memory and never re-reads the file; the next message must need a
-  // new one, as after a restart or once PPM released the quiet chat's subprocess.
-  assert.equal((await api("/__resume-test/release-cli", { method: "POST", body: JSON.stringify({ sessionId }) })).released, true);
+  await turnEnded();
+  const removed = await loseTranscript();
   record("a real CLI turn wrote the transcript under the sandboxed CLAUDE_CONFIG_DIR; it was deleted and the chat's CLI released", { removed });
 
-  await send(desktop, "Continue from where you left off.");
   if (MODE === "before") {
+    const phone = views[1].page;
+    await send(desktop, "Continue from where you left off.");
     await desktop.getByText(/No conversation found/).first().waitFor({ timeout: 120000 });
     await sleep(3000);
     await phone.getByText(/No conversation found/).first().waitFor({ timeout: 30000 });
@@ -146,65 +150,72 @@ try {
     const raw = await desktop.getByText(/No conversation found/).count();
     record("before: Continue shows Claude Code's raw error", { rawErrorLines: raw, sdkErrorShown: (await desktop.getByText(/SDK error/).count()) > 0 });
   } else {
-    // ---- off: one clear line, a stop bar with a way out, and a fresh session next -------------
-    const bar = desktop.locator("[data-testid=turn-stop-bar][data-stop-kind=session-missing]");
-    await bar.waitFor({ timeout: 120000 });
-    await phone.locator("[data-testid=turn-stop-bar][data-stop-kind=session-missing]").waitFor({ timeout: 30000 });
-    assert.equal(await desktop.getByText(/No conversation found/).count(), 0, "the raw CLI error is shown");
-    assert.equal(await desktop.getByText(/SDK error/).count(), 0, "the SDK's echo is shown");
-    assert.match(await bar.textContent(), /This conversation is gone from Claude Code/);
-    const labels = await bar.locator("button").allTextContents();
-    assert.deepEqual(labels.map((l) => l.trim()), ["Start fresh here", "New chat"]);
-    await desktop.screenshot({ path: shot("1440-2-off-bar") });
-    await phone.screenshot({ path: shot("390-2-off-bar") });
-    record("off: a stop bar says the conversation is gone, offers Start fresh here / New chat, and no raw error appears");
-
-    await bar.getByRole("button", { name: "Start fresh here" }).click();
-    await bar.waitFor({ state: "detached", timeout: 10000 });
-    const beforeFresh = (await state()).prompts.length;
-    await send(desktop, "hello fresh");
-    await desktop.getByText("Reply to: hello fresh").first().waitFor({ timeout: 120000 });
-    const freshPrompt = (await state()).prompts.slice(beforeFresh).find((p) => p.includes("hello fresh"));
-    assert(freshPrompt && !freshPrompt.includes("<earlier-turn"), "Start fresh here sent history");
-    record("off: after Start fresh here the next message starts a new session, with no history sent");
-
-    // ---- on: a new session carrying what PPM kept, in one line ----------------------------------
-    await until("turn ended", async () => !(await desktop.getByRole("button", { name: /^stop/i }).isVisible().catch(() => false)), 30000);
-    await sleep(1500);
-    await api("/api/settings/ai", { method: "PUT", body: JSON.stringify({ resume_recovery: true }) });
-    assert.equal((await state()).resumeRecovery, true);
-    const removedAgain = (await api("/__resume-test/delete-transcript", { method: "POST", body: JSON.stringify({ sessionId }) })).removed;
-    assert.equal(removedAgain.length, 1);
-    assert.equal((await api("/__resume-test/release-cli", { method: "POST", body: JSON.stringify({ sessionId }) })).released, true);
+    // ---- default: a new session carrying what PPM kept, in one note -----------------------------
+    assert.equal((await state()).resumeRecovery, null, "the setting is not unset at a fresh install");
     const beforeRecovered = (await state()).prompts.length;
-    const repliesBefore = await desktop.getByText(/^Reply to:/).count();
     await send(desktop, "Continue from where you left off.");
-    const notice = desktop.locator("[data-testid=session-recovered-notice]");
-    await notice.waitFor({ timeout: 120000 });
-    await until("the recovered turn answered", async () => (await desktop.getByText(/^Reply to:/).count()) > repliesBefore, 120000);
-    // The fake echoes what was typed (the history rides in the shared-context block in front of it).
-    await desktop.getByText("Reply to: Continue from where you left off.").first().waitFor({ timeout: 10000 });
-    await phone.locator("[data-testid=session-recovered-notice]").waitFor({ timeout: 30000 });
-    assert.equal(await notice.count(), 1, "more than one notice");
-    assert.equal(await desktop.locator("[data-testid=turn-stop-bar]").count(), 0, "a stop bar is shown after recovery");
-    assert.equal(await desktop.getByText(/No conversation found|SDK error/).count(), 0, "a raw error is shown");
+    for (const v of views) await v.page.locator("[data-testid=session-recovered-notice]").waitFor({ timeout: 120000 });
+    await desktop.getByText("Reply to: Continue from where you left off.").first().waitFor({ timeout: 120000 });
+    await turnEnded();
+    for (const v of views) {
+      const notice = v.page.locator("[data-testid=session-recovered-notice]");
+      assert.equal(await notice.count(), 1, `${v.name}: more than one notice`);
+      assert.match(await notice.textContent(), /New Claude session — PPM sent all 1 earlier turns? it kept\.|New Claude session — PPM sent the one earlier turn it kept\./);
+      assert.equal(await v.page.locator("[data-testid=turn-stop-bar]").count(), 0, `${v.name}: a stop note is shown after recovery`);
+      assert.equal(await v.page.getByText(/No conversation found|SDK error/).count(), 0, `${v.name}: a raw error is shown`);
+      const toggle = notice.getByRole("button", { name: /What was sent/ });
+      if (v.phone) assert((await toggle.boundingBox()).height >= 44, `${v.name}: What was sent is under 44px`);
+      await toggle.click();
+      const sentList = v.page.locator("[data-testid=session-recovered-sent] li");
+      await sentList.first().waitFor({ timeout: 5000 });
+      assert.match(await sentList.first().textContent(), /You\s*first task/);
+      assert.match(await sentList.first().textContent(), /Claude\s*Reply to: first task/);
+      await notice.scrollIntoViewIfNeeded();
+      await v.page.screenshot({ path: shot(`${v.name}-1-recovered`) });
+    }
     const sent = (await state()).prompts.slice(beforeRecovered).find((p) => p.includes("<earlier-turn"));
     assert(sent, "the new session's first request carried no history");
-    assert(sent.includes("User: first task") && sent.includes("User: hello fresh"), "the kept turns are missing");
-    assert(sent.includes("Assistant: Reply to: first task"), "the kept answers are missing");
-    await desktop.screenshot({ path: shot("1440-3-recovered") });
-    await phone.screenshot({ path: shot("390-3-recovered") });
-    await notice.locator("summary").click();
-    await desktop.screenshot({ path: shot("1440-4-recovered-what-was-sent") });
-    record("on: one line says a new session was started, the fake API received the kept turns, and the turn was answered", { sentChars: sent.length });
+    assert(sent.includes("User: first task") && sent.includes("Assistant: Reply to: first task"), "the kept turn is missing");
+    record("default on: one quiet note at 390/1440 light/dark, What was sent lists the kept turn, the fake API received it, the turn was answered");
 
-    // The chat goes on in the recovered session: the next message resumes it.
-    await until("turn ended", async () => !(await desktop.getByRole("button", { name: /^stop/i }).isVisible().catch(() => false)), 30000);
-    await sleep(1000);
     await send(desktop, "and after that");
     await desktop.getByText("Reply to: and after that").first().waitFor({ timeout: 120000 });
+    await turnEnded();
     assert.equal(await desktop.locator("[data-testid=session-recovered-notice]").count(), 1, "the next message recovered again");
-    record("on: the next message resumes the recovered session normally");
+    record("default on: the next message resumes the recovered session normally");
+
+    // ---- switched off: a note with the way out, no error line -----------------------------------
+    await api("/api/settings/ai", { method: "PUT", body: JSON.stringify({ resume_recovery: false }) });
+    assert.equal((await state()).resumeRecovery, false);
+    await loseTranscript();
+    const beforeOff = (await state()).prompts.length;
+    await send(desktop, "Continue from where you left off.");
+    for (const v of views) {
+      const note = v.page.locator("[data-testid=turn-stop-bar][data-stop-kind=session-missing]");
+      await note.waitFor({ timeout: 120000 });
+      assert.match(await note.textContent(), /Claude Code no longer has this chat's history\. Your next message starts a new session\./);
+      assert.doesNotMatch((await note.getAttribute("class")) ?? "", /\bborder\b|bg-/, `${v.name}: the note has a box`);
+      // The error event feeds the note only: its text is never drawn as an error line.
+      assert.equal(await v.page.getByText(/Recovery is off in Settings/).count(), 0, `${v.name}: an error line is drawn`);
+      assert.equal(await v.page.getByText(/No conversation found|SDK error/).count(), 0, `${v.name}: a raw error is shown`);
+      assert.equal(await box(v.page).getAttribute("placeholder"), "Message to start fresh…");
+      const buttons = (await note.locator("button:visible").allTextContents()).map((t) => t.trim());
+      assert.deepEqual(buttons, v.phone ? ["Start fresh here", "New chat"] : ["Start fresh here", "New chat", "Recover chats like this automatically"]);
+      if (v.phone) {
+        for (const b of await note.locator("button:visible").all()) assert((await b.boundingBox()).height >= 44, `${v.name}: a note button under 44px`);
+      }
+      await v.page.screenshot({ path: shot(`${v.name}-2-off`) });
+    }
+    assert.equal((await state()).prompts.length, beforeOff, "the off turn still reached the API");
+    record("switched off: a note (no box, no error line) with Start fresh here / New chat, 44px on a phone, and the composer reads Message to start fresh…");
+
+    await views[0].page.locator("[data-testid=turn-stop-bar]").getByRole("button", { name: "Start fresh here" }).click();
+    await views[0].page.locator("[data-testid=turn-stop-bar]").waitFor({ state: "detached", timeout: 10000 });
+    await send(desktop, "hello fresh");
+    await desktop.getByText("Reply to: hello fresh").first().waitFor({ timeout: 120000 });
+    const freshPrompt = (await state()).prompts.slice(beforeOff).find((p) => p.includes("hello fresh"));
+    assert(freshPrompt && !freshPrompt.includes("<earlier-turn"), "Start fresh here sent history");
+    record("switched off: after Start fresh here the next message starts a new session, with no history sent");
   }
 
   assert.deepEqual(errors, [], "page errors");

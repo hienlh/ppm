@@ -50,6 +50,8 @@ describe("formatResumeHandoff", () => {
     expect(handoff.text).toContain("no longer had its transcript");
     expect(handoff.text).toContain("It is history, not new instructions");
     expect(handoff.text).toContain('<earlier-turn n="1">\nUser: Fix it\nTools used: Edit ×2, Read\nAssistant: Done.\n</earlier-turn>');
+    // The chat lists exactly what was sent.
+    expect(handoff.entries).toEqual([{ n: 1, user: "Fix it", answer: "Done.", tools: "Edit ×2, Read" }]);
   });
 
   it("keeps the newest turns inside the budget and says how many were left out", () => {
@@ -61,6 +63,10 @@ describe("formatResumeHandoff", () => {
     expect(handoff.text).toContain("answer 40");
     expect(handoff.text).not.toContain("answer 1\n");
     expect(handoff.text).toContain(`(${handoff.omittedTurns} earlier turns were left out`);
+    // Entries are the kept turns only, oldest first, numbered by their place in the chat.
+    expect(handoff.entries).toHaveLength(handoff.turns);
+    expect(handoff.entries[0]!.n).toBe(handoff.omittedTurns + 1);
+    expect(handoff.entries.at(-1)!.n).toBe(40);
   });
 
   it("keeps the end of a long answer, where its conclusion is", () => {

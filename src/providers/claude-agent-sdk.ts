@@ -1737,7 +1737,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       /** A new session already carries the kept history: never start a second one in this turn. */
       let recoveredThisTurn = recoveredFrom !== null;
       if (recoveredFrom) {
-        yield { type: "session_recovered", turns: recoveredFrom.turns, omittedTurns: recoveredFrom.omittedTurns, sent: recoveredFrom.text };
+        yield { type: "session_recovered", turns: recoveredFrom.turns, omittedTurns: recoveredFrom.omittedTurns, entries: recoveredFrom.entries };
       }
 
       crashRetryLoop: for (;;) {
@@ -1937,7 +1937,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               this.streamingSessions.set(sessionId, { meta, query: rq, controller: recoverCtrl, lastUserContent: content, lastUserImages: retryM.lastUserImages, lastClientMessageId: retryM.lastClientMessageId, credential: credentialOf(recoverEnv, account?.id), startedAt: streamStartedAt });
               this.activeQueries.set(sessionId, rq);
               eventSource = rq;
-              yield { type: "session_recovered", turns: handoff.turns, omittedTurns: handoff.omittedTurns, sent: handoff.text };
+              yield { type: "session_recovered", turns: handoff.turns, omittedTurns: handoff.omittedTurns, entries: handoff.entries };
               continue retryLoop;
             }
             log.warn(`session=${sessionId} Claude Code has no transcript for this session (${recoveryOn ? "PPM kept no history" : "recovery is off"}) — stopping the turn`);

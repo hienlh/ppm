@@ -85,10 +85,6 @@ function answerFromSetting(setting: FeatureIntroSetting): FeatureIntroAnswer | n
       const on = getAssistantSettings().settings_tools;
       return on === true ? "on" : on === false ? "off" : null;
     }
-    case "resume_recovery": {
-      const on = configService.get("ai").resume_recovery;
-      return on === true ? "on" : on === false ? "off" : null;
-    }
   }
 }
 
@@ -111,9 +107,6 @@ function writeSettingAnswer(setting: FeatureIntroSetting, answer: FeatureIntroAn
       return;
     case "assistant_settings_tools":
       writeAssistantSettingsTools(answer === "on");
-      return;
-    case "resume_recovery":
-      configService.set("ai", { ...configService.get("ai"), resume_recovery: answer === "on" });
       return;
   }
 }

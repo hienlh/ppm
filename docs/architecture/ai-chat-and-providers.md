@@ -608,17 +608,22 @@ transcripts, so Continue works again after signing in.
 
 `claude-session-missing.ts` recognises that result on the first event of an attempt and never
 retries it with resume. What follows depends on **Recover lost Claude chats**
-(`ai.resume_recovery`, Settings → AI Provider, asked once as the feature introduction
-`resume-recovery-2026-11`, off until answered):
+(`ai.resume_recovery`, Settings → AI Provider, **on** unless switched off; no feature question).
+Both outcomes are notes in the conversation, not boxes (`designs/resume-recovery-notices`,
+direction A):
 
 - **On**: PPM starts a new Claude session under the **same id** (`sessionId`, not `resume`) and adds
   the history it kept to the first message's shared-context block (`resume-handoff.ts`: each
   turn's message, the answer and the tools that ran, at most 30,000 characters, newest turns kept,
-  tool output left out, PPM tags defused). The chat shows one `session_recovered` line with the
-  sent block behind "What was sent". The line is live and in the reconnect buffer, not in history.
+  tool output left out, PPM tags defused). The chat shows one muted `session_recovered` line;
+  "What was sent" opens the turns it carried (`entries`) as a You / Claude list. The line is live
+  and in the reconnect buffer, not in history.
 - **Off, or nothing kept** (the session trace keeps 30 days): the turn ends with `done`
-  `resultSubtype: "error_session_missing"` and one error line. The stop bar offers **Start fresh
-  here** and **New chat** instead of Continue, and the next message starts a new session.
+  `resultSubtype: "error_session_missing"`. Its error event feeds the turn stop and is not drawn as
+  an error line: the turn-stop note says the history is gone and offers **Start fresh here** and
+  **New chat** (44px pills on a phone) instead of Continue, the composer reads "Message to start
+  fresh…", and the next message starts a new session. With recovery off the note also links to
+  the switch.
 
 The same applies to a chat reopened after a restart with no transcript (`resumeSession`), which
 used to start an empty session silently. Two related fixes: a first message that fails at once is

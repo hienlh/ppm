@@ -257,7 +257,7 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
         <Switch
           id="ai-resume-recovery"
           aria-describedby="ai-resume-recovery-description"
-          checked={settings.resume_recovery === true}
+          checked={settings.resume_recovery !== false}
           disabled={saving}
           onCheckedChange={(checked) => handleSettingsSave({ resume_recovery: checked })}
         />

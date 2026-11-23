@@ -8,7 +8,7 @@ describe("describeTurnStop", () => {
     const stop = { message: sessionMissingMessage("off"), subtype: "error_session_missing", at: 0 };
     expect(isSessionMissingStop(stop)).toBe(true);
     const { title, detail } = describeTurnStop(stop);
-    expect(title).toBe("This conversation is gone from Claude Code");
+    expect(title).toBe("Claude Code no longer has this chat's history");
     expect(detail).toContain("next message starts a new session");
   });
 

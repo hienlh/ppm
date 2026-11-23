@@ -17,6 +17,7 @@ import { decodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
 import { CONTINUE_NUDGE } from "../../shared/user-prompt-kind.ts";
 import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
 import { createLogger } from "../logger.ts";
+import type { ResumeHandoffEntry } from "../../types/chat.ts";
 
 const log = createLogger("resume-handoff");
 
@@ -34,6 +35,8 @@ export interface ResumeHandoff {
   turns: number;
   /** Older turns left out to stay inside {@link HANDOFF_MAX_CHARS}. */
   omittedTurns: number;
+  /** The turns sent, oldest first, as the chat lists them behind "What was sent". */
+  entries: ResumeHandoffEntry[];
 }
 
 interface HandoffTurn {
@@ -81,12 +84,21 @@ function toolSummary(tools: readonly string[]): string {
   return counts.size > MAX_TOOL_NAMES ? `${names.join(", ")}, …` : names.join(", ");
 }
 
-function formatTurn(turn: HandoffTurn, n: number): string {
-  const lines = [`<earlier-turn n="${n}">`, `User: ${neutralizePpmTags(clip(turn.user, USER_MAX_CHARS, "head")) || "(empty)"}`];
-  if (turn.tools.length > 0) lines.push(`Tools used: ${toolSummary(turn.tools)}`);
+/** One turn as it is sent: clipped, PPM tags defused. The chat lists exactly this. */
+function toEntry(turn: HandoffTurn, n: number): ResumeHandoffEntry {
   const answer = turn.answer.trim();
-  lines.push(`Assistant: ${answer ? neutralizePpmTags(clip(answer, ANSWER_MAX_CHARS, "tail")) : "(no answer recorded)"}`);
-  lines.push("</earlier-turn>");
+  return {
+    n,
+    user: neutralizePpmTags(clip(turn.user, USER_MAX_CHARS, "head")) || "(empty)",
+    answer: answer ? neutralizePpmTags(clip(answer, ANSWER_MAX_CHARS, "tail")) : "(no answer recorded)",
+    ...(turn.tools.length > 0 ? { tools: toolSummary(turn.tools) } : {}),
+  };
+}
+
+function formatEntry(entry: ResumeHandoffEntry): string {
+  const lines = [`<earlier-turn n="${entry.n}">`, `User: ${entry.user}`];
+  if (entry.tools) lines.push(`Tools used: ${entry.tools}`);
+  lines.push(`Assistant: ${entry.answer}`, "</earlier-turn>");
   return lines.join("\n");
 }
 
@@ -101,12 +113,15 @@ const PREAMBLE = [
 export function formatResumeHandoff(turns: readonly HandoffTurn[], maxChars = HANDOFF_MAX_CHARS): ResumeHandoff | null {
   if (turns.length === 0) return null;
   const kept: string[] = [];
+  const entries: ResumeHandoffEntry[] = [];
   let used = PREAMBLE.length;
   let first = turns.length;
   for (let i = turns.length - 1; i >= 0; i--) {
-    const block = formatTurn(turns[i]!, i + 1);
+    const entry = toEntry(turns[i]!, i + 1);
+    const block = formatEntry(entry);
     if (kept.length > 0 && used + block.length + 2 > maxChars) break;
     kept.unshift(block);
+    entries.unshift(entry);
     used += block.length + 2;
     first = i;
   }
@@ -114,7 +129,7 @@ export function formatResumeHandoff(turns: readonly HandoffTurn[], maxChars = HA
   const parts = [PREAMBLE];
   if (omitted > 0) parts.push(`(${omitted} earlier turn${omitted === 1 ? " was" : "s were"} left out to keep this short.)`);
   parts.push(...kept);
-  return { text: parts.join("\n\n"), turns: kept.length, omittedTurns: omitted };
+  return { text: parts.join("\n\n"), turns: kept.length, omittedTurns: omitted, entries };
 }
 
 /** The handoff for a session from its trace; null when the trace holds no answered turn or cannot be read. */

@@ -193,8 +193,7 @@ export interface AIConfig {
   /**
    * When Claude Code no longer has a chat's transcript ("No conversation found"), start a new
    * Claude session under the same id carrying the history PPM kept in the session trace. Unset is
-   * off: it is an introduced feature, asked once (`resume-recovery-2026-11` in FEATURE_INTROS).
-   * Off, the turn stops with a bar offering a fresh start (`claude-session-missing.ts`).
+   * on; false stops the turn with a note offering a fresh start (`claude-session-missing.ts`).
    */
   resume_recovery?: boolean;
   /**

@@ -7,11 +7,14 @@
  * Signing out does NOT cause it: a signed-out CLI still writes and resumes its transcripts. It is
  * the transcript itself that is gone (see `resume-handoff.ts`), so resuming again can never work.
  *
- * What happens instead depends on `ai.resume_recovery` (an introduced feature, off until chosen):
- * on, a new Claude session under the same id carries the history PPM kept; off — or with no history
- * to carry — the turn stops with {@link SESSION_MISSING_SUBTYPE}, the next message starts a new
- * session, and the chat's stop bar offers that or a new chat.
+ * What happens instead depends on `ai.resume_recovery` (on unless switched off in Settings → AI
+ * Provider): on, a new Claude session under the same id carries the history PPM kept; off — or with
+ * no history to carry — the turn stops with {@link SESSION_MISSING_SUBTYPE}, the next message starts
+ * a new session, and the chat's note offers that or a new chat.
  */
+import { sessionMissingMessage } from "../shared/turn-stop.ts";
+
+export { sessionMissingMessage };
 
 /** The `done` subtype the stop bar draws as "gone from Claude Code" rather than as an error. */
 export const SESSION_MISSING_SUBTYPE = "error_session_missing" as const;
@@ -27,22 +30,9 @@ export function isSessionMissingResult(msg: unknown): boolean {
   return Array.isArray(m.errors) && m.errors.some((e) => typeof e === "string" && NO_CONVERSATION_RE.test(e.trim()));
 }
 
-/** Carry the kept history into a new session. Off until the user chooses (FEATURE_INTROS `resume-recovery-2026-11`). */
+/** Carry the kept history into a new session: on unless switched off. */
 export function resumeRecoveryOn(ai: { resume_recovery?: boolean } | undefined): boolean {
-  return ai?.resume_recovery === true;
-}
-
-/**
- * The stop's text: first line the headline, the rest the detail (`describeTurnStop`). Says what
- * the next message does, because the Continue button would otherwise read as broken.
- */
-export function sessionMissingMessage(reason: "off" | "no-history"): string {
-  const head = "Claude Code on this computer no longer has this conversation.";
-  if (reason === "no-history") {
-    return `${head}\nPPM has no copy of it either, so your next message starts a new session here without its history.`;
-  }
-  return `${head}\nYour next message starts a new session here without its history. `
-    + "Turn on “Recover lost Claude chats” in Settings → AI Provider to send along the history PPM kept.";
+  return ai?.resume_recovery !== false;
 }
 
 /** The CLI asking for its own sign-in: "Not logged in · Please run /login" (CLI 2.1.322, empty config dir). */
