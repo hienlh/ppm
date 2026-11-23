@@ -960,6 +960,22 @@ registerLeftoverSweeper({
 });
 
 /**
+ * How many chats a server restart would cut short right now, for the supervisor's memory recycle
+ * (`server-activity-file.ts`). Busy as for the leftover sweep, plus anything that has arrived and
+ * not been answered yet: a card waiting in line, a message still arriving or queued for a turn.
+ */
+export function busyChatCount(): number {
+  const ids = new Set<string>([...activeSessions.keys(), ...chatService.runningTurnSessions()]);
+  let busy = 0;
+  for (const sessionId of ids) {
+    const entry = activeSessions.get(sessionId);
+    const waiting = !!entry && ((entry.approvalQueue?.length ?? 0) > 0 || (entry.messagesArriving ?? 0) > 0 || entry.nextTurnOrigin !== undefined);
+    if (waiting || leftoverSessionActivity(sessionId).busy) busy++;
+  }
+  return busy;
+}
+
+/**
  * Sessions with a turn in flight, optionally narrowed to one project.
  *
  * Exists because the frontend only learns a session's phase by connecting to its

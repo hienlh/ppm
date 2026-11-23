@@ -60,7 +60,9 @@ import { readPulse } from "./memory-pulse.ts";
 import {
   healthMissCounts, MAX_MEMORY_WAIT_MS, MEMORY_POLL_MS, memoryExhausted, oomBackoffMs, oomExitReason,
 } from "./supervisor-memory-guard.ts";
-import { dropStaleRestartRequest, peekRestartRequester, requesterNote, startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
+import { clearRestartRequest, dropStaleRestartRequest, peekRestartRequester, requesterNote, startReasonEnv, takeRestartRequest, writeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
+import { decideRecycle, initialRecycleState, serverRecycleLimitMB, supervisorRecycleLimitMB, type RecycleLimits } from "./process-recycle-policy.ts";
+import { readServerActivity } from "./server-activity-file.ts";
 import { dropOrderedStop, writeOrderedStop } from "./restart-news/ordered-stop-note.ts";
 import {
   decideServerExit, healthKillApplies, healthProbeAnswered, initialStartReason, restartWithoutChildReason, resumeAfterPauseReason, resumeAfterStopReason,
@@ -199,6 +201,12 @@ let healthKillMark: HealthKillMark | null = null;
 let noServerChildCycles = 0; // consecutive health cycles with no server child
 let tunnelFailCount = 0;
 let serverRestartRequested = false; // SIGUSR2 flag — skip backoff on next crash
+/** Memory recycle (`startProcessRecycle`): one reading a minute, state carried between them. */
+const PROCESS_RECYCLE_INTERVAL_MS = 60_000;
+let processRecycleTimer: ReturnType<typeof setInterval> | null = null;
+let recycleState = initialRecycleState();
+let recycleWaitingFor: "supervisor" | "server" | null = null;
+let recycleInProgress = false;
 
 // Timers for cleanup
 let healthTimer: ReturnType<typeof setInterval> | null = null;
@@ -710,6 +718,76 @@ async function adoptEdge(publicPort: number, host: string): Promise<boolean> {
   lastEdgePrivateMB = privateMB;
   log("INFO", `Adopted existing edge forwarder (PID: ${pid}, port: ${publicPort})`);
   return true;
+}
+
+/**
+ * Replace this supervisor, or restart the server, once either has grown past its memory limit and
+ * PPM has been quiet for a while (`process-recycle-policy.ts`). Windows only, like the edge's own
+ * recycle; the server says whether it is quiet in its activity file.
+ */
+function startProcessRecycle(serverArgs: string[], logFd: number): void {
+  if (processRecycleTimer) return;
+  const limits: RecycleLimits = { supervisorMB: supervisorRecycleLimitMB(), serverMB: serverRecycleLimitMB() };
+  if (limits.supervisorMB === null && limits.serverMB === null) return;
+  processRecycleTimer = setInterval(() => {
+    void checkProcessRecycle(limits, serverArgs, logFd).catch((e) => log("ERROR", `Memory recycle check failed: ${e}`));
+  }, PROCESS_RECYCLE_INTERVAL_MS);
+}
+
+async function checkProcessRecycle(limits: RecycleLimits, serverArgs: string[], logFd: number): Promise<void> {
+  if (recycleInProgress || shuttingDown || getState() !== "running") return;
+  const server = serverChild;
+  const serverPid = server?.pid;
+  const [supervisorMB, serverMB] = await Promise.all([
+    limits.supervisorMB === null ? undefined : readProcessPrivateMB(process.pid),
+    limits.serverMB === null || !serverPid ? undefined : readProcessPrivateMB(serverPid),
+  ]);
+  const activity = serverPid ? readServerActivity(getPpmDir(), serverPid) : null;
+  const { state, action } = decideRecycle(recycleState, {
+    now: Date.now(),
+    // 0 is Windows' answer for a process that exited while a handle to it was open: no reading.
+    supervisorMB: supervisorMB || undefined,
+    serverMB: serverMB || undefined,
+    serverPid,
+    activity,
+  }, limits);
+  recycleState = state;
+
+  if (action.kind === "none") { recycleWaitingFor = null; return; }
+  if (action.kind === "wait") {
+    // Once per wait, not once a minute: the reason ("quiet for only 40s") changes every reading.
+    if (recycleWaitingFor !== action.target) log("INFO", `The ${action.target} is over its memory limit; recycling it once PPM is quiet (${action.why})`);
+    recycleWaitingFor = action.target;
+    return;
+  }
+  recycleWaitingFor = null;
+  // The next server reads this as why it started, and tells the user (`restart-news`).
+  try { writeRestartRequest(getPpmDir(), { kind: "recycle", detail: action.detail }); } catch { /* reads as unexplained */ }
+
+  if (action.kind === "server") {
+    if (!server || serverChild !== server) return;
+    log("WARN", `Memory recycle: restarting the server, ${action.detail}, and PPM has been quiet`);
+    serverRestartRequested = true; // spawnServer brings it straight back, without crash backoff
+    await requestServerShutdown(server, `memory recycle: ${action.detail}`);
+    return;
+  }
+
+  log("WARN", `Memory recycle: replacing the supervisor, ${action.detail}, and PPM has been quiet (tunnel and edge kept)`);
+  recycleInProgress = true;
+  try {
+    const result = await selfReplace("memory recycle");
+    // Reached only when the new supervisor never took over: this one carries on, as after a failed upgrade.
+    if (!result.success) {
+      log("ERROR", `Memory recycle failed: ${result.error}, restarting children`);
+      try { clearRestartRequest(getPpmDir()); } catch { /* none left */ }
+      if (!serverChild && !serverBackoffPending) {
+        void spawnServer(serverArgs, logFd, { kind: "recycle", detail: "replacing the supervisor to free memory failed, so it carries on" });
+      }
+      if (tunnelSharingEnabled && !tunnelChild && !tunnelUrl) spawnTunnel(_opts.port);
+    }
+  } finally {
+    recycleInProgress = false;
+  }
 }
 
 /** Respawn the edge if it dies. Without it the public port simply goes dark. */
@@ -1867,9 +1945,13 @@ async function reapOrphanedTunnels(keepPid: number | null): Promise<void> {
   }
 }
 
-/** Spawn new supervisor from updated code, wait for it to be healthy, then exit */
-async function selfReplace(): Promise<{ success: boolean; error?: string }> {
-  log("INFO", "Starting self-replace for upgrade");
+/**
+ * Spawn new supervisor from updated code, wait for it to be healthy, then exit. Also how the
+ * supervisor gives back memory a leaking runtime kept (`why` = "memory recycle"): the same handoff,
+ * with the same code.
+ */
+async function selfReplace(why: "upgrade" | "memory recycle" = "upgrade"): Promise<{ success: boolean; error?: string }> {
+  log("INFO", `Starting self-replace for ${why}`);
   const underSystemd = !!process.env.INVOCATION_ID && process.platform === "linux";
   // launchd sets XPC_SERVICE_NAME to the job label. Same situation as systemd:
   // spawning a detached replacement is invisible to the service manager, so
@@ -2644,6 +2726,7 @@ export async function runSupervisor(opts: {
 
   // Start health checks
   startServerHealthCheck();
+  startProcessRecycle(serverArgs, logFd);
 
   // ── Resume-from-sleep detection ────────────────────────────────────────
   // A setInterval that fires much later than its period means the host was

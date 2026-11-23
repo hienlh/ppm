@@ -187,6 +187,13 @@ class ChatService {
     return { running: (this.turnLogs.get(sessionId)?.startedAt ?? null) !== null, lastEndedAt: this.turnEnds.get(sessionId) };
   }
 
+  /** Sessions with a turn running through this service, whichever door started it. */
+  runningTurnSessions(): string[] {
+    const ids: string[] = [];
+    for (const [sessionId, log] of this.turnLogs) if ((log?.startedAt ?? null) !== null) ids.push(sessionId);
+    return ids;
+  }
+
   /** Where the Assistant session's user last wrote from in this process, or null when not known. */
   turnChannelOf(providerId: string, sessionId: string): "telegram" | "ppm" | null {
     return this.lastChannel.get(`${providerId}:${sessionId}`) ?? null;

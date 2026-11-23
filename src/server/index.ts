@@ -915,6 +915,11 @@ export async function startServer(options: {
     }
 
     if (options.minimal) console.log("  Mode: minimal (chat + editor)");
+    // The supervisor and server it just started run on this same Bun; a leaking one is otherwise
+    // only a WARN line in ppm.log that nobody running from source reads.
+    const { bunRuntimeAdvisory } = await import("../services/bun-runtime-advisory.ts");
+    const runtimeAdvisory = isCompiledBin ? null : bunRuntimeAdvisory();
+    if (runtimeAdvisory) console.warn(`  ⚠  ${runtimeAdvisory}\n`);
     console.log(`  Supervisor started (PID: ${supervisorPid}, server PID: ${serverPid})\n`);
     console.log(`  ➜  Local:   http://localhost:${port}/`);
     if (shareUrl) {
@@ -1522,6 +1527,12 @@ if (process.argv.includes("__serve__")) {
       writeFileSync(SERVER_PORT_FILE(), String(server.port));
     } catch (e) {
       console.error(`[serve] Failed to publish server port: ${e}`);
+    }
+    // Under the supervisor: tell it whether a restart would cut anything (its memory recycle).
+    try {
+      (await import("./server-activity-reporter.ts")).startServerActivityReporter();
+    } catch (e) {
+      console.error(`[serve] Failed to start the activity report: ${e}`);
     }
   }
 

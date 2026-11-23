@@ -88,8 +88,13 @@ async function authenticateFirstMessage(ws: RemoteDesktopWs, text: string): Prom
   }
 }
 
+/** Remote desktop sockets open now; a server restart would cut each one (`server-activity-file.ts`). */
+let openSockets = 0;
+export const openRemoteDesktopSockets = (): number => openSockets;
+
 export const remoteDesktopWebSocket = {
   open(ws: RemoteDesktopWs) {
+    openSockets++;
     guardOrClose(ws); // nothing else to do until the client's first (auth) message arrives
   },
 
@@ -111,6 +116,7 @@ export const remoteDesktopWebSocket = {
   },
 
   close(ws: RemoteDesktopWs) {
+    openSockets = Math.max(0, openSockets - 1);
     ws.data.session?.close("socket-closed");
   },
 };
