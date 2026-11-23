@@ -16,6 +16,7 @@ import type { ReplyImage } from "../../services/assistant-cards/card-reply-image
 import { getSessionDesignSlug, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
 import { chatLifecycle } from "../../services/chat-control/chat-lifecycle.ts";
+import { collabWaits } from "../../services/session-collab/collab-waits.ts";
 import { createLogger } from "../../services/logger.ts";
 import { ensureSessionEntry, startCleanupTimer, submitToSession, withSessionLock } from "./chat.ts";
 
@@ -139,6 +140,9 @@ export async function deliverUserWords(input: DeliverUserWordsInput): Promise<De
       log.warn(`session=${target} the user's words ${wordsFrom(input)} were not delivered: ${result.error}`);
       return { ok: false, error: result.error };
     }
+    // The user's own words (a card answered from Telegram or the Assistant) are in: a wait the chat
+    // stands in ends now, as when they type into it, or the answer would sit unread until it is over.
+    collabWaits.interruptWaiter(target, { kind: "user" });
     log.info(`session=${target} the user's words ${wordsFrom(input)} ${result.delivered} (${input.userWords.channel})`);
     chatLifecycle.emit("user_message", {
       sessionId: target, text: content, origin: "session", imageCount: images.length,

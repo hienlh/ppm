@@ -2363,7 +2363,11 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   const fromUser = opts.origin === "ws" || opts.origin === "telegram";
   // A watch report waits for a quiet chat: pushed into a running turn it would steer the user's
   // work mid-way, and with a card waiting it would cancel the card. So would a scheduled run.
-  if (waitsForQuiet(opts.origin) && busyForWatch(entry)) return { ok: false, error: CHAT_BUSY };
+  // A wait the chat is standing in ends, though: the turn can then finish and let this one in.
+  if (waitsForQuiet(opts.origin) && busyForWatch(entry)) {
+    collabWaits.interruptWaiter(sessionId, { kind: "ppm", queued: true });
+    return { ok: false, error: CHAT_BUSY };
+  }
 
   // Kits that self-namespace their skills (AgentKit's `/ak:debug`) publish a
   // name the runtime never registers — it names plugin items after the plugin
@@ -2447,12 +2451,9 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   }
 
   // A person writing (in PPM or on Telegram, not a script posting through a chat socket): every
-  // pair of sessions this one is in may message each other automatically again, and a wait this
-  // session had on another ends, since it now reads the person.
-  if (fromUser && !opts.traceOrigin) {
-    pairCounter.resetForSession(sessionId);
-    collabWaits.cancelWaiter(sessionId);
-  }
+  // pair of sessions this one is in may message each other automatically again.
+  const fromPerson = fromUser && !opts.traceOrigin;
+  if (fromPerson) pairCounter.resetForSession(sessionId);
 
   // User sent a message instead of answering a pending question/approval.
   // The SDK generator is blocked inside canUseTool awaiting that approval, so
@@ -2507,6 +2508,7 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
       arriving.priority = priority;
       claimTurnOrigin(entry, arriving);
     }
+    const runningBefore = turnRunning(entry);
     const submitted = await submitToSession(sessionId, entry, parsed.content, {
       origin: opts.traceOrigin ?? opts.origin,
       ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
@@ -2530,6 +2532,13 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
     if (extension && submitted.ok) {
       if (!wasRunning && submitted.delivered === "started") beginExtensionTurn(entry, extension);
       else if (submitted.delivered === "queued") entry.queuedExtensionTurn = extension;
+    }
+    // The message is in: a wait this session stands in ends now, since it cannot read the message
+    // until its tool call returns — the person's, a script's, an extension's, a task notice. Only
+    // after the provider has it, so a refused message never tells the AI one arrived. One that goes
+    // in only after the running turn (`later`) tells the chat to finish that turn.
+    if (submitted.ok) {
+      collabWaits.interruptWaiter(sessionId, { kind: fromPerson ? "user" : "ppm", ...(runningBefore && priority === "later" ? { queued: true } : {}) });
     }
     return submitted;
   });
@@ -3834,6 +3843,9 @@ export const chatWebSocket = {
           log.error(`session=${sessionId} follow-up failed provider=${providerId} (kill_background_shell shellId=${shellId}):`, e);
           return;
         }
+        // The user's instruction is in: a session-tool wait the chat stands in ends, or it would
+        // sit unread until the wait ran out.
+        collabWaits.interruptWaiter(sessionId, { kind: "user" });
         // A waiting card stays: the instruction queues behind it, and the card is still answerable.
         entry.turnEvents = [];
         // The instruction answers no approval, so one on screen stays there: emptying the slot

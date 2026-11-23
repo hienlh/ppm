@@ -366,6 +366,22 @@ describe("a turn that failed after it had started working", () => {
 });
 
 describe("a busy chat", () => {
+  it("ends a session-tool wait the chat stands in, so its turn can end and let the schedule in", async () => {
+    const interrupted: string[] = [];
+    dispatcher.stop();
+    dispatcher = new SessionScheduleDispatcher(env({ interruptWaits: (id) => { interrupted.push(id); } }));
+    dispatcher.start();
+    live = busyLive();
+    await dispatcher.due(pending());
+    expect(sent).toHaveLength(0);
+    expect(interrupted).toEqual([CHAT]);
+    // A chat held up by a card is not standing in a wait it could leave: nothing is ended.
+    interrupted.length = 0;
+    live = busyLive({ card: true } as Partial<LiveChatState>);
+    await dispatcher.due(pending({ name: "second" }));
+    expect(interrupted).toEqual([]);
+  });
+
   it("waits for the running turn to end, then sends exactly once", async () => {
     live = busyLive();
     const id = pending();

@@ -281,7 +281,57 @@ export const WAITING_CARD_TITLE_MAX = 160;
 export type SessionWaitOutcome =
   | { replied: true; text: string; turnId?: string; sentAt: string }
   | { replied: false; reason: "turn_ended_without_reply" | "timeout" | "cancelled" }
-  | { replied: false; reason: "waiting_for_user"; card: WaitingCard };
+  | { replied: false; reason: "waiting_for_user"; card: WaitingCard }
+  | { replied: false; reason: "interrupted"; by: WaitInterruption; note: string };
+
+/**
+ * Who ended a wait by writing to the waiting session. A waiting chat stands still inside one tool
+ * call, and nothing sent to it is read until that call returns, so any message that reaches it ends
+ * its waits: the user's own (typed, a card answered from Telegram, or Stop waiting), another chat's,
+ * the PPM Assistant's, or PPM's (a schedule, manager news, a task notice, an extension). `queued`
+ * is a message that goes in only once the waiting chat's turn is over (a schedule or a watch report
+ * never joins a running turn, an Assistant message sent `later`): the chat should finish its turn.
+ */
+export interface WaitInterruption {
+  kind: "user" | "session" | "assistant" | "ppm";
+  /** The writing chat, for `session` and `assistant`. */
+  sessionId?: string;
+  /** Its title, one line, at most {@link WAITING_CARD_TITLE_MAX} characters. */
+  title?: string;
+  queued?: boolean;
+  /** The user pressed Stop waiting on the tool's card: no message came, they want you to go on. */
+  stopped?: boolean;
+}
+
+/**
+ * What the waiting AI is told when a message ended its wait, as plain words in the tool's answer:
+ * read the new message first, and where the other session's answer will be. That session was not
+ * stopped, but it may never send a message back (it may only finish its turn, and a chat cannot
+ * message the PPM Assistant at all), so the note promises a message only where one will come.
+ * `answersInReply`: a Design chat, which answers only in its own reply. `managerNews`: the PPM
+ * Assistant waiting on a manager chat, whose answer PPM brings back as manager news.
+ */
+export function waitInterruptedNote(by: WaitInterruption, opts: { answersInReply?: boolean; managerNews?: boolean } = {}): string {
+  const tail = opts.answersInReply
+    ? " The Design chat was not stopped, but it answers only in its own reply, never as a message to you: "
+      + "read its answer later with session_status or read_session_turns rather than sending again."
+    : opts.managerNews
+      ? " The manager chat was not stopped: its answer comes back to you later as manager news, so do not "
+        + "send again or wait for it again."
+      : " The other session was not stopped and keeps working. If it replies with send_to_session, that "
+        + "arrives as a new message; if it only finishes its turn, its answer shows in session_status. "
+        + "Look there rather than sending the request again or waiting again.";
+  if (by.stopped) return `The user stopped this wait so you can go on with other work.${tail}`;
+  const who = by.kind === "user" ? "The user"
+    : by.kind === "assistant" ? "The PPM Assistant"
+    // Another AI's title: quoted as data, never spliced in as words of the note.
+    : by.kind === "session" ? (by.title ? `The chat ${JSON.stringify(by.title)}` : "Another chat")
+    : "PPM";
+  const then = by.queued
+    ? "It goes in once this turn ends: finish the step you are on and end your turn."
+    : "Read it now and act on it.";
+  return `${who} sent you a message, so this wait ended. ${then}${tail}`;
+}
 
 export interface CreateSessionResult {
   sessionId: string;

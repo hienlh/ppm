@@ -18,6 +18,8 @@ const { useProjectStore } = await import("../../../src/web/stores/project-store"
 const { useTabStore } = await import("../../../src/web/stores/tab-store");
 const { useStreamingStore } = await import("../../../src/web/stores/streaming-store");
 const { useSessionCollabStore } = await import("../../../src/web/stores/session-collab-store");
+const { AgentSessionProvider } = await import("../../../src/web/components/chat/agent-session-context");
+const { api } = await import("../../../src/web/lib/api-client");
 
 const target = "cccccccc-2222-4000-8000-000000000002";
 const status: SessionStatus = {
@@ -92,9 +94,80 @@ describe("withLiveStatus", () => {
 describe("SessionCollabToolCard", () => {
   const send = { tool: "send_to_session" as const, sessionId: target, message: "please review", wait: true };
 
-  it("says it is waiting while the wait is in flight", async () => {
+  it("says it is waiting while the wait is in flight, with no Stop waiting outside a chat", async () => {
     view = await mount(<SessionCollabToolCard call={send} isError={false} done={false} projectName="ppm" />);
-    expect(view.container.querySelector("[data-collab-waiting]")?.textContent).toBe("waiting for reply…");
+    expect(view.container.querySelector("[data-collab-waiting]")?.textContent).toContain("Waiting for its reply");
+    // No chat to stop the wait of (a read-only transcript): no button that would do nothing.
+    expect([...view.container.querySelectorAll("button")].some((b) => b.textContent === "Stop waiting")).toBe(false);
+  });
+
+  it("Stop waiting asks the server to end this chat's wait on that session", async () => {
+    const post = spyOn(api, "post").mockImplementation(async () => ({ stopped: 1 }) as never);
+    try {
+      const waiter = "aaaaaaaa-0000-4000-8000-000000000001";
+      view = await mount(
+        <AgentSessionProvider value={{ projectName: "ppm", providerId: "claude", sessionId: waiter }}>
+          <SessionCollabToolCard call={send} isError={false} done={false} projectName="ppm" />
+        </AgentSessionProvider>,
+      );
+      const button = [...view.container.querySelectorAll("button")].find((b) => b.textContent === "Stop waiting")!;
+      expect(button).toBeDefined();
+      await click(button);
+      expect(post).toHaveBeenCalledWith(`/api/project/ppm/chat/sessions/${waiter}/stop-waiting`, { target });
+    } finally {
+      post.mockRestore();
+    }
+  });
+
+  it("Stop waiting with no wait to end yet says so and can be pressed again", async () => {
+    const post = spyOn(api, "post").mockImplementation(async () => ({ stopped: 0 }) as never);
+    try {
+      view = await mount(
+        <AgentSessionProvider value={{ projectName: "ppm", providerId: "claude", sessionId: "aaaaaaaa-0000-4000-8000-000000000001" }}>
+          <SessionCollabToolCard call={send} isError={false} done={false} projectName="ppm" />
+        </AgentSessionProvider>,
+      );
+      const button = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent === "Stop waiting")!;
+      await click(button());
+      expect(view.container.querySelector("[data-collab-waiting]")?.textContent).toContain("Nothing to stop yet");
+      expect(button().disabled).toBe(false);
+    } finally {
+      post.mockRestore();
+    }
+  });
+
+  it("a create handed off without waiting says sent · awaiting reply too", async () => {
+    const create = { tool: "create_session" as const, title: "Helper", task: "t", wait: false };
+    const output = JSON.stringify({ sessionId: target, title: "Helper", providerId: "claude", model: null, status });
+    view = await mount(<SessionCollabToolCard call={create} output={output} isError={false} done projectName="ppm" />);
+    expect(view.container.querySelector("[data-collab-sent]")).not.toBeNull();
+  });
+
+  it("a send nobody waits on says sent · awaiting reply, with no spinner and no success colour", async () => {
+    const noWait = { ...send, wait: false };
+    const output = JSON.stringify({ delivered: "inserted", status });
+    view = await mount(<SessionCollabToolCard call={noWait} output={output} isError={false} done projectName="ppm" />);
+    expect(view.container.querySelector("[data-collab-sent]")?.textContent).toBe("sent · awaiting reply");
+    expect(view.container.querySelector(".animate-spin")).toBeNull();
+    expect(view.container.querySelector("[data-collab-waiting]")).toBeNull();
+    expect([...view.container.querySelectorAll("button")].some((b) => b.textContent === "Open session")).toBe(true);
+  });
+
+  it("says who ended the wait and that the reply still comes as a message", async () => {
+    const reply = { replied: false, reason: "interrupted", by: { kind: "session", sessionId: target, title: "Release notes" }, note: "n" };
+    const output = JSON.stringify({ delivered: "inserted", status, reply });
+    view = await mount(<SessionCollabToolCard call={send} output={output} isError={false} done projectName="ppm" />);
+    const line = view.container.querySelector('[data-collab-no-reply="interrupted"]');
+    expect(line?.textContent).toBe("Stopped waiting: “Release notes” wrote to this chat. It keeps working: a reply comes in as a message, or open it to read its answer.");
+    expect(view.container.textContent).toContain("stopped waiting");
+    expect(view.container.textContent).not.toContain("no reply");
+    // Every interrupter, in words; a malformed one is dropped rather than half-read.
+    const words = (by: Record<string, unknown>) => waitEndedText({ replied: false, reason: "interrupted", by: by as never, note: "" });
+    expect(words({ kind: "user", stopped: true })).toContain("You stopped waiting");
+    expect(words({ kind: "user" })).toContain("you wrote to this chat");
+    expect(words({ kind: "assistant" })).toContain("the PPM Assistant wrote");
+    expect(words({ kind: "ppm", queued: true })).toContain("once this turn ends");
+    expect(sessionCollabToolResult(JSON.stringify({ status, reply: { replied: false, reason: "interrupted", by: { kind: "robot" } } }))?.reply).toBeUndefined();
   });
 
   it("shows the reply once it came, as text", async () => {

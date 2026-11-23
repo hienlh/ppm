@@ -924,10 +924,32 @@ turn, and devices draw the message only once the provider has it. No route expos
 the server opened with no browser attached is `socketless` and counts as idle between turns, so the
 warm-process cap and the idle release still apply to it.
 
-**Waits** (`collab-waits.ts`). With `wait: true` the call blocks until the target calls
-`send_to_session` back to the caller, the target's turn that read the message ends without a reply,
-the wait times out (Settings, 10 minutes by default, 1–60), or it is cancelled (the caller is
-stopped, the user writes in the waiting session, the session is deleted). A target that shows the
+**Waits** (`collab-waits.ts`). Handing work off is a send *without* `wait`: the call returns at
+once and the other session's reply arrives later as a message of its own. The tool descriptions,
+the manager chats' rules (`MANAGER_DELEGATE_WITHOUT_WAITING_RULE` in `manager-context-entry.ts`) and
+the PPM Assistant's instructions all say so, and keep `wait: true` for a short answer the next step
+needs at once or a Design chat, which answers only in its reply. With `wait: true` the call blocks
+until the target calls `send_to_session` back to the caller, the target's turn that read the
+message ends without a reply, the wait times out (Settings, 10 minutes by default, 1–60), it is
+interrupted, or it is cancelled (the caller is stopped, the session is deleted).
+
+A waiting AI stands still inside one tool call and reads nothing sent to it until the call returns,
+so **any message that reaches the waiting session ends its waits as `interrupted`**
+(`interruptWaiter`), with `reply.by` naming who wrote (`{ kind: "user" | "session" | "assistant" |
+"ppm", sessionId?, title?, queued?, stopped? }`) and `reply.note` telling the AI to read the message
+and not wait again, since the other session was not stopped and its reply still arrives as a
+message (for a Design chat: where to read its answer instead). Every door into a chat calls it,
+before the message is handed to the provider: `deliverMessage` in `ws/chat.ts` (the user typing in
+PPM or on Telegram as `user`; a script schedule, an extension, a task notice as `ppm`),
+`deliverToSession` (another chat as `session`, the PPM Assistant as `assistant`), `deliverUserWords`
+(a card answered from Telegram or the Assistant, as `user`), and the two queues that never join a
+running turn and only find the chat busy — the session-schedule dispatcher and the Assistant's
+wake queue (manager news) — which end the wait as `ppm` with `queued` so the turn can finish and
+let their message in. A reply the waiter was waiting for never takes these doors: the sender's call
+hands it to the wait first (`claimReply`). The card's **Stop waiting** button is the same
+interruption with `stopped` (`POST /chat/sessions/:id/stop-waiting`, body `{ target? }`; without a
+target, as for a create whose new session the card cannot name yet, every wait of that chat ends).
+`cancelled` is left for a call that was stopped, whose result the AI never sees. A target that shows the
 user a card (an approval or a question, of any origin) can neither read the message nor answer
 until the user does, so the wait ends at once as `waiting_for_user` with `reply.card` (`{ kind,
 title }`, built by `collab-waiting-card.ts`): when the card is already there as the delivery

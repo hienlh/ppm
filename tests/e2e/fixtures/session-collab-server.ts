@@ -50,6 +50,9 @@ configService.set("ai", {
 const { answerFeatureIntro } = await import("../../../src/services/feature-intros.service");
 const { FEATURE_INTROS } = await import("../../../src/shared/feature-intros");
 answerFeatureIntro(FEATURE_INTROS[0]!.id, "on");
+// Every later feature's question would cover what the scenarios click; they stay off, so the
+// session tools' list is the one the scenarios expect.
+for (const intro of FEATURE_INTROS.slice(1)) answerFeatureIntro(intro.id, "off");
 configService.set("notifications", { delay_seconds: 0 } as never);
 configService.set("ntfy", { server: ntfy.url, topic: "ppm-collab-e2e", token: WRITER_TOKEN } as never);
 

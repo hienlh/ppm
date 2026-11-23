@@ -294,8 +294,15 @@ or fork. `UserBubble` parses once and routes a message with `fromSession` here; 
 
 **Tool cards** (`session-collab-tool-card.tsx`, parser `lib/session-collab-tool-call.ts`, for both
 providers' tool names). They show which session was created or messaged with an Open session
-button, "waiting for reply…" while a wait runs, the reply (two lines, expandable, with "Open the
-turn that replied") or why none came, and `session_status`'s list, each row tappable. A result
+button; while a wait runs, a line under the header ("Waiting for its reply. A message to this chat
+also ends the wait.") with **Stop waiting**, which ends that wait so the chat goes on (the button
+needs the chat's identity, so a read-only transcript has none); a hand-off nobody waits on as "sent ·
+awaiting reply" with a muted check and no spinner (`sentAwaitingReply`); the reply (two lines,
+expandable, with "Open the turn that replied") or why none came — for a wait ended by a message,
+who wrote ("Stopped waiting: “Notes” wrote to this chat. Its reply still comes in as a message.");
+and `session_status`'s list, each row tappable. Below `md` the header carries no state label (one
+ran over the provider badge there): every state says itself in the line under the header, "sent"
+included. A result
 that is not the server's JSON is shown as raw text. A call whose turn ended with no result is
 *stopped*, never a green check: Stop aborts the turn and the CLI never streams the tool's answer
 (the server's `cancelled` outcome included), so a wait reads "Wait cancelled" and any other call

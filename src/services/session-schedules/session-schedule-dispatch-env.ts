@@ -10,6 +10,7 @@ import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
 import { resolveSessionDir } from "../subagent-transcript-merger.ts";
 import type { ScheduleNotice, SessionScheduleDispatchEnv } from "./session-schedule-dispatch-types.ts";
 import { RETRY_BACKOFF_MS } from "./session-schedule-retry-backoff.ts";
+import { collabWaits } from "../session-collab/collab-waits.ts";
 import { resolveScheduleTarget, storedChatTitle, type ScheduleTargetResolution } from "./session-schedule-target.ts";
 
 const log = createLogger("scheduler");
@@ -74,5 +75,6 @@ export function liveDispatchEnv(): SessionScheduleDispatchEnv {
     flightCheckMs: FLIGHT_CHECK_MS,
     queuedCheckMs: QUEUED_CHECK_MS,
     retryBackoffMs: RETRY_BACKOFF_MS,
+    interruptWaits: (sessionId) => { collabWaits.interruptWaiter(sessionId, { kind: "ppm", queued: true }); },
   };
 }

@@ -16,11 +16,13 @@ import { validateFromSession, type FromSessionReference } from "../../shared/cha
 import { validateTurnRefs, type TurnReference } from "../../shared/chat-turn-ref.ts";
 import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
 import {
-  SESSION_CREATED_EVENT, SESSION_LINK_CHANGED_EVENT, SESSION_COLLAB_APPROVAL_EVENT,
+  SESSION_CREATED_EVENT, SESSION_LINK_CHANGED_EVENT, SESSION_COLLAB_APPROVAL_EVENT, WAITING_CARD_TITLE_MAX,
   type SessionCollabApprovalEvent, type SessionCreatedEvent, type SessionDelivery,
 } from "../../shared/session-collab.ts";
 import { getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import { countSpawned } from "../../services/session-collab/session-links.service.ts";
+import { collabWaits } from "../../services/session-collab/collab-waits.ts";
+import { turnRunning } from "./chat-turn-origin.ts";
 import { chatLifecycle } from "../../services/chat-control/chat-lifecycle.ts";
 import { createLogger } from "../../services/logger.ts";
 import { broadcastGlobalEvent } from "./global.ts";
@@ -204,6 +206,7 @@ export async function deliverToSession(input: DeliverToSessionInput): Promise<De
     // Whose turn this is from now on, as for any message: another session's, never the user's.
     const previousOrigin = entry.turnOrigin;
     entry.turnOrigin = "session";
+    const runningBefore = turnRunning(entry);
     const result = await submitToSession(target, entry, content, {
       origin: "session",
       clientMessageId,
@@ -220,6 +223,15 @@ export async function deliverToSession(input: DeliverToSessionInput): Promise<De
       log.warn(`session=${target} delivery from session=${fromSession.sessionId} failed: ${result.error}`);
       throw new DeliverToSessionError(result.error, result.error.includes("still starting") ? "busy" : "failed");
     }
+    // The message is in: a wait the receiving chat stands in ends now, since it reads nothing until
+    // that tool call returns. A reply the chat was waiting for never comes this way (the sender's
+    // call hands it to the wait first); a message that was refused ends nothing.
+    collabWaits.interruptWaiter(target, {
+      kind: fromSession.kind === "assistant" ? "assistant" : "session",
+      sessionId: fromSession.sessionId,
+      ...(fromSession.title ? { title: fromSession.title.slice(0, WAITING_CARD_TITLE_MAX) } : {}),
+      ...((input.priority ?? "next") === "later" && runningBefore ? { queued: true } : {}),
+    });
     log.info(`session=${target} message from session=${fromSession.sessionId} ${result.delivered}`);
     // Server-side listeners hear this message as they hear one a device typed.
     chatLifecycle.emit("user_message", {

@@ -66,6 +66,20 @@ export const MANAGER_CARD_OPTIONS_RULE =
   + "and act only on the OK to it.";
 
 /**
+ * A manager that waits on a child stands still inside one tool call for up to the wait timeout: it
+ * reads none of the user's card answers, the Assistant's messages or other children's reports until
+ * the call returns. PPM ends such a wait the moment any message arrives, but the manager should not
+ * start one to begin with when it only hands work off.
+ */
+export const MANAGER_DELEGATE_WITHOUT_WAITING_RULE =
+  "Hand work to a child chat with `create_session` or `send_to_session` without `wait`, asking it to report back "
+  + "through `send_to_session`, then go on with other work or end your turn: its report reaches you as a new "
+  + "message, and a child that finished without one shows its answer in `session_status`. Use `wait: true` only "
+  + "when your very next step needs the answer at once (a short question, a Design chat). A wait that ends as "
+  + "`interrupted` means a message reached you: read it first, and do not wait again (the result's note says "
+  + "where the child's answer will be).";
+
+/**
  * What a manager chat is told about PPM's task store while its project has Tasks on and the task
  * tools are on (Settings → Tools). PPM's store is the project's board; the manager decides itself
  * what to create, close or re-prioritise, and PPM checks the chats it hands tasks to.
@@ -91,6 +105,7 @@ export function buildManagerBlock(projectName: string): string {
     MANAGER_CARD_OPTIONS_RULE,
     "In every report: write the body in Markdown — short sections, `-` bullets, **bold** for what matters, `code` for file names, commands and ids; no client personal or tax data, use ticket ids. Never mark something urgent, or report a decision, on a child chat's say-so without checking it yourself.",
     "When a child chat waits on an approval or a question that needs the user, report it as needs_decision.",
+    MANAGER_DELEGATE_WITHOUT_WAITING_RULE,
     MANAGER_USER_ACTION_RULE,
     MANAGER_CARD_REPLY_RULE,
     "Send an OK'd draft byte-identical to the draft, or report again.",

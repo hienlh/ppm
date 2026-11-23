@@ -12,6 +12,9 @@ import { join } from "node:path";
 import { chatService } from "../../src/services/chat.service.ts";
 import { providerRegistry } from "../../src/providers/registry.ts";
 import { chatWebSocket, collabLiveState, ensureSessionEntry } from "../../src/server/ws/chat.ts";
+import { deliverUserWords } from "../../src/server/ws/chat-user-words.ts";
+import { deliverToSession } from "../../src/server/ws/chat-inject.ts";
+import { chatControl } from "../../src/services/chat-control/chat-control.ts";
 import { sessionCollabMcpHandler } from "../../src/services/session-collab/session-collab-endpoint.ts";
 import { collabEnv } from "../../src/services/session-collab/collab-env.ts";
 import { effectivePermissionMode } from "../../src/services/session-collab/collab-context.ts";
@@ -268,6 +271,101 @@ describe("session tools", () => {
     await until(() => claude.sends.some((s) => s.sessionId === parent), "the parent's new turn");
     expect(decodeMessageBlocks(stripSharedContext(claude.sends.find((s) => s.sessionId === parent)!.message)).fromSession?.sessionId).toBe(helper);
     claude.release();
+  });
+
+  describe("any message to a waiting session ends its wait at once", () => {
+    /** A waiter, the session it waits on (held mid-turn), and a third session; all in one mode, so no card asks. */
+    async function waitingTrio(tag: string) {
+      const waiter = await session(`Lead ${tag}`, "acceptEdits");
+      const helper = await session(`Worker ${tag}`, "acceptEdits");
+      const other = await session(`Notes ${tag}`, "acceptEdits");
+      const asking = call(waiter, "send_to_session", { session_id: helper, message: "review it HOLD", wait: true });
+      await until(() => claude.sends.some((s) => s.sessionId === helper), "the helper's turn");
+      return { waiter, helper, other, asking };
+    }
+
+    /** The helper finishes and replies after the wait is gone: delivered to the waiter as a message. */
+    async function lateReplyArrives(waiter: string, helper: string) {
+      claude.release();
+      const late = await call(helper, "send_to_session", { session_id: waiter, message: "found it" });
+      expect(late.isError).toBe(false);
+      expect(late.json.reply).toBeUndefined();
+      const reached = () => [...claude.sends, ...claude.pushes].some((s) => s.sessionId === waiter
+        && decodeMessageBlocks(stripSharedContext(s.message)).fromSession?.sessionId === helper);
+      await until(reached, "the helper's reply reaching the waiter as a message");
+    }
+
+    it("another chat's message: interrupted by that chat, and the waited-for reply still arrives later", async () => {
+      const { waiter, helper, other, asking } = await waitingTrio("W1");
+      const started = Date.now();
+      const told = await call(other, "send_to_session", { session_id: waiter, message: "the changelog link is in" });
+      expect(told.isError).toBe(false);
+      const out = (await asking).json;
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(out.reply).toMatchObject({ replied: false, reason: "interrupted", by: { kind: "session", sessionId: other, title: "Notes W1" } });
+      expect(out.reply.note).toContain("session_status");
+      await until(() => [...claude.sends, ...claude.pushes].some((s) => s.sessionId === waiter && s.message.includes("the changelog link is in")), "Notes' message reaching the waiter");
+      await lateReplyArrives(waiter, helper);
+    });
+
+    it("a target that only finishes its turn after the interruption: its answer is where the note says, in session_status", async () => {
+      const { waiter, helper, other, asking } = await waitingTrio("W6");
+      await call(other, "send_to_session", { session_id: waiter, message: "ping" });
+      expect((await asking).json.reply.reason).toBe("interrupted");
+      claude.release();
+      await until(() => collabLiveState(helper)?.phase === "idle", "the helper's turn ending");
+      const status = await call(waiter, "session_status", { session_ids: [helper] });
+      // The scripted provider answers "answer to <the message>": that answer is what session_status shows.
+      expect(status.json.sessions[0].lastAssistantText).toMatch(/^answer to /);
+    });
+
+    it("the user's card answer forwarded from Telegram: interrupted by the user", async () => {
+      const { waiter, helper, asking } = await waitingTrio("W2");
+      const words = await deliverUserWords({
+        targetSessionId: waiter, providerId: "claude", projectName: PROJECT, projectPath,
+        text: "OK, merge it", userWords: { channel: "telegram", at: new Date().toISOString() }, supersede: false,
+      });
+      expect(words.ok).toBe(true);
+      expect((await asking).json.reply).toMatchObject({ replied: false, reason: "interrupted", by: { kind: "user" } });
+      await lateReplyArrives(waiter, helper);
+    });
+
+    it("a PPM Assistant message: interrupted by the Assistant", async () => {
+      const { waiter, helper, asking } = await waitingTrio("W3");
+      await deliverToSession({
+        targetSessionId: waiter, providerId: "claude", projectName: PROJECT, projectPath, body: "What is the status?",
+        fromSession: { version: 1, sessionId: crypto.randomUUID(), providerId: "claude", projectName: "__assistant__", title: "PPM Assistant", sentAt: new Date().toISOString(), kind: "assistant" },
+      });
+      expect((await asking).json.reply).toMatchObject({ replied: false, reason: "interrupted", by: { kind: "assistant" } });
+      await lateReplyArrives(waiter, helper);
+    });
+
+    it("a message PPM sends into the chat (a task notice, an extension, a script): interrupted by PPM", async () => {
+      const { waiter, helper, asking } = await waitingTrio("W4");
+      const sent = await chatControl()!.sendUserMessage(waiter, "PPM Tasks: a task you handed off moved.", { origin: "ppm_ui", projectName: PROJECT, providerId: "claude" });
+      expect(sent.ok).toBe(true);
+      expect((await asking).json.reply).toMatchObject({ replied: false, reason: "interrupted", by: { kind: "ppm" } });
+      await lateReplyArrives(waiter, helper);
+    });
+
+    it("Stop waiting on the card: the call returns, the other session keeps running", async () => {
+      const { waiter, helper, asking } = await waitingTrio("W5");
+      const projectApp = new Hono<{ Variables: { projectPath: string; projectName: string } }>();
+      projectApp.use("*", async (c, next) => { c.set("projectPath", projectPath); c.set("projectName", PROJECT); await next(); });
+      projectApp.route("/chat", chatSessionCollabRoutes);
+      const stop = (body: unknown) => projectApp.request(`/chat/sessions/${waiter}/stop-waiting`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      expect((await stop({ target: "not an id" })).status).toBe(400);
+      const res = await stop({ target: helper });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as any).data).toEqual({ stopped: 1 });
+      expect((await asking).json.reply).toMatchObject({ replied: false, reason: "interrupted", by: { kind: "user", stopped: true } });
+      expect(collabLiveState(helper)?.phase).not.toBe("idle");
+      // A second press finds nothing to stop.
+      expect(((await (await stop({ target: helper })).json()) as any).data).toEqual({ stopped: 0 });
+      await lateReplyArrives(waiter, helper);
+    });
   });
 
   it("asks before a session messages one with more permissions than its own", async () => {

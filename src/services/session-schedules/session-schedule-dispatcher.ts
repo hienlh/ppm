@@ -127,7 +127,11 @@ export class SessionScheduleDispatcher {
     const chat: NoticeChat = { sessionId: target.sessionId, projectName: target.projectName, providerId: target.providerId };
     const live = control.liveState(sessionId);
     if (live && (live.card || live.queuedCards > 0)) return this.setbacks.heldUp(schedule, chat);
-    if (live?.running) return;
+    if (live?.running) {
+      // Its turn's end brings this back; a wait would hold that end off until the wait ran out.
+      this.env.interruptWaits?.(sessionId);
+      return;
+    }
 
     const flight: Flight = { schedule, chat, clientMessageId: this.env.newClientMessageId(), phase: "sending", runId: null, idleChecks: 0 };
     this.flights.set(sessionId, flight);
