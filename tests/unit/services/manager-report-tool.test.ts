@@ -1,15 +1,15 @@
 /**
- * `report_to_assistant` against a fake card store: field checks, the hourly cap, the urgent cap
- * per quiet window, collapsing the same urgent title, the draft hash, and markers broken in every
- * field.
+ * `report_to_assistant` against a fake card store: field checks, no hourly cap, the same report
+ * handed back its open card, the urgent cap per quiet window, collapsing the same urgent title, the
+ * draft hash, and markers broken in every field.
  */
 import { describe, expect, it } from "bun:test";
 import {
-  DIGEST_NOT_ASKED, DIGEST_TAKEN, draftSha256, fileReport, type ReportEnv,
+  DIGEST_NOT_ASKED, DIGEST_TAKEN, draftSha256, fileReport, SAME_REPORT_NOTE, sameReport, type ReportEnv,
 } from "../../../src/services/assistant-cards/manager-report-tool.ts";
 import type { NewCard } from "../../../src/services/assistant-cards/assistant-cards.service.ts";
 import type { AssistantCard, AssistantCardKind } from "../../../src/shared/assistant-cards.ts";
-import { REPORTS_PER_MANAGER_PER_HOUR, URGENT_PER_MANAGER_PER_QUIET_WINDOW } from "../../../src/shared/assistant-limits.ts";
+import { URGENT_PER_MANAGER_PER_QUIET_WINDOW } from "../../../src/shared/assistant-limits.ts";
 import { USER_WORDS_BLOCK_START } from "../../../src/shared/assistant-provenance.ts";
 
 const caller = { sessionId: "mgr-1", projectName: "api", projectPath: "/p/api" };
@@ -19,14 +19,20 @@ const FOREIGN = "d".repeat(32);
 
 function fakeEnv(opts: { quietStart?: number | null; digest?: boolean } = {}) {
   let now = 1_000_000;
-  const made: Array<NewCard & { id: string; at: number }> = [];
+  const made: Array<NewCard & { id: string; at: number; open: boolean }> = [];
   const digests: Array<{ sessionId: string; items: string[] }> = [];
   const env: ReportEnv = {
     now: () => now,
     countSince: (sessionId, kinds, since) => made.filter((c) => c.sessionId === sessionId && kinds.includes(c.kind) && c.at >= since).length,
     openUrgentTitled: (sessionId, title, since) => {
-      const c = made.find((m) => m.sessionId === sessionId && m.kind === "urgent" && m.title === title && m.at >= since);
+      const c = made.find((m) => m.sessionId === sessionId && m.open && m.kind === "urgent" && m.title === title && m.at >= since);
       return c ? ({ id: c.id } as AssistantCard) : null;
+    },
+    openIdentical: (sessionId, card) => {
+      // As the store answers: the payload comes back with PPM's own additions, which do not count.
+      const c = made.find((m) => m.sessionId === sessionId && m.open
+        && sameReport({ ...m, payload: { ...m.payload, projectName: "api" } }, card));
+      return c ? ({ id: c.id, kind: c.kind } as AssistantCard) : null;
     },
     shotOf: (id, projectPath) => (id === SHOT && projectPath === caller.projectPath
       ? { id, designTitle: "Kho task", file: "variant-2.html", label: "Dark" } : null),
@@ -37,12 +43,13 @@ function fakeEnv(opts: { quietStart?: number | null; digest?: boolean } = {}) {
       return { ok: true };
     },
     create: (card) => {
-      const row = { ...card, id: `card-${made.length + 1}`, at: now };
+      const row = { ...card, id: `card-${made.length + 1}`, at: now, open: true };
       made.push(row);
       return { id: row.id } as AssistantCard;
     },
   };
-  return { env, made, digests, advance: (ms: number) => { now += ms; } };
+  const close = (id: string) => { made.find((m) => m.id === id)!.open = false; };
+  return { env, made, digests, close, advance: (ms: number) => { now += ms; } };
 }
 
 describe("fields", () => {
@@ -92,15 +99,80 @@ describe("fields", () => {
   });
 });
 
-describe("caps", () => {
-  it("stops a chat at the hourly report cap, and lets it file again an hour later", () => {
+describe("no hourly cap", () => {
+  it("files every one of 25 different decisions in a row as its own card", () => {
     const h = fakeEnv();
-    for (let i = 0; i < REPORTS_PER_MANAGER_PER_HOUR; i++) expect(fileReport(h.env, caller, { kind: "done", title: `t${i}` }).ok).toBe(true);
-    expect(fileReport(h.env, caller, { kind: "done", title: "one more" }).ok).toBe(false);
-    h.advance(60 * 60_000 + 1);
-    expect(fileReport(h.env, caller, { kind: "done", title: "later" }).ok).toBe(true);
+    const ids = new Set<string>();
+    for (let i = 0; i < 25; i++) {
+      const r = fileReport(h.env, caller, { kind: "needs_decision", title: `Merge PR #${i}?`, body: "Tests pass." });
+      expect(r.ok).toBe(true);
+      if (r.ok) ids.add(r.cardId!);
+    }
+    expect(h.made).toHaveLength(25);
+    expect(ids.size).toBe(25);
   });
 
+  it("never answers with the old hourly limit, whatever the kind", () => {
+    const h = fakeEnv();
+    for (const kind of ["needs_decision", "urgent", "done", "failed"] as const) {
+      for (let i = 0; i < 25; i++) {
+        const r = fileReport(h.env, caller, { kind, title: `${kind} ${i}` });
+        expect(r.ok).toBe(true);
+        expect(JSON.stringify(r)).not.toContain("in the last hour");
+      }
+    }
+    expect(h.made).toHaveLength(100);
+  });
+});
+
+describe("the same report twice", () => {
+  const decision = {
+    kind: "needs_decision", title: "Deploy to staging?", body: "Build is green.",
+    options: [{ id: "deploy", label: "Deploy now" }, { id: "wait", label: "Wait" }],
+  };
+
+  it("hands back the open card instead of filing a second one", () => {
+    const h = fakeEnv();
+    const first = fileReport(h.env, caller, decision);
+    const again = fileReport(h.env, caller, decision);
+    expect(first.ok && again.ok).toBe(true);
+    if (!first.ok || !again.ok) return;
+    expect(again.cardId).toBe(first.cardId);
+    expect(again.kind).toBe("needs_decision");
+    expect(again.note).toBe(SAME_REPORT_NOTE);
+    expect(h.made).toHaveLength(1);
+  });
+
+  it("files it again once the earlier card is closed", () => {
+    const h = fakeEnv();
+    const first = fileReport(h.env, caller, decision);
+    if (!first.ok) throw new Error("first report refused");
+    h.close(first.cardId!);
+    const again = fileReport(h.env, caller, decision);
+    expect(again.ok && again.cardId).toBe("card-2");
+    expect(h.made).toHaveLength(2);
+  });
+
+  it("files a report that differs in kind, body, options or draft", () => {
+    const h = fakeEnv();
+    fileReport(h.env, caller, decision);
+    fileReport(h.env, caller, { ...decision, body: "Build is green. Two reviews in." });
+    fileReport(h.env, caller, { ...decision, options: [{ id: "deploy", label: "Deploy now" }, { id: "drop", label: "Drop it" }] });
+    fileReport(h.env, caller, { kind: "urgent", title: decision.title, body: decision.body, options: decision.options });
+    fileReport(h.env, caller, { kind: "needs_decision", title: "Reply to the client?", draft: { to: "client", text: "Done." } });
+    fileReport(h.env, caller, { kind: "needs_decision", title: "Reply to the client?", draft: { to: "client", text: "Done today." } });
+    expect(h.made).toHaveLength(6);
+  });
+
+  it("does not merge another manager's identical report", () => {
+    const h = fakeEnv();
+    fileReport(h.env, caller, decision);
+    fileReport(h.env, { ...caller, sessionId: "mgr-2" }, decision);
+    expect(h.made).toHaveLength(2);
+  });
+});
+
+describe("caps", () => {
   it("turns urgent into a decision past the per-window cap, and collapses an identical title", () => {
     const h = fakeEnv({ quietStart: 900_000 });
     const kinds: AssistantCardKind[] = [];

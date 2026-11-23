@@ -241,6 +241,13 @@ export function findOpenUrgentTitled(sessionId: string, title: string, since: nu
   return row ? toRow(row) : null;
 }
 
+/** This manager's open cards of `kind` with exactly this title and body, newest first. */
+export function findOpenSessionCardsWithText(sessionId: string, kind: AssistantCardKind, title: string, body: string): CardRow[] {
+  return (getDb().query(`SELECT ${COLUMNS} FROM assistant_cards
+    WHERE status = 'open' AND kind = ? AND session_id = ? AND title = ? AND body = ?
+    ORDER BY created_at DESC`).all(kind, sessionId, title, body) as Raw[]).map(toRow);
+}
+
 /** The open card mirroring `requestId` in a manager chat, if any. */
 export function findOpenRequestCard(requestId: string): CardRow | null {
   const row = getDb().query(`SELECT ${COLUMNS} FROM assistant_cards

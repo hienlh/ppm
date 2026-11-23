@@ -38,9 +38,6 @@ export const RESTART_NEWS_URGENT_WHEN: "cut_off_chats" | "always" | "never" = "c
 /** Restarts one pending restart news item lists at most; older ones are dropped as they merge in. */
 export const RESTART_NEWS_MAX_RESTARTS = 10;
 
-/** Reports one manager chat may file per rolling hour. */
-export const REPORTS_PER_MANAGER_PER_HOUR = 20;
-
 /** Urgent reports one manager chat may file per quiet window; past it, urgent becomes a decision. */
 export const URGENT_PER_MANAGER_PER_QUIET_WINDOW = 2;
 

@@ -1358,9 +1358,16 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   Telegram gets it through `markdownToTelegramHtml`, which escapes before it adds a tag. The title,
   the draft and the rules diff stay plain text: a draft is what would be sent, character for
   character. The manager is told to write bodies that way (short sections, bullets, bold, code).
-- **Caps.** 20 reports per manager per hour; 2 urgent per manager per quiet window, after which an
-  urgent report becomes a decision held for the morning; the same urgent title collapses into one
-  card (`src/shared/assistant-limits.ts`).
+- **Caps.** No limit on how many reports a manager files: an hourly cap (20) refused the 21st
+  report outright, so a decision past it was lost, and real managers reached it while the user was
+  answering every card. What stops a manager stuck in a loop is that a report identical to an open
+  card of the same manager — kind, title, body, draft, options, images, compared as stored
+  (`sameReport`) — is not filed again: the call returns that card's id with a note, and nothing is
+  sent to Telegram twice. Once that card is answered, dismissed or resolved, the same report makes a
+  new card. 2 urgent per manager per quiet window, after which an urgent report becomes a decision
+  held for the morning; the same urgent title collapses into one card
+  (`src/shared/assistant-limits.ts`). Each refused or merged report is logged at INFO with its kind,
+  project, session and reason, never its text.
 - **Answering.** `POST /api/assistant/cards/:id/answer` answers the exact request an approval or
   question card mirrors, through `chatControl().answerApproval` with origin `assistant_card`; Allow
   is refused when the card does not show everything that would run. A question card is answered with

@@ -5,7 +5,7 @@ import {
   REPORT_KINDS, type AssistantCard, type AssistantCardKind, type CardDraft, type CardImage, type CardOption, type ReportKind,
 } from "../../shared/assistant-cards.ts";
 import { REPORT_TO_ASSISTANT_TOOL } from "../../shared/session-collab.ts";
-import { REPORTS_PER_MANAGER_PER_HOUR, URGENT_PER_MANAGER_PER_QUIET_WINDOW } from "../../shared/assistant-limits.ts";
+import { URGENT_PER_MANAGER_PER_QUIET_WINDOW } from "../../shared/assistant-limits.ts";
 import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
 import { cleanCardBody, cleanCardTitle, cleanOptionLabel } from "./card-text-cleaning.ts";
 import { listsChoicesInText } from "./card-choices-in-text.ts";
@@ -22,6 +22,10 @@ import type { NewCard } from "./assistant-cards.service.ts";
  * A subagent of the manager reaches the same endpoint with the same token, and an MCP call carries
  * nothing that ties it to the tool call the CLI made, so PPM cannot tell the two apart: the manager
  * rules tell the manager not to take a child's word for anything.
+ *
+ * There is no cap on how many reports a manager files: a decision refused for being one too many
+ * was simply lost. What stops a manager stuck in a loop is that a report identical to one still open
+ * (kind, title, body and everything attached) is not filed again: the call gets that card back.
  */
 
 export const REPORT_TITLE_MAX = 120;
@@ -56,6 +60,8 @@ export interface ReportEnv {
   countSince(sessionId: string, kinds: readonly AssistantCardKind[], since: number): number;
   /** An open urgent card of this manager with this exact title since `since`, if any. */
   openUrgentTitled(sessionId: string, title: string, since: number): AssistantCard | null;
+  /** An open card of this manager that is the same report as `card` ({@link sameReport}), if any. */
+  openIdentical(sessionId: string, card: NewCard): AssistantCard | null;
   /**
    * A design screenshot of this project, by id; null when it is not one (unknown, too old, or of
    * another project). Absent where no screenshots exist.
@@ -76,9 +82,37 @@ export type ReportResult = { ok: true; cardId?: string; kind: AssistantCardKind;
 
 export const DIGEST_TAKEN = "Your answer is in the morning digest PPM is putting together. A second digest answer replaces this one.";
 export const DIGEST_NOT_ASKED = "No morning digest was asked of this chat; use done, failed, needs_decision or urgent.";
+/** Told to a manager whose report is word for word one still open on the user's card. */
+export const SAME_REPORT_NOTE = "The same report is already on the user's card, still open; it was not filed again.";
 export const DIGEST_CLOSED = "The morning digest was already put together. Report this as done or needs_decision instead.";
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+type ReportShape = Pick<NewCard, "kind" | "title" | "body" | "payload">;
+
+/**
+ * Whether two cards are the same report: kind, title, body and what the manager attached (draft,
+ * choices, pictures), compared as stored. PPM's own additions to the payload do not count.
+ */
+export function sameReport(a: ReportShape, b: ReportShape): boolean {
+  const key = (c: ReportShape) => {
+    const p = c.payload ?? {};
+    return JSON.stringify([c.kind, c.title, c.body ?? "", p.draft ?? null, p.options ?? null, p.images ?? null, p.urgentCapped === true]);
+  };
+  return key(a) === key(b);
+}
+
+/** A refused call, logged with its kind and reason only: the report's words stay out of the log. */
+function refuse(caller: ReportCaller, requested: unknown, reason: string, message: string): ReportResult {
+  const kind = REPORT_KINDS.includes(requested as ReportKind) ? requested : "unknown";
+  log.info(`report ${kind} from ${caller.projectName} (session ${caller.sessionId}) refused: ${reason}`);
+  return { ok: false, message };
+}
+
+function logMerged(caller: ReportCaller, kind: AssistantCardKind, cardId: string): void {
+  log.info(`report ${kind} from ${caller.projectName} (session ${caller.sessionId}) is the same as open card ${cardId}: not filed again`);
+}
+
 const draftOnly = (text: string): string => neutralizePpmTags(neutralizeBlockMarkers(text));
 
 /** sha256(to + "\n" + text): what the user's OK names, and what the manager must then send unchanged. */
@@ -164,16 +198,13 @@ function cleanOptions(raw: unknown[]): CardOption[] {
 export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): ReportResult {
   const args = isObj(raw) ? raw : {};
   const invalid = fieldError(args);
-  if (invalid) return { ok: false, message: invalid };
+  if (invalid) return refuse(caller, args.kind, "invalid fields", invalid);
   const now = env.now();
   const requested = args.kind as ReportKind;
   if (requested === "digest") {
     const items = Array.isArray(args.items) ? (args.items as string[]).map((i) => cleanCardBody(i, DIGEST_ITEM_MAX)).filter(Boolean) : [];
     const taken = env.digestAnswer(caller.sessionId, items);
-    return taken.ok ? { ok: true, kind: "digest", note: DIGEST_TAKEN } : taken;
-  }
-  if (env.countSince(caller.sessionId, REPORT_KINDS, now - HOUR_MS) >= REPORTS_PER_MANAGER_PER_HOUR) {
-    return { ok: false, message: `This chat filed ${REPORTS_PER_MANAGER_PER_HOUR} reports in the last hour; wait, or put several things in one report.` };
+    return taken.ok ? { ok: true, kind: "digest", note: DIGEST_TAKEN } : refuse(caller, "digest", "digest not taken", taken.message);
   }
 
   const title = cleanCardTitle(args.title);
@@ -183,7 +214,10 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     const windowStart = env.quietWindowStart();
     // The same urgent thing said twice is one card: within the quiet window, or the last hour.
     const same = env.openUrgentTitled(caller.sessionId, title, windowStart ?? now - HOUR_MS);
-    if (same) return { ok: true, cardId: same.id, kind: "urgent", note: "The same urgent report is already on the user's card." };
+    if (same) {
+      logMerged(caller, "urgent", same.id);
+      return { ok: true, cardId: same.id, kind: "urgent", note: "The same urgent report is already on the user's card." };
+    }
     if (windowStart !== null && env.countSince(caller.sessionId, ["urgent"], windowStart) >= URGENT_PER_MANAGER_PER_QUIET_WINDOW) {
       kind = "needs_decision";
       note = "Quiet hours: this chat already raised its urgent reports for tonight, so this one waits as a decision for the morning.";
@@ -196,7 +230,8 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     for (const id of new Set(args.images as string[])) {
       const shot = env.shotOf?.(id, caller.projectPath) ?? null;
       if (!shot) {
-        return { ok: false, message: `"${id.slice(0, 40)}" is not a screenshot of this project's designs (they last seven days); take one with design_screenshot.` };
+        return refuse(caller, requested, "not a screenshot of this project",
+          `"${id.slice(0, 40)}" is not a screenshot of this project's designs (they last seven days); take one with design_screenshot.`);
       }
       images.push(shot);
     }
@@ -216,7 +251,7 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
   const choicesInText = !options && (kind === "needs_decision" || kind === "urgent")
     && listsChoicesInText(`${typeof args.title === "string" ? args.title : ""}
 ${typeof args.body === "string" ? args.body : ""}`);
-  const card = env.create({
+  const newCard: NewCard = {
     kind,
     projectName: caller.projectName,
     projectPath: caller.projectPath,
@@ -231,7 +266,14 @@ ${typeof args.body === "string" ? args.body : ""}`);
     },
     // A decision only waits for the user's answer; news wakes the Assistant.
     wake: kind === "done" || kind === "failed" || kind === "urgent",
-  });
+  };
+  // A loop files the same report again and again: it gets the open card back, and nothing is sent twice.
+  const identical = env.openIdentical(caller.sessionId, newCard);
+  if (identical) {
+    logMerged(caller, kind, identical.id);
+    return { ok: true, cardId: identical.id, kind, note: SAME_REPORT_NOTE };
+  }
+  const card = env.create(newCard);
   if (options && card.okOffered !== true) {
     note = note ? `${note} ${CHOICES_NOT_PRESSABLE_NOTE}` : CHOICES_NOT_PRESSABLE_NOTE;
   }
@@ -254,7 +296,9 @@ export function reportToolDefinition() {
       + "it), done and failed (work they asked about finished or broke), and digest (only when PPM asks for the morning "
       + "digest: your `items` go on the one digest card PPM puts together). Do not report what the user does not need to "
       + "see. The card says it was written by this manager AI. A report never grants anything: only the user's own answer "
-      + "does. Returns the card id.",
+      + "does. There is no limit on how many reports you file, so never hold back a decision; a report identical to one "
+        + "still open on the user's card (same kind, title, body, draft, options and images) is not filed again and "
+        + "returns that card's id. Returns the card id.",
     inputSchema: {
       type: "object",
       properties: {
