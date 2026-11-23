@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.28] - 2026-11-23
+
+### Changed
+
+- **A chat waiting on another chat stops waiting when any message reaches it**: a card answered from Telegram, another chat's message, the PPM Assistant, a schedule or manager news now ends the wait instead of sitting unread for up to 10 minutes; the tool card says who ended it.
+- **Handing work to another chat no longer waits by default**: the AI waits only for an answer it needs at once, and a running wait has a **Stop waiting** button on its card.
+
 ## [0.26.27] - 2026-11-22
 
 ### Fixed
