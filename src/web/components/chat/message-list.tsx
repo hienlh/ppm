@@ -143,6 +143,17 @@ function PreCompactSkeleton() {
   );
 }
 
+/** A row's distance from the top of the scroller's content, whatever the scroll position. */
+function contentTop(scroller: HTMLElement, row: HTMLElement): number {
+  return row.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+}
+
+/** The topmost row of the scroller and its `contentTop`, or null when no row is drawn. */
+function topRowAnchor(scroller: HTMLElement): { key: string; top: number } | null {
+  const row = scroller.querySelector<HTMLElement>("[data-msg-id]");
+  return row?.dataset.msgId ? { key: row.dataset.msgId, top: contentTop(scroller, row) } : null;
+}
+
 /** Older history on request, for a host that turned scroll-to-load off. 44 px on a phone. */
 function LoadEarlierButton({ onClick }: { onClick: () => void }) {
   return (
@@ -294,9 +305,9 @@ export function MessageList({
     return () => useSessionTurnsStore.getState().release(sessionId);
   }, [sessionId]);
 
-  // Preserve the viewport when older messages are prepended (compact expand): capture
-  // distance-from-bottom before the prepend, restore scrollTop after so the content
-  // being read doesn't jump. Only fires for prepends — streaming appends leave the
+  // Preserve the viewport when older messages are prepended (compact expand): anchor
+  // the topmost row before the prepend, scroll by how far it moved after so the
+  // content being read doesn't jump. Only fires for prepends — streaming appends leave the
   // ref null, so this is a no-op during normal streaming.
   // Declared above the scroll-preserving layout effect below, which reads
   // `autoLoadingCompact` to know whether the skeleton is still occupying space.
@@ -306,16 +317,28 @@ export function MessageList({
   // the reason both shows it and stops the loader retrying on every intersection.
   const [compactLoadError, setCompactLoadError] = useState<string | null>(null);
 
-  const preserveFromBottomRef = useRef<number | null>(null);
+  // The topmost row and its distance from the top of the content (not of the viewport, so
+  // scrolling does not change it). Each change above it — the skeleton going in, the page
+  // landing, the skeleton going out — scrolls by however far that row moved, then the anchor
+  // moves to the row now on top. Relative on purpose: restoring a distance-from-bottom captured
+  // when the fetch started threw away everything the reader scrolled while it was in flight
+  // (a fast scroll up snapped back by up to ~600 px a page). And always the topmost row, so a
+  // row lower down settling at another height (which the live pin's reading anchor already
+  // corrects) is never counted a second time here. The anchor finds the reader's row in place
+  // after this and moves nothing.
+  const prependAnchorRef = useRef<{ key: string; top: number } | null>(null);
   useLayoutEffect(() => {
     const el = scrollEl;
-    if (el && preserveFromBottomRef.current != null) {
-      el.scrollTop = el.scrollHeight - preserveFromBottomRef.current;
+    const anchor = prependAnchorRef.current;
+    if (el && anchor) {
+      const row = el.querySelector<HTMLElement>(attrSelector("data-msg-id", anchor.key));
+      if (row) {
+        const top = contentTop(el, row);
+        if (Math.abs(top - anchor.top) >= 0.5) el.scrollTop += top - anchor.top;
+      }
       // Held, not cleared, while the skeleton is up: it occupies real space at
-      // the top, so it moves `scrollHeight` without `filtered.length` changing.
-      // Clearing here would leave the view jumped by the skeleton's height for
-      // as long as the fetch takes, then jumped back when it resolved.
-      if (!autoLoadingCompact) preserveFromBottomRef.current = null;
+      // the top, and taking it out moves the rows again.
+      prependAnchorRef.current = autoLoadingCompact ? topRowAnchor(el) : null;
     }
   }, [filtered.length, scrollEl, autoLoadingCompact]);
 
@@ -606,10 +629,9 @@ export function MessageList({
         ? () => onExpandCompact(topCompactId, topCompactPath)
         : null;
     if (!load) return;
-    // Capture distance-from-bottom so the post-prepend layout effect can hold the
-    // reading position steady while older messages are inserted above.
-    const el = scrollEl;
-    preserveFromBottomRef.current = el ? el.scrollHeight - el.scrollTop : null;
+    // Anchor the topmost row so the layout effect above can hold the reading
+    // position steady while the skeleton and the older messages go in above it.
+    prependAnchorRef.current = scrollEl ? topRowAnchor(scrollEl) : null;
     setAutoLoadingCompact(true);
     setCompactLoadError(null);
     try {
