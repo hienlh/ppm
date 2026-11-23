@@ -297,16 +297,23 @@ async function main() {
     } catch {}
     const errPath = (P.ppmDir + "/ppm.err.log").replace(/\\//g, "\\\\").replace(/\\\\/g, "\\\\\\\\");
     const argStr = serverArgs.map((a: string) => "'" + (a || "_") + "'").join(",");
+    // The PID comes back through a file, with no pipes at all: Start-Process lets the server
+    // inherit PowerShell's stdout/stderr pipes, and Bun 1.4.4 waits for every writer of a pipe to
+    // close, i.e. for the server to exit (see windows-detached-start.ts, which this script cannot import).
+    const pidFile = P.ppmDir + "/.restart-server-pid";
+    try { rmSync(pidFile, { force: true }); } catch {}
+    const pidPath = pidFile.replace(/\\//g, "\\\\").replace(/\\\\/g, "\\\\\\\\");
     const psCmd = "$p = Start-Process -PassThru -WindowStyle Hidden"
       + " -FilePath '" + bunExe + "'"
       + " -ArgumentList " + argStr
       + " -RedirectStandardOutput '" + logPath + "'"
       + " -RedirectStandardError '" + errPath + "'"
-      + "; Write-Output $p.Id";
-    const r = spawnSync("powershell", ["-NoProfile", "-Command", psCmd], { stdio: ["ignore", "pipe", "pipe"] });
-    childPid = parseInt(String(r.stdout).trim(), 10);
+      + "; Set-Content -LiteralPath '" + pidPath + "' -Value $p.Id -Encoding ascii";
+    const r = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", psCmd], { stdio: "ignore" });
+    try { childPid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10); } catch { childPid = NaN; }
+    try { rmSync(pidFile, { force: true }); } catch {}
     if (isNaN(childPid)) {
-      log("ERROR", "Failed to start server via PowerShell: " + String(r.stderr).trim());
+      log("ERROR", "Failed to start server via PowerShell (exit " + r.status + ")");
       writeResult(false, "Failed to start server on Windows");
       process.exit(1);
     }

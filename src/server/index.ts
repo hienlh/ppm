@@ -806,7 +806,6 @@ export async function startServer(options: {
       if (options.minimal) superviseArgs.push("--minimal");
       while (superviseArgs.length > 1 && superviseArgs[superviseArgs.length - 1] === "") superviseArgs.pop();
 
-      const bunExe = process.execPath.replace(/\\/g, "\\\\");
       // Never ppm.log itself: `-RedirectStandardOutput` opens its target with
       // truncate, not append, so every `ppm start` wiped the whole log since the
       // last rotation — and the handle it holds writes at its own offset, over
@@ -816,28 +815,22 @@ export async function startServer(options: {
       // The new capture truncates the old one: keep it as .err.log.1, the only place a
       // supervisor that died without a log line (a panic, out of memory) left its reason.
       keepPreviousCapture(logFile.replace(/\.log$/, ".err.log"));
-      const outLog = logFile.replace(/\.log$/, ".out.log").replace(/\\/g, "\\\\");
-      const errLog = logFile.replace(/\.log$/, ".err.log").replace(/\\/g, "\\\\");
       const winArgs = isCompiledBin ? superviseArgs : ["run", supervisorScript, ...superviseArgs];
-      const argStr = winArgs.map((a) => `'${a || "_"}'`).join(",");
-      const psCmd = [
-        `$p = Start-Process -PassThru -WindowStyle Hidden`,
-        `-FilePath '${bunExe}'`,
-        `-ArgumentList ${argStr}`,
-        `-RedirectStandardOutput '${outLog}'`,
-        `-RedirectStandardError '${errLog}'`,
-        `; Write-Output $p.Id`,
-      ].join(" ");
-      const result = Bun.spawnSync({
-        cmd: ["powershell", "-NoProfile", "-Command", psCmd],
-        stdout: "pipe", stderr: "pipe",
+      // The PID comes back through a file: a pipe would be inherited by the supervisor and keep
+      // this command waiting for as long as PPM runs (`windows-detached-start.ts`).
+      const { startDetachedOnWindows } = await import("../services/windows-detached-start.ts");
+      const started = startDetachedOnWindows({
+        exe: process.execPath,
+        args: winArgs,
+        stdoutPath: logFile.replace(/\.log$/, ".out.log"),
+        stderrPath: logFile.replace(/\.log$/, ".err.log"),
       });
-      supervisorPid = parseInt(result.stdout.toString().trim(), 10);
-      if (isNaN(supervisorPid)) {
+      if ("error" in started) {
         console.error("  ✗  Failed to start supervisor on Windows.");
-        console.error(`     ${result.stderr.toString().trim()}`);
+        console.error(`     ${started.error}`);
         process.exit(1);
       }
+      supervisorPid = started.pid;
     } else {
       const superviseArgs = [
         "__supervise__", String(port), host,
