@@ -163,10 +163,10 @@ async function setAgents(page, on) {
 }
 const dropSockets = async () => { for (const ws of [...sockets]) { sockets.delete(ws); await ws.close(); } };
 
-async function newPage(phone) {
+async function newPage(phone, width = 1280) {
   const context = await harness.browser.newContext(phone
     ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }
-    : { viewport: { width: 1280, height: 860 }, deviceScaleFactor: 2 });
+    : { viewport: { width, height: 860 }, deviceScaleFactor: 2 });
   if (!process.env.PPM_FOOTER_NO_STUB) await stub(context);
   // Points the dev client's direct :8081 sockets at this run's server and dismisses the tour.
   await context.addInitScript(instantInstrumentation, { api: harness.api, blockStorage: false });
@@ -204,8 +204,8 @@ const closePop = async (page) => {
   await sleep(300);
 };
 
-async function setupChat(phone) {
-  const { context, page } = await newPage(phone);
+async function setupChat(phone, width) {
+  const { context, page } = await newPage(phone, width);
   await bootProject(page, harness.web, PROJECT);
   await closeAllTabs(page);
   const { tabId } = await openChatTab(page, PROJECT);
@@ -756,6 +756,58 @@ async function chipOverflow(phone) {
   }
 }
 
+/**
+ * A script schedule the chat's AI created is listed by this chat's schedules chip, through the
+ * real `/api/schedules?session=` (nothing stubbed): a script delivers into no chat, so only
+ * `created_by_session_id` links it. The row says Script and its Open hands it to the Schedules
+ * window (a tab on a phone). `PPM_FOOTER_SHOT_PREFIX=before` photographs a build without the link.
+ */
+async function createdByChat(phone) {
+  const tag = phone ? "phone-390" : "desktop-1440";
+  const prefix = process.env.PPM_FOOTER_SHOT_PREFIX ?? "after";
+  console.log(`
+== schedules created by the chat, ${tag}`);
+  const { context, page, tabId } = await setupChat(phone, 1440);
+  try {
+    const res = await fetch(`${harness.api}/api/schedules`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "script", mode: "tick", name: "Hourly Nxsys sync", cron_expr: "0 3 * * *", project_path: harness.project,
+        script: "export default async (ctx) => { ctx.log('tick'); }", enabled: true, created_by_session_id: state.sessionId,
+      }),
+    });
+    const created = (await res.json()).data;
+    check(res.status === 201 && !!created?.id, `${tag}: the chat's script schedule was created`, `${res.status} #${created?.id}`);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("schedules:changed")));
+    const chip = inFooter(page, tabId, '[data-testid="session-schedules-chip"]');
+    const listed = await until("the schedules chip", async () => (await chip.count()) > 0, { timeout: 6000 }).then(() => true, () => false);
+    await shot(page, tabId, `${prefix}-${tag}-created-script`);
+    check(listed, `${tag}: the chip lists the script schedule the chat created`);
+    if (!listed) return;
+    check((await chip.innerText()).includes("1"), `${tag}: the chip counts it`, await chip.innerText());
+    await chip.click();
+    const row = page.locator(`[data-session-schedule="${created.id}"]:visible`);
+    await row.waitFor({ timeout: 6000 });
+    check(await row.locator('[data-schedule-kind="script"]').isVisible(), `${tag}: the row says Script`);
+    check((await row.innerText()).includes("Hourly Nxsys sync"), `${tag}: the row names it`);
+    await sleep(350);
+    await shot(page, tabId, `${prefix}-${tag}-created-script-open`);
+    await row.locator('[data-testid="session-schedule-open"]').click();
+    const opened = await until("the Schedules window on it", async () => (await page.locator(`[data-schedule-detail="${created.id}"]:visible, [data-schedule-row="${created.id}"]:visible, [data-schedule-card="${created.id}"]:visible`).count()) > 0, { timeout: 10000 }).then(() => true, () => false);
+    check(opened, `${tag}: Open shows it in Schedules`);
+    await sleep(400);
+    await page.screenshot({ path: join(SHOTS, `${prefix}-${tag}-created-script-schedules.png`) });
+    await fetch(`${harness.api}/api/schedules/${created.id}`, { method: "DELETE" }).catch(() => {});
+  } catch (e) {
+    check(false, `${tag}: scenario threw`, e.message.split("
+")[0]);
+    await page.screenshot({ path: join(SHOTS, `${prefix}-${tag}-created-script-failure.png`) }).catch(() => {});
+  } finally {
+    await fetch(`${harness.api}/__instant-test/release`, { method: "POST" }).catch(() => {});
+    await context.close();
+  }
+}
+
 /** Under reduced motion nothing animates: the popover has no animation and chips do not scale. */
 async function reducedMotion() {
   const context = await harness.browser.newContext({ viewport: { width: 1280, height: 860 }, reducedMotion: "reduce" });
@@ -788,10 +840,13 @@ try {
   if (only === "overflow") {
     await chipOverflow(false);
     await chipOverflow(true);
+  } else if (only === "schedules") {
+    await createdByChat(false);
+    await createdByChat(true);
   } else {
     if (only !== "phone") await scenarios(false);
     if (only !== "desktop") await scenarios(true);
-    if (!only) { await chipOverflow(false); await chipOverflow(true); await reducedMotion(); }
+    if (!only) { await chipOverflow(false); await chipOverflow(true); await createdByChat(false); await createdByChat(true); await reducedMotion(); }
   }
 } finally {
   await harness.browser.close().catch(() => {});

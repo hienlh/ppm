@@ -32,7 +32,8 @@ export interface ScheduleProposalToolEnv {
   /** The provider a new schedule is snapshotted to (the default one, read now). */
   providerId(): string;
   card(): ProposalCardDeps;
-  create(p: ScriptScheduleProposal, providerId: string): ProposalCreate;
+  /** Saves the approved proposal; `createdBy` is the proposing chat, whose footer chip then lists it. */
+  create(p: ScriptScheduleProposal, providerId: string, createdBy: string): ProposalCreate;
   setEnabled(current: Schedule, enabled: boolean): Schedule;
   /** A schedule changed: re-arm the scheduler and refresh open schedule lists. */
   changed(): void;
@@ -78,7 +79,7 @@ export async function proposeScriptTool(env: ScheduleProposalToolEnv, chat: Sche
 
   const stale = proposalStaleReason(proposal, providerId, env.providerId());
   if (stale) return json({ done: false, outcome: "stale", note: `${stale} Nothing was created; propose it again if it is still wanted.` }, true);
-  const created = env.create(proposal, providerId);
+  const created = env.create(proposal, providerId, chat.sessionId);
   if (!created.ok) return fail(created.error);
   env.changed();
   log.info(`chat ${chat.sessionId} created script schedule #${created.schedule.id} "${created.schedule.name}" in project "${chat.projectName}" after the user allowed its card`);

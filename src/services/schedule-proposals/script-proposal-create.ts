@@ -51,11 +51,14 @@ export function proposalStaleReason(p: ScriptScheduleProposal, providerIdShown: 
 
 export type ProposalCreate = { ok: true; schedule: Schedule } | { ok: false; error: string };
 
-/** Saves the approved proposal through the route's own function and checks what was stored. */
-export function createProposedSchedule(p: ScriptScheduleProposal, providerId: string): ProposalCreate {
+/**
+ * Saves the approved proposal through the route's own function and checks what was stored.
+ * `createdBy` is the chat that proposed it, so that chat's footer chip lists the schedule.
+ */
+export function createProposedSchedule(p: ScriptScheduleProposal, providerId: string, createdBy: string | null = null): ProposalCreate {
   let id: number;
   try {
-    id = insertSchedule(newScheduleFrom(proposalRouteBody(p), providerId));
+    id = insertSchedule({ ...newScheduleFrom(proposalRouteBody(p), providerId), created_by_session_id: createdBy });
   } catch (e) {
     return { ok: false, error: `Not created: ${(e as Error).message}` };
   }

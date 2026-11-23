@@ -1,5 +1,5 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { mkdirSync, existsSync, statSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
@@ -9,13 +9,14 @@ import type { DbType } from "../shared/db-types.ts";
 import type { StoredConnectionConfig } from "../shared/db-connection-config.ts";
 import { createLogger } from "./logger.ts";
 import { widenCheckConstraint } from "./db-widen-check-constraint.ts";
+import { backfillScheduleCreators } from "./schedule-creator-backfill.ts";
 import { applyPpmTasksSchema, applyPpmTasksSnoozeSchema } from "./ppm-tasks/ppm-tasks-schema.ts";
 
 const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 79;
+export const CURRENT_SCHEMA_VERSION = 80;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1676,6 +1677,25 @@ export function runMigrations(database: Database): void {
     `);
     database.exec(`CREATE INDEX IF NOT EXISTS idx_assistant_setting_changes_at ON assistant_setting_changes(at)`);
     database.exec(`PRAGMA user_version = 79;`);
+  }
+
+  if (current < 80) {
+    // The chat whose AI created a schedule, of any kind, so that chat's footer chip lists it — a
+    // script schedule delivers into no chat, so `target_session_id` could not say. Schedules made
+    // before this column are read back from the session trace beside this database where it
+    // shows which chat made them (`schedule-creator-backfill.ts`); the rest stay null, as one a
+    // person made in Settings is.
+    addColumnIfMissing(database, "schedules", "created_by_session_id", "TEXT");
+    if (database.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schedules'").get()) {
+      database.exec("CREATE INDEX IF NOT EXISTS idx_schedules_created_by ON schedules(created_by_session_id)");
+      // An in-memory database (tests) has no folder and so no trace beside it.
+      const file = database.filename;
+      if (file && file !== ":memory:") {
+        const filled = backfillScheduleCreators(database, join(dirname(file), "session-trace.db"), (m) => log.warn(m));
+        if (filled > 0) log.info(`linked ${filled} schedule(s) to the chat that created them`);
+      }
+    }
+    database.exec(`PRAGMA user_version = 80;`);
   }
 }
 

@@ -9,9 +9,10 @@
  * AI's `task` reference) ties the schedule to a task of that chat's project, which then owns it.
  */
 import { DEFAULT_TIMEOUT_MS } from "../../shared/schedule-definition.ts";
+import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
 import { validateSessionScheduleInput } from "../../shared/session-schedule-input.ts";
 import type { Schedule } from "../../types/scheduler.ts";
-import { getSchedule, insertSchedule, listSessionSchedulesForTarget, updateSchedule } from "../scheduler-db.service.ts";
+import { getSchedule, insertSchedule, listSchedulesCreatedBy, listSessionSchedulesForTarget, updateSchedule } from "../scheduler-db.service.ts";
 import { ScheduleEditError } from "../scheduler-edit.ts";
 import { nextFireAt } from "../scheduler-timing.ts";
 import { notifySessionScheduleDue } from "./session-schedule-due.ts";
@@ -24,6 +25,18 @@ type Body = Record<string, unknown>;
 export interface SessionScheduleSaveOptions {
   deps?: ScheduleTargetDeps;
   now?: Date;
+}
+
+/**
+ * The chat a body says created the schedule (`created_by_session_id`), or null when it names none.
+ * Only the doors an AI's tools reach (the session tools, the PPM Assistant through the route) set
+ * it; it decides nothing but which chat's footer chip lists the schedule.
+ */
+export function creatorOf(body: Body): string | null {
+  const v = body.created_by_session_id;
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "string" || !SESSION_ID_RE.test(v)) throw new ScheduleEditError(["created_by_session_id must be a chat id"]);
+  return v;
 }
 
 /** Create a session schedule from a route-spelled body. Throws `ScheduleEditError` or `SessionScheduleRefusal`. */
@@ -54,6 +67,7 @@ export function createSessionSchedule(body: Body, { deps = liveScheduleTargetDep
     enabled: body.enabled !== false,
     next_fire_at: nextFireAt(input.cron, input.timezone, now),
     task_id: taskId,
+    created_by_session_id: creatorOf(body),
   });
   return getSchedule(id)!;
 }
@@ -109,4 +123,17 @@ export function sessionSchedulesOf(sessionId: string, deps: Pick<ScheduleTargetD
   return sessionScheduleTargetIds(sessionId, deps)
     .flatMap((id) => listSessionSchedulesForTarget(id))
     .sort((a, b) => a.id - b.id);
+}
+
+/**
+ * What the chat's footer chip lists: the session schedules aimed at the chat, plus every schedule
+ * (script and prompt ones included) its AI created, under any id the chat had, oldest first.
+ * A session schedule the chat made for itself is both, and is listed once.
+ */
+export function chatSchedulesOf(sessionId: string, deps: Pick<ScheduleTargetDeps, "canonical"> = liveScheduleTargetDeps): Schedule[] {
+  const byId = new Map<number, Schedule>();
+  for (const id of sessionScheduleTargetIds(sessionId, deps)) {
+    for (const s of [...listSessionSchedulesForTarget(id), ...listSchedulesCreatedBy(id)]) byId.set(s.id, s);
+  }
+  return [...byId.values()].sort((a, b) => a.id - b.id);
 }
