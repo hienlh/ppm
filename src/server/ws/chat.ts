@@ -1229,7 +1229,7 @@ function announcePpmApproval(sessionId: string, event: { type: string; requestId
   const entry = activeSessions.get(sessionId);
   if (!entry) return false;
   // An extension's turn with nobody watching: the broker settles it as unanswerable rather than
-  // holding a card for ten minutes that no device shows.
+  // holding a card for an hour that no device shows.
   if (unattendedExtensionTurn(entry)) return false;
   approvals.offer(sessionId, entry, ppmApprovalEvent(event));
   armExtensionApprovalDeadline(sessionId, entry, event.requestId);

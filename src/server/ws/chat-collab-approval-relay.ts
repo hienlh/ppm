@@ -8,7 +8,7 @@ import { decidingInput } from "../../services/chat-control/approval-deciding-inp
  * chat's server-side listeners whichever chat shows them, so the PPM Assistant's "Waiting on you"
  * and its Telegram bridge carry them beside every other card, and settled by a person's press there
  * through the same broker a click in PPM answers. A chat that waits on such a card is stopped until
- * someone answers, and the card gives up after ten minutes: shown only on PPM's screen, it ran out
+ * someone answers, and the card gives up after an hour: shown only on PPM's screen, it ran out
  * while the user was away and never knew.
  *
  * Off PPM a card answers once or not at all: "allow for this session" is never offered there.

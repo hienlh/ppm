@@ -1028,7 +1028,7 @@ slot (`approval_request` with tool `ppm:session_collab`) and answered over HTTP 
   (`message`). *Allow for this session* holds per sender → target in memory only, until a restart,
   and ends for good once the target runs more permissively than when it was allowed.
 
-Messaging an existing session asks nothing else. One card per session at a time, held 10 minutes.
+Messaging an existing session asks nothing else. One card per session at a time, held an hour (`COLLAB_APPROVAL_WAIT_MS`), and mirrored to the PPM Assistant's "Waiting on you" whichever chat it is in.
 PPM's approvals share one generalized slot with `db_execute` (`chat-ppm-approvals.ts`). A card
 notifies as `collab_approval` ("Sessions need you"); an AI-created session finishing its turn sends
 no "Chat completed" (a turn stopped by an error still does). `POST /chat/sessions/:id/stop-children`

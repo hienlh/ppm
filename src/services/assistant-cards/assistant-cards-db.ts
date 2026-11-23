@@ -256,6 +256,20 @@ export function findOpenRequestCard(requestId: string): CardRow | null {
   return row ? toRow(row) : null;
 }
 
+/**
+ * The open approval or question card mirroring what one of a project's chats (not a manager: only
+ * a mirror carries `payload.chat`) waits on, newest first; null when it waits on none.
+ */
+export function findOpenChatMirrorCard(sessionIds: readonly string[], projectKey: string): CardRow | null {
+  if (sessionIds.length === 0) return null;
+  const ids = sessionIds.map(() => "?").join(", ");
+  const row = getDb().query(`SELECT ${COLUMNS} FROM assistant_cards
+    WHERE status = 'open' AND kind IN ('approval', 'question') AND session_id IN (${ids}) AND project_key = ?
+      AND json_extract(payload_json, '$.chat') IS NOT NULL
+    ORDER BY created_at DESC LIMIT 1`).get(...sessionIds, projectKey) as Raw | null;
+  return row ? toRow(row) : null;
+}
+
 /** Open cards of one kind whose payload field equals `value` (a budget's session, a held rules hash). */
 export function findOpenCardsBy(kind: AssistantCardKind, field: string, value: string): CardRow[] {
   if (!/^[a-zA-Z]+$/.test(field)) throw new Error("bad field");

@@ -26,6 +26,7 @@ import { step3, step4, step5, step6 } from "./assistant-manager-loop/steps-cards
 import { step7 } from "./assistant-manager-loop/steps-rules.mjs";
 import { step8, step9 } from "./assistant-manager-loop/steps-limits.mjs";
 import { step10, step11 } from "./assistant-manager-loop/steps-digest-notebook.mjs";
+import { step12 } from "./assistant-manager-loop/steps-child-cards.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-manager-loop-e2e-"));
 const shotsDir = resolve(process.env.PPM_MANAGER_LOOP_SHOTS ?? join(sandbox, "shots"));
@@ -92,7 +93,9 @@ try {
   await fx.post("/api/assistant/telegram/bind", { sessionId: main, chatId: String(OWNER) });
   // Nothing fires at a time of its own while the clock is moved: the digest is switched on in step 10.
   const { data: { settings } } = await fx.api("/api/assistant/settings");
-  await fx.api("/api/assistant/settings", { method: "PUT", body: JSON.stringify({ ...settings, timezone: "UTC", digest: { enabled: false, time: "08:00" } }) });
+  // Ask mode: the loop checks the cards the Assistant shows, and Full mode (which the fixture's
+  // "PPM has new features" answers turn on) would run those steps without one.
+  await fx.api("/api/assistant/settings", { method: "PUT", body: JSON.stringify({ ...settings, timezone: "UTC", digest: { enabled: false, time: "08:00" }, permission_mode: "ask" }) });
 
   // A's chat, which the user makes its manager: one turn already run, in Ask mode.
   const aTitle = "Alpha lead";
@@ -118,7 +121,7 @@ try {
   await k.idle(aChat);
   const s = { alpha, beta, main, aChat, aTitle };
 
-  for (const [id, step] of [[1, step1], [2, step2], [3, step3], [4, step4], [5, step5], [6, step6], [7, step7], [8, step8], [9, step9], [10, step10], [11, step11]]) {
+  for (const [id, step] of [[1, step1], [2, step2], [3, step3], [4, step4], [5, step5], [6, step6], [7, step7], [8, step8], [9, step9], [10, step10], [11, step11], [12, step12]]) {
     try {
       await step(k, s);
     } catch (error) {
@@ -145,7 +148,7 @@ try {
   if (fake && fake.exitCode === null) fake.kill();
   await writeFile(join(shotsDir, "results.json"), JSON.stringify({ results, failures }, null, 2));
   for (const f of failures) console.error(`FAILED step ${f.step}: ${f.error.split("\n")[0]}`);
-  console.log(`${results.length} of 11 steps passed, ${failures.length} failed; screenshots in ${shotsDir}; logs in ${logs}`);
+  console.log(`${results.length} of 12 steps passed, ${failures.length} failed; screenshots in ${shotsDir}; logs in ${logs}`);
   if (failures.length) process.exitCode = 1;
   else if (process.env.PPM_MANAGER_LOOP_KEEP !== "1") {
     try { rmSync(sandbox, { recursive: true, force: true }); } catch (e) { console.error(`could not remove ${sandbox}: ${e.message}`); }

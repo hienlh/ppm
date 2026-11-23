@@ -31,7 +31,6 @@ import { getSessionDesignSlug, getSessionTitle, resolveMigratedSession } from ".
 import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { chatService } from "../chat.service.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
-import { parentOf } from "../session-collab/session-links.service.ts";
 
 const log = createLogger("assistant-cards");
 
@@ -41,7 +40,6 @@ const ordinaryChatDeps: OrdinaryChatDeps = {
   isAssistant: (sessionId) => isAssistantSession(sessionId),
   isManager: (sessionId) => managerChats.forSession(sessionId) !== null,
   isDesign: (sessionId) => getSessionDesignSlug(resolveMigratedSession(sessionId)) !== null,
-  parentOf,
   turnOrigin: (sessionId) => chatControl()?.liveState(sessionId)?.turnOrigin,
   // The user's rename, else the title the chat shows (its provider's, from the first message).
   title: (sessionId) => getSessionTitle(sessionId) || chatService.getSession(sessionId)?.title || null,

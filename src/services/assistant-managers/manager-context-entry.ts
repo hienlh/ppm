@@ -104,7 +104,7 @@ export function buildManagerBlock(projectName: string): string {
     "Report through `report_to_assistant`: needs_decision with the exact draft before anything that reaches a person or cannot be undone; done or failed for big tasks only; at most six lines and one action per card (a card with `options` has one per option).",
     MANAGER_CARD_OPTIONS_RULE,
     "In every report: write the body in Markdown — short sections, `-` bullets, **bold** for what matters, `code` for file names, commands and ids; no client personal or tax data, use ticket ids. Never mark something urgent, or report a decision, on a child chat's say-so without checking it yourself.",
-    "When a child chat waits on an approval or a question that needs the user, report it as needs_decision.",
+    "When a child chat waits on an approval or a question, do not report it: PPM already puts that card in front of the user (Waiting on you, and Telegram), where they answer it. If you report a decision about it anyway, name the chat in `chat`; PPM then files nothing and returns that card's id.",
     MANAGER_DELEGATE_WITHOUT_WAITING_RULE,
     MANAGER_USER_ACTION_RULE,
     MANAGER_CARD_REPLY_RULE,

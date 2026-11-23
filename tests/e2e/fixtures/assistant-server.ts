@@ -725,7 +725,7 @@ async function testRoute(req: Request, path: string): Promise<Response> {
     return json({ state: chatControl()?.liveState(decodeURIComponent(path.slice("/__assistant-test/chat-live/".length))) ?? null });
   }
   // A session tool's card raised in a chat through the real broker, with a wait short enough to see
-  // it run out (the product's is ten minutes): the same card `create_session` raises, minus the AI.
+  // it run out (the product's is an hour): the same card `create_session` raises, minus the AI.
   // POST answers its request id; GET `collab-card/<requestId>` answers how it ended, once it did.
   if (path === "/__assistant-test/collab-card" && req.method === "POST") {
     const { sessionId, waitMs, input } = await req.json() as { sessionId: string; waitMs: number; input: unknown };
