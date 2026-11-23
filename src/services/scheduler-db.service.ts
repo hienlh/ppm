@@ -34,8 +34,8 @@ export function getEarliestFireAt(): string | null {
 export function insertSchedule(s: NewSchedule): number {
   const res = getDb().query(
     `INSERT INTO schedules (name, cron_expr, provider_id, project_path, prompt, permission_mode, max_turns, timeout_ms, enabled, next_fire_at,
-       kind, mode, description, script, inputs_json, input_values_json, secrets_enc, target_session_id, timezone, recurring, task_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       kind, mode, description, script, inputs_json, input_values_json, secrets_enc, target_session_id, timezone, recurring, task_id, created_by_session_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     s.name, s.cron_expr, s.provider_id, s.project_path, s.prompt,
     s.permission_mode ?? "bypassPermissions",
@@ -54,6 +54,7 @@ export function insertSchedule(s: NewSchedule): number {
     s.timezone ?? null,
     s.recurring === false ? 0 : 1,
     s.task_id ?? null,
+    s.created_by_session_id ?? null,
   );
   return Number(res.lastInsertRowid);
 }
@@ -139,6 +140,13 @@ export function cleanupScheduleRuns(): void {
 export function listSessionSchedulesForTarget(sessionId: string): Schedule[] {
   return getDb().query(
     "SELECT * FROM schedules WHERE kind = 'session' AND target_session_id = ? ORDER BY id",
+  ).all(sessionId) as Schedule[];
+}
+
+/** The schedules of any kind one chat's AI created, oldest first. */
+export function listSchedulesCreatedBy(sessionId: string): Schedule[] {
+  return getDb().query(
+    "SELECT * FROM schedules WHERE created_by_session_id = ? ORDER BY id",
   ).all(sessionId) as Schedule[];
 }
 

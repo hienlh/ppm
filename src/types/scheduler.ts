@@ -54,6 +54,12 @@ export interface Schedule {
   state_json: string | null;
   /** The chat a session schedule delivers into; null for the other kinds. */
   target_session_id: string | null;
+  /**
+   * The chat whose AI created this schedule (any kind), so that chat's footer chip lists it; null
+   * for one a person made in Settings or the CLI, or one older than the column that PPM could not
+   * trace back to a chat.
+   */
+  created_by_session_id: string | null;
   /** IANA time zone the cron is read in; null is the machine's own. */
   timezone: string | null;
   /** 0: fires once, at the first match, and is deleted once that fire is delivered. */
@@ -174,6 +180,7 @@ export interface NewSchedule {
   input_values_json?: string;
   secrets_enc?: string | null;
   target_session_id?: string | null;
+  created_by_session_id?: string | null;
   timezone?: string | null;
   recurring?: boolean;
   task_id?: string | null;

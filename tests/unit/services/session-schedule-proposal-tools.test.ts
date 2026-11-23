@@ -99,6 +99,8 @@ describe("session_schedule_propose_script", () => {
     const out = JSON.parse(text(res));
     const row = getSchedule(out.schedule.id)!;
     expect(row).toMatchObject({ kind: "script", script: SCRIPT, project_path: projectPath, timezone: "Europe/London", enabled: 1, cron_expr: "0 */5 * * * *", permission_mode: "default" });
+    // The proposing chat is its creator, so that chat's footer chip lists the script.
+    expect(row.created_by_session_id).toBe(CHAT);
     expect(changes).toBe(1);
   });
 

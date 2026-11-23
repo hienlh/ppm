@@ -171,7 +171,7 @@ export function sessionScheduleToolCall(env: SessionScheduleToolEnv, tokenSessio
     let created: Schedule;
     try {
       created = createSessionSchedule({
-        target_session_id: sessionId, cron_expr: args.cron, prompt: args.prompt, recurring: args.recurring,
+        target_session_id: sessionId, created_by_session_id: sessionId, cron_expr: args.cron, prompt: args.prompt, recurring: args.recurring,
         timezone: args.timezone, name: args.name, ...(args.task !== undefined && { task: args.task }),
       }, { deps: env.target, now: env.now() });
     } catch (e) {

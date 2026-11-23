@@ -89,6 +89,40 @@ describe("schedules routes", () => {
     expect(res.status).toBe(400);
   });
 
+  it("GET /?session= lists the schedules that chat's AI created, script ones included, beside those aimed at it", async () => {
+    const chat = "chat-aaaa-1111";
+    // Created by the chat's AI through the route, as the PPM Assistant's tools do.
+    const res = await post("/", { ...validBody, name: "from the chat", created_by_session_id: chat });
+    expect(res.status).toBe(201);
+    const created = (await res.json() as { data: { id: number; created_by_session_id: string | null } }).data;
+    expect(created.created_by_session_id).toBe(chat);
+    // A script schedule delivers into no chat: only its creator links it.
+    const script = insertSchedule({
+      name: "nightly script", cron_expr: "0 3 * * *", provider_id: "claude", project_path: "/tmp/p", prompt: "",
+      kind: "script", script: "export default async () => {}", created_by_session_id: chat,
+    });
+    const reminder = insertSchedule({
+      name: "reminder", cron_expr: "0 9 * * *", provider_id: "claude", project_path: "/tmp/p", prompt: "hi",
+      kind: "session", target_session_id: chat, created_by_session_id: chat,
+    });
+    // Made in Settings, and another chat's: neither belongs in this chat's chip.
+    await post("/", { ...validBody, name: "from settings" });
+    insertSchedule({
+      name: "other chat's", cron_expr: "0 4 * * *", provider_id: "claude", project_path: "/tmp/p", prompt: "",
+      kind: "script", script: "export default async () => {}", created_by_session_id: "chat-bbbb-2222",
+    });
+
+    const list = await schedulesRoutes.request(`/?session=${chat}`);
+    const { data } = await list.json() as { data: { id: number }[] };
+    // The reminder is both aimed at the chat and made by it, and is listed once.
+    expect(data.map((s) => s.id)).toEqual([created.id, script, reminder]);
+  });
+
+  it("POST / refuses a created_by_session_id that is not a chat id", async () => {
+    const res = await post("/", { ...validBody, created_by_session_id: "../x" });
+    expect(res.status).toBe(400);
+  });
+
   it("GET / lists, GET /:id fetches, 404 on unknown", async () => {
     await post("/", validBody);
     const list = await schedulesRoutes.request("/");

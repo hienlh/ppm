@@ -3,7 +3,7 @@ import { Hono, type Context } from "hono";
 import { ok, err } from "../../types/api.ts";
 import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
 
-import { createSessionSchedule, patchSessionSchedule, sessionSchedulesOf } from "../../services/session-schedules/session-schedule-save.ts";
+import { chatSchedulesOf, createSessionSchedule, creatorOf, patchSessionSchedule } from "../../services/session-schedules/session-schedule-save.ts";
 import {
   getSchedules,
   getSchedule,
@@ -57,8 +57,8 @@ schedulesRoutes.use("*", async (c, next) => {
 });
 
 /**
- * Every schedule, or with `?session=<id>` the session schedules of that one chat under any id it
- * had (what a chat tab shows), or with `?task=<id>` the reminders that task owns. Each comes as an
+ * Every schedule, or with `?session=<id>` what that one chat's footer chip lists under any id it
+ * had (the session schedules aimed at it and every schedule its AI created), or with `?task=<id>` the reminders that task owns. Each comes as an
  * overview (`schedules-overview.ts`): the view plus its newest run, project, effective permission
  * mode and task, which is everything the Schedules window and the rail's count read.
  */
@@ -68,7 +68,7 @@ schedulesRoutes.get("/", (c) => {
   const task = c.req.query("task");
   if (task !== undefined && !TASK_ID_RE.test(task)) return c.json(err("task must be a task id"), 400);
   const enabledOnly = c.req.query("enabledOnly") === "true";
-  const rows = session !== undefined ? sessionSchedulesOf(session) : task !== undefined ? listSchedulesForTask(task) : getSchedules();
+  const rows = session !== undefined ? chatSchedulesOf(session) : task !== undefined ? listSchedulesForTask(task) : getSchedules();
   return c.json(ok(toScheduleOverviews(rows.filter((s) => !enabledOnly || s.enabled))));
 });
 
@@ -107,7 +107,8 @@ schedulesRoutes.post("/", async (c) => {
       return c.json(ok(toScheduleOverviews([created])[0]), 201);
     }
     // Snapshot the default provider so resume keeps working if default changes later
-    const id = insertSchedule(newScheduleFrom(body, configService.get("ai").default_provider));
+    // `created_by_session_id` is set by the PPM Assistant's tools: it only lists the schedule in that chat's chip.
+    const id = insertSchedule({ ...newScheduleFrom(body, configService.get("ai").default_provider), created_by_session_id: creatorOf(body) });
     schedulerService.rearm();
     return c.json(ok(toScheduleOverviews([getSchedule(id)!])[0]), 201);
   } catch (e) {

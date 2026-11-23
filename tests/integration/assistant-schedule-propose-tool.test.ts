@@ -83,6 +83,8 @@ describe("schedule_propose_script", () => {
     expect(decidingInput({ tool: asks[0]!.tool, input: asks[0]!.input, summary: asks[0]!.summary }).complete).toBe(false);
     expect(getSchedule(out.schedule.id)).toMatchObject({
       kind: "script", script: SCRIPT, project_path: projectDir, timezone: "Europe/London", cron_expr: "0 */10 * * * *", enabled: 1,
+      // The Assistant chat that proposed it lists it in its footer chip.
+      created_by_session_id: "assistant-propose-int",
     });
   });
 

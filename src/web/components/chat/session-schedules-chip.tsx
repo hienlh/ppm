@@ -1,19 +1,21 @@
 /**
- * The schedules aimed at this chat, as one chip in the footer's context row: a clock and how many.
- * Absent while the chat has none. A dot on it means one needs a glance — PPM paused it, or it came
+ * This chat's schedules, as one chip in the footer's context row: a clock and how many. They are
+ * the session schedules aimed at the chat and every schedule its AI created, script and prompt
+ * ones included (`created_by_session_id`). Absent while the chat has none. A dot on it means one needs a glance — PPM paused it, or it came
  * due and is waiting for the chat to be idle.
  *
  * It opens a popover (a bottom sheet on a phone) listing each schedule: when it next runs in its
- * own time zone, whether it runs once or keeps running, what it is doing, and Pause/Resume and
- * Delete. Deleting asks once more in place, since the popover is already the thing in front.
+ * own time zone, whether it runs once or keeps running, what it is doing, and Open (the schedule in
+ * the Schedules window), Pause/Resume and Delete. Deleting asks once more in place, since the popover is already the thing in front.
  */
 import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { Clock, Pause, Play, Trash2 } from "@/lib/icons";
+import { Clock, ExternalLink, Pause, Play, Trash2 } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useSessionSchedules } from "@/hooks/use-session-schedules";
 import { describeCron, needsAttention, nextRunText, sessionScheduleStatus, type SessionScheduleTone } from "@/lib/session-schedule-view";
+import { openSchedules } from "@/components/schedules/open-schedules";
 import { FooterButton, FooterPopover, FooterPopoverHeader } from "./footer-popover";
 import { FOOTER_CHIP, HIDE_NARROW } from "./footer-chip";
 import type { ScheduleView } from "../../../types/scheduler";
@@ -65,9 +67,11 @@ export function SessionSchedulesChip({ sessionId }: { sessionId: string | null |
           <b className="truncate text-[13px] font-semibold max-md:text-sm">{label}</b>
         </FooterPopoverHeader>
         <div className="max-h-72 min-h-0 overflow-y-auto overscroll-contain max-md:max-h-none max-md:flex-1">
-          {schedules.map((s) => <SessionScheduleItem key={s.id} schedule={s} onChanged={refetch} />)}
+          {schedules.map((s) => <SessionScheduleItem key={s.id} schedule={s} onChanged={refetch} onOpen={() => setOpen(false)} />)}
           <p className="px-3 py-2 text-[11px] leading-relaxed text-text-subtle max-md:px-4 max-md:text-xs">
-            A schedule sends its prompt into this chat on its own, once the chat is idle. Settings → Schedules lists them all.
+            {schedules.some((s) => s.kind !== "session")
+              ? "Schedules this chat set up, and the ones that send a prompt into it once it is idle. Settings → Schedules lists them all."
+              : "A schedule sends its prompt into this chat on its own, once the chat is idle. Settings → Schedules lists them all."}
           </p>
         </div>
       </FooterPopover>
@@ -75,12 +79,25 @@ export function SessionSchedulesChip({ sessionId }: { sessionId: string | null |
   );
 }
 
-/** One schedule in the popover, with its own actions. */
-export function SessionScheduleItem({ schedule: s, onChanged }: { schedule: ScheduleView; onChanged: () => unknown }) {
+/** What kind of schedule a row is, when it is not one that sends into this chat. */
+const KIND_LABEL: Partial<Record<ScheduleView["kind"], string>> = { script: "Script", prompt: "Prompt" };
+
+/**
+ * One schedule in the popover, with its own actions. `onOpen` runs as Open hands the schedule to
+ * the Schedules window, so the popover can close first.
+ */
+export function SessionScheduleItem({ schedule: s, onChanged, onOpen }: { schedule: ScheduleView; onChanged: () => unknown; onOpen?: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const status = sessionScheduleStatus(s);
   const on = !!s.enabled && !s.paused_reason;
+  const kindLabel = KIND_LABEL[s.kind];
+  // An always-on script has no cron: it runs for as long as it is on.
+  const alwaysOn = s.mode === "always-on";
+  const open = () => {
+    onOpen?.();
+    openSchedules({ select: s.id });
+  };
 
   const run = async (action: () => Promise<unknown>, fallback: string) => {
     setBusy(true);
@@ -103,12 +120,17 @@ export function SessionScheduleItem({ schedule: s, onChanged }: { schedule: Sche
     <div className="border-b border-border-soft px-3 py-2 max-md:px-4 max-md:py-3" data-session-schedule={s.id}>
       <div className="flex min-w-0 items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-text max-md:text-sm">{s.name}</span>
+        {kindLabel && (
+          <span className="shrink-0 rounded border border-border-soft px-1.5 py-0.5 text-[10px] font-medium text-text-3" data-schedule-kind={s.kind}>
+            {kindLabel}
+          </span>
+        )}
         <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium", TONE_CLASS[status.tone])}>{status.text}</span>
       </div>
       <p className="mt-0.5 text-[11px] text-text-3 max-md:text-xs">
-        {describeCron(s.cron_expr)} · {s.recurring ? "Repeats" : "Runs once"}
+        {alwaysOn ? "Always on" : `${describeCron(s.cron_expr)} · ${s.recurring ? "Repeats" : "Runs once"}`}
       </p>
-      <p className="text-[11px] text-text-3 max-md:text-xs">{nextRunText(s)}</p>
+      <p className="text-[11px] text-text-3 max-md:text-xs">{alwaysOn ? (on ? "Runs all the time" : "Not running") : nextRunText(s)}</p>
       {status.detail && (
         <p className={cn("mt-0.5 break-words text-[11px] max-md:text-xs", status.tone === "bad" ? "text-error" : "text-text-subtle")}>{status.detail}</p>
       )}
@@ -124,6 +146,10 @@ export function SessionScheduleItem({ schedule: s, onChanged }: { schedule: Sche
           </>
         ) : (
           <>
+            <FooterButton onClick={open} disabled={busy} data-testid="session-schedule-open" title="Open it in Schedules">
+              <ExternalLink />
+              Open
+            </FooterButton>
             <FooterButton onClick={toggle} disabled={busy} data-testid="session-schedule-toggle">
               {on ? <Pause /> : <Play />}
               {on ? "Pause" : "Resume"}

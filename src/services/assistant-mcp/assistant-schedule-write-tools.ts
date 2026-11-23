@@ -116,7 +116,8 @@ async function createSchedule(ctx: ToolContext, given: GivenSchedule, deps: Sche
   // The route snapshots the default provider; the card named one, so it must still be that one.
   if (defaultProviderOf(deps) !== provider) return staleResult(SCHEDULE_SAVE_TOOL, "The default provider changed while the card waited.");
 
-  const res = await ctx.callRoute<Schedule>("POST", "/api/schedules", body);
+  // Named as its creator, so this Assistant chat's footer chip lists the schedule.
+  const res = await ctx.callRoute<Schedule>("POST", "/api/schedules", { ...body, created_by_session_id: ctx.sessionId });
   if (!res.ok || !res.data) return errorResult(`Not created: ${res.error ?? `the route answered ${res.status}`}`);
   return jsonResult({ created: true, schedule: scheduleView(res.data, project, timeZoneOf(deps)) });
 }

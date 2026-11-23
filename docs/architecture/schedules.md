@@ -247,7 +247,16 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
 - **In the chat.** The prompt is preceded by a `<ppm-schedule-run-v1>` block
   (`src/shared/chat-schedule-run.ts`), which only the server writes; the chat draws it as one
   "Schedule … ran" line that opens to the prompt (`schedule-run-line.tsx`), and a footer chip
-  lists the chat's schedules with pause, resume and delete (`session-schedules-chip.tsx`).
+  lists the chat's schedules with open, pause, resume and delete (`session-schedules-chip.tsx`).
+  The chip asks `GET /api/schedules?session=<id>` (`chatSchedulesOf`), which answers the session
+  schedules aimed at the chat *and* every schedule its AI created, script and prompt ones
+  included: `schedules.created_by_session_id` (migration 80) is set by the session tools
+  (`session_schedule_create`, `session_schedule_propose_script`) and by the PPM Assistant's
+  `schedule_save` / `schedule_propose_script`, which pass it in the route body. A schedule a person
+  makes in Settings or the CLI has none. Migration 80 fills it for older script and prompt
+  schedules from `session-trace.db` where the trace names the schedule's id and name within 15
+  minutes of its creation (`schedule-creator-backfill.ts`); older than the trace's retention, a
+  schedule stays unlinked.
 - **A prompt that is a slash command.** A scheduled `/skill args` goes through the same alias
   rewrite as a typed one. In a Claude chat it then stays the message's first characters, since
   Claude Code runs a leading `/name` as that command or skill: the block goes after it

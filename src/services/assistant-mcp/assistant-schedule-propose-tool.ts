@@ -42,7 +42,8 @@ export async function scheduleProposeScript(ctx: ToolContext, args: Record<strin
   if (stale) {
     return errorResult(JSON.stringify({ outcome: "stale", action: SCHEDULE_PROPOSE_SCRIPT_TOOL, reason: stale, note: "Nothing was created. Propose it again only if it is still what the user wants." }, null, 1));
   }
-  const res = await ctx.callRoute<Schedule>("POST", "/api/schedules", proposalRouteBody(proposal));
+  // Named as its creator, so this Assistant chat's footer chip lists the schedule.
+  const res = await ctx.callRoute<Schedule>("POST", "/api/schedules", { ...proposalRouteBody(proposal), created_by_session_id: ctx.sessionId });
   if (!res.ok || !res.data) return errorResult(`Not created: ${res.error ?? `the route answered ${res.status}`}`);
   // The route answers a view (inputs parsed, no secrets); the stored row is what runs, so that is compared.
   const stored = getSchedule(res.data.id);
