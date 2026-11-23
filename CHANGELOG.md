@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.30] - 2026-11-23
+
+### Fixed
+
+- **Manager chats are no longer cut off after 20 reports an hour**: every report reaches the PPM Assistant, and one repeating a card that is still open is folded into that card instead of filed again.
+
 ## [0.26.29] - 2026-11-23
 
 ### Fixed
