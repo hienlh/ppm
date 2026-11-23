@@ -765,8 +765,7 @@ async function chipOverflow(phone) {
 async function createdByChat(phone) {
   const tag = phone ? "phone-390" : "desktop-1440";
   const prefix = process.env.PPM_FOOTER_SHOT_PREFIX ?? "after";
-  console.log(`
-== schedules created by the chat, ${tag}`);
+  console.log(`\n== schedules created by the chat, ${tag}`);
   const { context, page, tabId } = await setupChat(phone, 1440);
   try {
     const res = await fetch(`${harness.api}/api/schedules`, {
@@ -799,8 +798,7 @@ async function createdByChat(phone) {
     await page.screenshot({ path: join(SHOTS, `${prefix}-${tag}-created-script-schedules.png`) });
     await fetch(`${harness.api}/api/schedules/${created.id}`, { method: "DELETE" }).catch(() => {});
   } catch (e) {
-    check(false, `${tag}: scenario threw`, e.message.split("
-")[0]);
+    check(false, `${tag}: scenario threw`, e.message.split("\n")[0]);
     await page.screenshot({ path: join(SHOTS, `${prefix}-${tag}-created-script-failure.png`) }).catch(() => {});
   } finally {
     await fetch(`${harness.api}/__instant-test/release`, { method: "POST" }).catch(() => {});
