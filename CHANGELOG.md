@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.26.29] - 2026-11-23
+
+### Fixed
+
+- **A chat Claude Code no longer has a transcript for carries on by itself**: PPM starts a new session with the chat's history and shows one quiet note with **What was sent**; switched off (Settings → AI Provider), a note offers **Start fresh here** or **New chat** instead of an error.
+- **No more doubled error lines** when a Claude turn fails, and a first message that failed at once is retried as a new turn rather than a resume.
+- **Transcripts are found under `CLAUDE_CONFIG_DIR`** when it is set, and a signed-out Claude CLI gets its own message pointing to `claude auth login`.
+
 ## [0.26.28] - 2026-11-23
 
 ### Changed
