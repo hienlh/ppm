@@ -1988,11 +1988,15 @@ export function useChat(
       // this was in flight — prepending now would splice two different lists.
       if (sessionIdRef.current !== sessionId || historyStartRef.current !== before) return;
       const older = slimHistoryMessages(Array.isArray(data?.messages) ? data.messages : []);
-      setMessages((prev) => {
-        const have = new Set(prev.map((m) => m.id));
-        return [...older.filter((m) => !have.has(m.id)), ...prev];
+      // A transition, so rendering the page (Markdown, diffs: 50-200 ms on a big chat) yields to
+      // the reader's scrolling instead of holding the main thread in one task.
+      startTransition(() => {
+        setMessages((prev) => {
+          const have = new Set(prev.map((m) => m.id));
+          return [...older.filter((m) => !have.has(m.id)), ...prev];
+        });
+        applyHistoryWindow(data);
       });
-      applyHistoryWindow(data);
     } finally {
       loadingOlderRef.current = false;
       setLoadingOlderHistory(false);
@@ -2019,10 +2023,13 @@ export function useChat(
       `&before=${encodeURIComponent(rawUuid)}`;
     const loaded = await api.get<ChatMessage[]>(url);
     const prefixed = prefixPreCompactIds(loaded, jsonlPath);
-    setExpansions((prev) => {
-      const next = new Map(prev);
-      next.set(compactMessageId, prefixed);
-      return next;
+    // A transition, like an older page: an expansion can be hundreds of messages at once.
+    startTransition(() => {
+      setExpansions((prev) => {
+        const next = new Map(prev);
+        next.set(compactMessageId, prefixed);
+        return next;
+      });
     });
     return prefixed.length;
   }, [projectName]);

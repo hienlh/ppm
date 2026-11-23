@@ -1,6 +1,6 @@
 import type { ReplyReference } from "../../../shared/chat-reply";
 import { createReplyReference, resolveReplyMessage } from "./message-reply-reference";
-import { useEffect, useRef, useState, useMemo, useCallback, useLayoutEffect } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, useLayoutEffect, startTransition } from "react";
 import { userMessageOrdinals } from "@/lib/message-ordinals";
 import { useStickToBottom } from "use-stick-to-bottom";
 import type { ChatMessage } from "../../../types/chat";
@@ -639,7 +639,8 @@ export function MessageList({
     } catch (e) {
       setCompactLoadError(e instanceof Error ? e.message : "Could not load previous conversation");
     } finally {
-      setAutoLoadingCompact(false);
+      // The page itself renders as a transition (`use-chat.ts`); the skeleton leaves with it.
+      startTransition(() => setAutoLoadingCompact(false));
     }
   }, [canLoadOlderPage, onLoadOlderHistory, topCompactId, topCompactPath, onExpandCompact, autoLoadingCompact, scrollEl]);
 
@@ -664,9 +665,11 @@ export function MessageList({
         parked = el.clientHeight === 0;
         if (!parked && entries.some((e) => e.isIntersecting)) loadMore();
       },
-      // Start the fetch while the top is still a screenful away, so the next
-      // segment is usually there before the user reaches the end of this one.
-      { root: el, rootMargin: "400px 0px 0px 0px" },
+      // Start the fetch while the top is still three screens away, so on a fast scroll the next
+      // segment is there before the reader reaches the top (at 400 px a fast scroll sat at the
+      // top waiting for every page). A page that lands short of filling that gap asks again:
+      // `loadMore` changes when loading ends, which builds a new observer, which reports again.
+      { root: el, rootMargin: "300% 0px 0px 0px" },
     );
     io.observe(sentinel);
     const ro = new ResizeObserver(() => {
