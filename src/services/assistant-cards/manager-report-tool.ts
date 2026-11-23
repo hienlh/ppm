@@ -26,6 +26,14 @@ import type { NewCard } from "./assistant-cards.service.ts";
  * There is no cap on how many reports a manager files: a decision refused for being one too many
  * was simply lost. What stops a manager stuck in a loop is that a report identical to one still open
  * (kind, title, body and everything attached) is not filed again: the call gets that card back.
+ *
+ * A chat the manager opened has its waiting approval or question mirrored to the user already
+ * (`ordinary-chat-cards.ts`), with buttons they can press. A needs_decision or urgent report about
+ * that same card would be a second card asking the same thing, one they cannot answer directly, so
+ * it is folded into the mirror: the call gets the mirror's id and nothing is filed. A report says
+ * which chat it is about with `chat`; one that leaves it out but names exactly one chat that has
+ * such a card waiting is taken to be about it, unless it carries a `draft` (a message the manager
+ * means to send is its own decision).
  */
 
 export const REPORT_TITLE_MAX = 120;
@@ -36,6 +44,8 @@ export const DIGEST_ITEMS_MAX = 12;
 export const DIGEST_ITEM_MAX = 200;
 /** Pictures one card carries at most (one Telegram album holds ten). */
 export const REPORT_IMAGES_MAX = 6;
+/** The longest `chat` a report names: a session id, with room to spare. */
+export const REPORT_CHAT_MAX = 100;
 const HOUR_MS = 60 * 60_000;
 const log = createLogger("assistant-cards");
 
@@ -63,6 +73,11 @@ export interface ReportEnv {
   /** An open card of this manager that is the same report as `card` ({@link sameReport}), if any. */
   openIdentical(sessionId: string, card: NewCard): AssistantCard | null;
   /**
+   * The open approval or question card mirroring what `chatSessionId`, a chat of this project other
+   * than the manager, waits on; null when it waits on none. Absent where no mirrors exist.
+   */
+  waitingChatCard?(projectPath: string, chatSessionId: string): AssistantCard | null;
+  /**
    * A design screenshot of this project, by id; null when it is not one (unknown, too old, or of
    * another project). Absent where no screenshots exist.
    */
@@ -85,6 +100,15 @@ export const DIGEST_NOT_ASKED = "No morning digest was asked of this chat; use d
 /** Told to a manager whose report is word for word one still open on the user's card. */
 export const SAME_REPORT_NOTE = "The same report is already on the user's card, still open; it was not filed again.";
 export const DIGEST_CLOSED = "The morning digest was already put together. Report this as done or needs_decision instead.";
+/** Told to a manager whose report was about a card the user already has from the chat itself. */
+export const CHAT_CARD_NOTE = "That chat's own card is already in front of the user (Waiting on you in the PPM Assistant, "
+  + "and Telegram when it is connected), where they answer it directly, so this report was not filed. The chat goes on "
+  + "by itself once they answer; check on it afterwards rather than reporting the card again.";
+/** Added when the chat was only named in the text: how to file a report that is about something else. */
+export const CHAT_CARD_INFERRED_NOTE = "It was taken to be about that card because it names that chat's session id. If it is "
+  + "about something else, report it again naming the chat by its title instead of its id.";
+
+const SESSION_ID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -121,7 +145,7 @@ export function draftSha256(to: string, text: string): string {
 }
 
 function fieldError(args: Record<string, unknown>): string | null {
-  const allowed = new Set(["kind", "title", "body", "draft", "items", "images", "options"]);
+  const allowed = new Set(["kind", "title", "body", "draft", "items", "images", "options", "chat"]);
   const extra = Object.keys(args).find((k) => !allowed.has(k));
   if (extra) return `Unknown field \`${extra.slice(0, 40)}\`.`;
   if (!REPORT_KINDS.includes(args.kind as ReportKind)) return `\`kind\` must be one of ${REPORT_KINDS.join(", ")}.`;
@@ -146,6 +170,12 @@ function fieldError(args: Record<string, unknown>): string | null {
   if (args.options !== undefined) {
     const invalid = optionsError(args);
     if (invalid) return invalid;
+  }
+  if (args.chat !== undefined) {
+    if (args.kind !== "needs_decision" && args.kind !== "urgent") return "`chat` goes only with needs_decision or urgent.";
+    if (typeof args.chat !== "string" || !args.chat.trim() || args.chat.length > REPORT_CHAT_MAX) {
+      return `\`chat\` is a chat's session id, at most ${REPORT_CHAT_MAX} characters.`;
+    }
   }
   if (args.items !== undefined) {
     if (args.kind !== "digest") return "`items` go only with digest.";
@@ -195,6 +225,30 @@ function cleanOptions(raw: unknown[]): CardOption[] {
   });
 }
 
+/**
+ * The mirrored card of a chat this report is about, when the user already has it (see the header):
+ * the chat `chat` names, else the one chat with a waiting card the title and body name, if the
+ * report carries no draft. Never the manager's own chat: its cards are its own to explain.
+ */
+function chatCardFor(env: ReportEnv, caller: ReportCaller, args: Record<string, unknown>): { card: AssistantCard; inferred: boolean } | null {
+  const find = env.waitingChatCard;
+  if (!find || (args.kind !== "needs_decision" && args.kind !== "urgent")) return null;
+  const lookup = (id: string): AssistantCard | null => (id === caller.sessionId ? null : find(caller.projectPath, id));
+  if (typeof args.chat === "string") {
+    const card = lookup(args.chat.trim());
+    return card ? { card, inferred: false } : null;
+  }
+  if (args.draft !== undefined) return null;
+  const text = `${typeof args.title === "string" ? args.title : ""}\n${typeof args.body === "string" ? args.body : ""}`;
+  const named = new Set((text.match(SESSION_ID_RE) ?? []).map((id) => id.toLowerCase()));
+  const found = new Map<string, AssistantCard>();
+  for (const id of named) {
+    const card = lookup(id);
+    if (card) found.set(card.sessionId ?? card.id, card);
+  }
+  return found.size === 1 ? { card: [...found.values()][0]!, inferred: true } : null;
+}
+
 export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): ReportResult {
   const args = isObj(raw) ? raw : {};
   const invalid = fieldError(args);
@@ -205,6 +259,12 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     const items = Array.isArray(args.items) ? (args.items as string[]).map((i) => cleanCardBody(i, DIGEST_ITEM_MAX)).filter(Boolean) : [];
     const taken = env.digestAnswer(caller.sessionId, items);
     return taken.ok ? { ok: true, kind: "digest", note: DIGEST_TAKEN } : refuse(caller, "digest", "digest not taken", taken.message);
+  }
+  const about = chatCardFor(env, caller, args);
+  if (about) {
+    const { card: chatCard, inferred } = about;
+    log.info(`report ${requested} from ${caller.projectName} (session ${caller.sessionId}) is about chat ${chatCard.sessionId}'s open card ${chatCard.id}${inferred ? " (named in its text)" : ""}: not filed`);
+    return { ok: true, cardId: chatCard.id, kind: chatCard.kind, note: inferred ? `${CHAT_CARD_NOTE} ${CHAT_CARD_INFERRED_NOTE}` : CHAT_CARD_NOTE };
   }
 
   const title = cleanCardTitle(args.title);
@@ -298,7 +358,9 @@ export function reportToolDefinition() {
       + "see. The card says it was written by this manager AI. A report never grants anything: only the user's own answer "
       + "does. There is no limit on how many reports you file, so never hold back a decision; a report identical to one "
         + "still open on the user's card (same kind, title, body, draft, options and images) is not filed again and "
-        + "returns that card's id. Returns the card id.",
+        + "returns that card's id. A chat you opened that waits on an approval or a question already has that card in "
+        + "front of the user, with buttons: do not report it. A needs_decision or urgent report about such a card (name "
+        + "the chat in `chat`) is not filed and returns that card's id. Returns the card id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -341,6 +403,12 @@ export function reportToolDefinition() {
           },
         },
         items: { type: "array", items: { type: "string" }, maxItems: DIGEST_ITEMS_MAX, description: "digest only: one line each." },
+        chat: {
+          type: "string",
+          description: "needs_decision and urgent only: the session id of the chat this decision is about, when it is one "
+            + "of this project's chats. If that chat is waiting on an approval or a question, the user already has its "
+            + "card and this report is not filed.",
+        },
         images: {
           type: "array", items: { type: "string" }, maxItems: REPORT_IMAGES_MAX,
           description: "Screenshot ids from design_screenshot (this project's designs): shown on the card and sent to the "

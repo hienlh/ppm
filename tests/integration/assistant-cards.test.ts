@@ -229,7 +229,7 @@ describe("what PPM sees in the manager chat", () => {
     expect(again.status).toBe(409);
   });
 
-  it("resolves the card when the approval is answered in the chat, and cards nothing for a child chat", async () => {
+  it("resolves the card when the approval is answered in the chat, and cards a child chat's approval too", async () => {
     await send(child, "ASK-BASH child");
     await until(() => !!ctl().liveState(child)?.card, "the child's card");
     await send(manager, "ASK-BASH again");
@@ -237,9 +237,13 @@ describe("what PPM sees in the manager chat", () => {
     const requestId = ctl().liveState(manager)!.card!.requestId;
     expect(ctl().answerApproval(manager, requestId, { approved: false }, "telegram")).toBe("answered");
     const list = await cards();
-    expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ status: "resolved", answer: { note: "Answered on Telegram" } });
-    ctl().answerApproval(child, ctl().liveState(child)!.card!.requestId, { approved: false }, "telegram");
+    expect(list).toHaveLength(2);
+    expect(list.find((c) => c.sessionId === manager)).toMatchObject({ status: "resolved", answer: { note: "Answered on Telegram" } });
+    // A chat the manager opened is mirrored like any other, so its card no longer waits unseen.
+    const childRequest = ctl().liveState(child)!.card!.requestId;
+    expect(list.find((c) => c.sessionId === child)).toMatchObject({ kind: "approval", status: "open", payload: { requestId: childRequest } });
+    ctl().answerApproval(child, childRequest, { approved: false }, "telegram");
+    expect((await cards()).find((c) => c.sessionId === child)).toMatchObject({ status: "resolved", answer: { note: "Answered on Telegram" } });
     await idle(manager);
     await idle(child);
   });

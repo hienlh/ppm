@@ -1322,12 +1322,17 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   before the card as one photo or one album (`assistant-telegram-card-photos.ts`), each captioned
   with its number (no link: the photo is the picture), under the same quiet hours and silence as the card, and
   not at all for a project whose cards reach the phone by title only. Rules events become `rules_note` / `rules_change` cards, and the Assistant pausing its
-  own messages a `budget` card (`assistant-event-cards.ts`). A child chat's approvals are not
-  carded: the manager relays them. Every other chat of a project, watched or not, gets the same
-  `approval` / `question` mirror (`ordinary-chat-cards.ts` says which: not the Assistant's own, not
-  a manager or a chat a manager opened, not an extension's turn), carrying `payload.chat` (its name
-  and provider) and `payload.expiresAt` for a card that gives up by itself (a session tool's, after
-  ten minutes): such a card used to wait only in its chat and run out while the user was away. Its
+  own messages a `budget` card (`assistant-event-cards.ts`). Every other chat of a project,
+  watched or not, gets the same `approval` / `question` mirror (`ordinary-chat-cards.ts` says
+  which: not the Assistant's own, not a manager, not an extension's turn, not a Design chat),
+  carrying `payload.chat` (its name and provider) and `payload.expiresAt` for a card that gives up
+  by itself (a session tool's, after an hour): such a card used to wait only in its chat and run
+  out while the user was away. A chat a manager opened, at any depth, is mirrored like any other:
+  it used to be left to the manager to relay, which it learned of only when it next looked, often
+  after the card ran out. A manager's `needs_decision` or `urgent` report about such a card (named
+  by `chat`, or by naming exactly one such chat's session id with no `draft`) is folded into the
+  mirror: nothing is filed and the call returns the mirror's id, its note saying how to file a report
+  that only named the chat but is about something else (`manager-report-tool.ts`). A mirror's
   Telegram copy says when it expires; when it does, `approval_resolved` carries reason `expired`,
   the copy says so and one line under it tells the phone. A session tool's card is answered from
   Telegram or from the mirror (origin `telegram` / `assistant_card`, once, never "for the

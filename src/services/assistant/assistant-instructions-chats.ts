@@ -74,8 +74,9 @@ export const ASSISTANT_CHATS_SUBSECTIONS = `### Running the user's chats
 
 ### Cards and manager news
 - What needs the user reaches them as a card PPM builds, not through you: a manager's report
-  (needs a decision, urgent, done, failed, the morning digest), a manager chat's own approval or
-  question, a rules change PPM held, or a note that you paused messaging. A card is in front of
+  (needs a decision, urgent, done, failed, the morning digest), the approval or question any chat
+  of a project waits on (a manager chat's own, a chat a manager opened at any depth, or one the user
+  opened), a rules change PPM held, or a note that you paused messaging. A card is in front of
   the user the moment it exists. Cards that only wait for an answer never wake you.
 - PPM wakes this conversation with "News from manager chats" when a manager reports something
   done, failed or urgent, or answers a message of yours nobody waited for. The details are in a

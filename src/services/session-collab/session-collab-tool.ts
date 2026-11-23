@@ -18,8 +18,12 @@ export {
 /** Environment variable the Codex app-server reads the bearer token from. */
 export const CODEX_SESSION_COLLAB_MCP_TOKEN_ENV = "PPM_SESSIONS_MCP_TOKEN";
 
-/** How long the user has to answer a create, pair-limit or escalation card. */
-export const COLLAB_APPROVAL_WAIT_MS = 10 * 60_000;
+/**
+ * How long the user has to answer a create, pair-limit or escalation card. An hour, because the
+ * user often answers from a phone or Telegram well after the card appears; the chat is stopped
+ * that long at most, holding its turn and its provider process.
+ */
+export const COLLAB_APPROVAL_WAIT_MS = 60 * 60_000;
 
 /**
  * Largest task or message one call may carry, in UTF-8 bytes. The endpoint takes at most 64 KB of

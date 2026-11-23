@@ -140,6 +140,13 @@ export async function setupManagerLoop(opts: { port: number }): Promise<ManagerL
         await say({ project: b.project, sessionId: b.sessionId, text: b.text, ...(typeof b.permissionMode === "string" ? { permissionMode: b.permissionMode } : {}) });
         return json({ ok: true });
       }
+      if (route === "spawn-link" && req.method === "POST") {
+        // Records that one chat opened another, as `create_session` does, without an AI asking.
+        const b = await req.json() as { childId?: unknown; parentId?: unknown };
+        if (typeof b.childId !== "string" || typeof b.parentId !== "string") return json({ error: "childId and parentId are required" }, 400);
+        const { recordSpawn } = await import("../../../src/services/session-collab/session-links.service");
+        return json({ depth: recordSpawn(b.childId, b.parentId) });
+      }
       if (route === "close-card" && req.method === "POST") {
         // A card the server closes on its own (`resolved`, as the manager side does for its
         // requests), through the cards service's real `transition`, so every screen hears of it.

@@ -42,7 +42,6 @@ function harness(opts: { answersCardReply?: (sessionId: string) => boolean; ordi
         isAssistant: () => false,
         isManager: (id) => id === MGR,
         isDesign: () => false,
-        parentOf: (id) => (id === CHILD ? MGR : null),
         turnOrigin: () => "ws",
         title: (id) => (id === KHO ? "Kho task" : null),
       }),
@@ -65,7 +64,7 @@ afterEach(() => { for (const s of stops) s(); stops = []; });
 const bash = (requestId: string) => ({ requestId, tool: "Bash", input: { command: "npm publish" }, isQuestion: false });
 
 describe("approvals in the manager chat", () => {
-  it("mirrors the manager's own approval, never a child chat's, and resolves it when answered in the chat", () => {
+  it("mirrors the manager's own approval and resolves it when answered in the chat; another chat needs chatFor", () => {
     const h = harness();
     h.lifecycle.emit("approval_shown", { sessionId: CHILD, card: bash("r-child"), projectName: "api", providerId: "claude" });
     expect(listCardRows({ limit: 10 })).toHaveLength(0);
@@ -94,10 +93,19 @@ describe("cards of chats that are not a manager", () => {
     input: { kind: "create", title: "Design kho", providerId: "claude", model: null, task: "Make the design", depth: 1, design: "ppm-tasks-kho-task" },
   });
 
-  it("mirrors a chat the user opened, named, with its deadline; a manager's child stays the manager's", () => {
+  it("mirrors a chat a manager opened, answerable from the mirror like any other chat's", () => {
     const h = harness({ ordinaryChats: true });
     h.lifecycle.emit("approval_shown", { sessionId: CHILD, card: bash("r-child"), projectName: "api", providerId: "claude" });
-    expect(listCardRows({ limit: 10 })).toHaveLength(0);
+    const [row] = listCardRows({ limit: 10 });
+    expect(row).toMatchObject({ kind: "approval", sessionId: CHILD, status: "open" });
+    expect(row!.payload).toMatchObject({ requestId: "r-child", chat: { title: "Untitled chat", providerId: "claude" } });
+    expect(row!.payload.deciding?.text).toBe("npm publish");
+    h.lifecycle.emit("approval_resolved", { sessionId: CHILD, requestId: "r-child", approved: true, reason: "answered", by: "assistant_card" });
+    expect(h.cards.get(row!.id)!.status).toBe("open");
+  });
+
+  it("mirrors a chat the user opened, named, with its deadline", () => {
+    const h = harness({ ordinaryChats: true });
     h.lifecycle.emit("approval_shown", { sessionId: KHO, card: collab("r-kho", 1_900_000_000_000), projectName: "api", providerId: "codex" });
     const [row] = listCardRows({ limit: 10 });
     expect(row).toMatchObject({ kind: "approval", sessionId: KHO, status: "open" });

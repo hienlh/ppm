@@ -15,8 +15,9 @@ import type { ChatCardRef } from "./ordinary-chat-cards.ts";
 
 /**
  * What PPM itself sees in a manager chat, turned into cards and news — and the cards every other
- * chat of a project waits on (`ordinary-chat-cards.ts` says which), so none waits unseen. A
- * manager's child chats are left out: their approvals and questions are the manager's to relay.
+ * chat of a project waits on (`ordinary-chat-cards.ts` says which), so none waits unseen. The
+ * chats a manager opened are among them: the user answers their cards on the mirror, and a
+ * manager's report about one is folded into it (`report_to_assistant` with `chat`).
  *
  * - An approval or question a chat shows becomes a card mirroring it; the request ending anywhere
  *   (answered in the chat, on Telegram, by the turn ending, by running out of time) resolves the

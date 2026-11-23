@@ -8,7 +8,8 @@ import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { currentQuietWindowStart } from "../assistant-wake/wake-quiet-hours.ts";
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import { assistantCards } from "./assistant-cards.service.ts";
-import { countSessionCardsSince, findOpenSessionCardsWithText, findOpenUrgentTitled } from "./assistant-cards-db.ts";
+import { countSessionCardsSince, findOpenChatMirrorCard, findOpenSessionCardsWithText, findOpenUrgentTitled } from "./assistant-cards-db.ts";
+import { resolveMigratedSession } from "../db.service.ts";
 import { DIGEST_NOT_ASKED, fileReport, sameReport, type ReportEnv } from "./manager-report-tool.ts";
 import { createLogger } from "../logger.ts";
 import { readShotSync } from "../design/shots/design-shots.service.ts";
@@ -41,6 +42,13 @@ export const reportEnv: ReportEnv = {
       if (sameReport(open, card)) return open;
     }
     return null;
+  },
+  // A chat named by the id it had when its card was shown, or by the one it goes by now (Codex
+  // renames a new chat during its first turn).
+  waitingChatCard: (projectPath, chatSessionId) => {
+    const ids = [...new Set([chatSessionId, resolveMigratedSession(chatSessionId)])];
+    const row = findOpenChatMirrorCard(ids, projectKey(projectPath));
+    return row ? assistantCards.toCard(row) : null;
   },
   shotOf: (id, projectPath) => {
     const shot = readShotSync(id);
