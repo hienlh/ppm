@@ -1,10 +1,10 @@
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
+import { claudeConfigDir } from "./agent-transcript/claude-projects-root.ts";
 
-/** Root of Claude session JSONLs. Overridable via CLAUDE_PROJECTS_DIR for tests. */
+/** Root of Claude session JSONLs (`CLAUDE_CONFIG_DIR`-aware). Overridable via CLAUDE_PROJECTS_DIR for tests. */
 function claudeProjectsDir(): string {
-  return process.env.CLAUDE_PROJECTS_DIR || resolve(homedir(), ".claude", "projects");
+  return process.env.CLAUDE_PROJECTS_DIR || join(claudeConfigDir(), "projects");
 }
 
 /**

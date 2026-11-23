@@ -1,12 +1,12 @@
-import { homedir } from "node:os";
 import { resolve, join } from "node:path";
+import { claudeConfigDir } from "../agent-transcript/claude-projects-root.ts";
 import { readdir, mkdir, copyFile, rm, stat } from "node:fs/promises";
 import { readFileSync, existsSync } from "node:fs";
 import { getPpmDir } from "../ppm-dir.ts";
 
-/** Root of Claude session JSONLs. Overridable via CLAUDE_PROJECTS_DIR for tests. */
+/** Root of Claude session JSONLs (`CLAUDE_CONFIG_DIR`-aware). Overridable via CLAUDE_PROJECTS_DIR for tests. */
 function claudeProjectsDir(): string {
-  return process.env.CLAUDE_PROJECTS_DIR || resolve(homedir(), ".claude", "projects");
+  return process.env.CLAUDE_PROJECTS_DIR || join(claudeConfigDir(), "projects");
 }
 
 /** Reduce a user-supplied group name to a single safe path segment so it can

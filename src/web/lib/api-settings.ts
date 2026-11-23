@@ -237,6 +237,8 @@ export interface AISettings {
   ppm_tools?: PpmToolSwitches;
   /** Claude chats lose CronCreate/CronList/CronDelete while PPM's schedule tool is on; unset is true. */
   hide_builtin_cron?: boolean;
+  /** Recover a chat Claude Code lost with the history PPM kept; unset is off (an introduced feature). */
+  resume_recovery?: boolean;
   /** Always complete in a server answer; a PUT may send any part of it. */
   session_collab?: Partial<SessionCollabSettings>;
   leftover_processes_idle_minutes?: number;

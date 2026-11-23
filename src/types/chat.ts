@@ -492,7 +492,9 @@ export type ResultSubtype =
   | "error_max_turns"
   | "error_max_budget_usd"
   | "error_during_execution"
-  | "error_auth";
+  | "error_auth"
+  /** Claude Code no longer had the conversation and PPM did not carry it over (`claude-session-missing.ts`). */
+  | "error_session_missing";
 
 export type ChatEvent =
   | { type: "text"; content: string; parentToolUseId?: string; arrivalSeq?: number }
@@ -545,6 +547,12 @@ export type ChatEvent =
   | { type: "team_updated"; teamName: string; team: unknown }
   | { type: "team_inbox"; teamName: string; agent: string; messages: unknown[] }
   | { type: "session_migrated"; oldSessionId: string; newSessionId: string }
+  /**
+   * Claude Code no longer had this conversation, so PPM started a new Claude session under the
+   * same id and sent along the history it kept (`resume-handoff.ts`): `turns` earlier turns,
+   * `sent` the block itself, shown behind "What was sent".
+   */
+  | { type: "session_recovered"; turns: number; omittedTurns: number; sent: string }
   /**
    * A message the browser sent has opened a turn (or, for a steered Codex message, joined the
    * running one). `turnId` is the id the turn index gives that turn; `clientMessageId` is the

@@ -191,6 +191,13 @@ export interface AIConfig {
    */
   hide_builtin_cron?: boolean;
   /**
+   * When Claude Code no longer has a chat's transcript ("No conversation found"), start a new
+   * Claude session under the same id carrying the history PPM kept in the session trace. Unset is
+   * off: it is an introduced feature, asked once (`resume-recovery-2026-11` in FEATURE_INTROS).
+   * Off, the turn stops with a bar offering a fresh start (`claude-session-missing.ts`).
+   */
+  resume_recovery?: boolean;
+  /**
    * Idle minutes after which PPM stops what a chat left running — servers, emulators and daemons
    * its commands started. Unset or 0 never stops them, and the server log names what 30 idle
    * minutes would have stopped. Linux with systemd only

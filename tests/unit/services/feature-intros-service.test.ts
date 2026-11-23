@@ -137,14 +137,14 @@ describe("scheduled prompts in a chat", () => {
 
   it("is a question of its own: turning the session tools on leaves the schedule tools off and still asked", () => {
     configService.set("feature_intros", {});
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "resume-recovery-2026-11"]);
     answerFeatureIntro(INTRO.id, "on");
     for (const tool of THREE) expect(onTools()).not.toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "resume-recovery-2026-11"]);
 
     answerFeatureIntro(SCHEDULES.id, "on");
     for (const tool of THREE) expect(onTools()).toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "resume-recovery-2026-11"]);
   });
 
   it("asks apart about script proposals: prompts turned on never agreed to code that runs on this machine", () => {
@@ -260,5 +260,38 @@ describe("Voice self-learning", () => {
     configService.set("voice_message", { enabled: true, self_learning: false, review_before_send: true, words: [], projects: {} });
     expect(settleFeaturesDecidedInSettings()).toBe(true);
     expect(readFeatureIntroStates()[LEARN.id]).toMatchObject({ answer: "off", via: "settings" });
+  });
+});
+
+describe("Recover chats Claude Code lost", () => {
+  const RECOVER = FEATURE_INTROS.find((i) => i.id === "resume-recovery-2026-11")!;
+  const ai = () => configService.get("ai") as { resume_recovery?: boolean };
+  const clear = () => { const { resume_recovery: _drop, ...rest } = configService.get("ai") as any; configService.set("ai", rest); };
+  beforeEach(() => { configService.set("feature_intros", {}); clear(); });
+  afterEach(clear);
+
+  it("is asked while ai.resume_recovery is unset, which counts as off", () => {
+    expect(RECOVER.setting).toBe("resume_recovery");
+    expect(RECOVER.tools).toEqual([]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toContain(RECOVER.id);
+    expect(ai().resume_recovery).toBeUndefined();
+  });
+
+  it("Turn on and Turn off write ai.resume_recovery and nothing else in ai", () => {
+    const before = { ...configService.get("ai") };
+    expect(answerFeatureIntro(RECOVER.id, "on")).toMatchObject({ ok: true, changed: true });
+    expect(ai().resume_recovery).toBe(true);
+    expect({ ...configService.get("ai"), resume_recovery: undefined }).toEqual({ ...before, resume_recovery: undefined });
+    configService.set("feature_intros", {});
+    clear();
+    expect(answerFeatureIntro(RECOVER.id, "off")).toMatchObject({ ok: true, changed: true });
+    expect(ai().resume_recovery).toBe(false);
+  });
+
+  it("a choice already made in Settings → AI Provider settles the question", () => {
+    configService.set("ai", { ...configService.get("ai"), resume_recovery: false });
+    expect(settleFeaturesDecidedInSettings()).toBe(true);
+    expect(readFeatureIntroStates()[RECOVER.id]).toMatchObject({ answer: "off", via: "settings" });
+    expect(featureIntrosView().pending.map((i) => i.id)).not.toContain(RECOVER.id);
   });
 });

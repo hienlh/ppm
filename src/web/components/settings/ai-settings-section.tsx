@@ -243,6 +243,26 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
         />
       </div>
 
+      <div className="flex items-start justify-between gap-3 rounded-md border border-border p-3">
+        <div className={fieldGap}>
+          <Label htmlFor="ai-resume-recovery" className={compact ? labelSize : undefined}>
+            Recover lost Claude chats
+          </Label>
+          <p id="ai-resume-recovery-description" className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+            When Claude Code no longer has a chat (its folder was deleted, the chat is over 30 days old, or it
+            moved to another machine), start a new Claude session in that chat with the messages and answers PPM
+            kept. Off, the chat says the history is gone and the next message starts fresh.
+          </p>
+        </div>
+        <Switch
+          id="ai-resume-recovery"
+          aria-describedby="ai-resume-recovery-description"
+          checked={settings.resume_recovery === true}
+          disabled={saving}
+          onCheckedChange={(checked) => handleSettingsSave({ resume_recovery: checked })}
+        />
+      </div>
+
       <div className={fieldGap}>
         <Label htmlFor="ai-leftover-idle" className={compact ? labelSize : undefined}>
           Stop leftover processes after (idle minutes, 0 = log only)

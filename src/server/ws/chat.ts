@@ -289,6 +289,8 @@ const BUFFERABLE_TYPES = new Set([
   // device replaying the turn later sees an answered card rather than a live question.
   "approval_request", "approval_resolved", "error", "done", "account_info", "account_retry",
   "team_detected",
+  // The one line saying the chat now runs in a new Claude session: a reconnecting tab must see it too.
+  "session_recovered",
 ]);
 
 export type ChatWsSocket = {
@@ -1846,7 +1848,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       // First content event — stop heartbeat, transition phase
       // status_update is PPM's pre-flight account selection — not actual SDK content
       // `turn_started` arrives before the model has said anything: the turn has an id, not content.
-      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update" || evType === "turn_started" || evType === "session_migrated";
+      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update" || evType === "turn_started" || evType === "session_migrated" || evType === "session_recovered";
       if (!firstEventReceived && !isMetadataEvent) {
         firstEventReceived = true;
         const requested = entry.turnRequestedAt;

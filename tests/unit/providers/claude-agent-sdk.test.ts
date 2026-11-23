@@ -12,6 +12,7 @@ import { accountSelector } from "../../../src/services/account-selector.service.
 import { setSessionAccount, getSessionTitle, setSessionTitle, getSessionProjectPath } from "../../../src/services/db.service.ts";
 import { deleteSessionBaselines, readBaseline } from "../../../src/services/session-file-baselines/session-file-baselines.service.ts";
 import { readHistory } from "../../../src/services/session-file-baselines/session-file-history.ts";
+import { appendBatch } from "../../../src/services/session-trace/session-trace-store.ts";
 import { preToolUseDecision } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
@@ -2022,5 +2023,202 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(answer.text).toBe("fine");
       expect(answer.structured).toBeUndefined();
     });
+  });
+});
+
+// Claude Code no longer has the transcript a chat resumes: CLI 2.1.322 answers `--resume <id>`
+// with this one result and exits 1. Verified against the real CLI in an empty config dir.
+describe("ClaudeAgentSdkProvider — a conversation Claude Code no longer has", () => {
+  let provider: InstanceType<typeof ClaudeAgentSdkProvider>;
+  const noConversation = (id: string) => ({
+    type: "result", subtype: "error_during_execution", is_error: true, num_turns: 0,
+    errors: [`No conversation found with session ID: ${id}`],
+  });
+  const answered = (text: string): any[] => [
+    { type: "assistant", message: { id: "m1", content: [{ type: "text", text }] } },
+    { type: "result", subtype: "success", num_turns: 1, total_cost_usd: 0 },
+  ];
+  const ai = () => (configService as any).config.ai as { resume_recovery?: boolean };
+  /** One answered turn in the session's trace: what PPM kept of the chat. */
+  function seedTrace(sessionId: string) {
+    const base = { traceId: sessionId, turnId: "t1", origin: "ws" as const, providerId: "claude", refId: null };
+    appendBatch([
+      { ...base, ts: 1, source: "server", type: "user_message", payloadJson: JSON.stringify({ type: "user_message", text: "Plan the migration" }) },
+      { ...base, ts: 2, source: "agent", type: "text", payloadJson: JSON.stringify({ type: "text", content: "Step one is the schema." }) },
+    ]);
+  }
+  /** The first message each CLI was given, read as the query starts: the channel closes with the turn. */
+  let prompts: Array<Promise<string>> = [];
+  const replying = (items: any[]) => (args: any) => {
+    prompts.push(args.prompt[Symbol.asyncIterator]().next().then(({ value }: any) => {
+      const content = value.message.content;
+      return typeof content === "string" ? content : content.map((b: any) => b.text ?? "").join("");
+    }));
+    return createMockQueryIterator(items, 0);
+  };
+  const firstPrompt = (n: number): Promise<string> => prompts[n]!;
+  async function drain(sessionId: string, text: string): Promise<ChatEvent[]> {
+    const events: ChatEvent[] = [];
+    for await (const event of provider.sendMessage(sessionId, text)) events.push(event);
+    return events;
+  }
+
+  beforeEach(() => {
+    provider = new ClaudeAgentSdkProvider();
+    mockQueryFn.mockReset();
+    prompts = [];
+  });
+  afterEach(() => { delete ai().resume_recovery; });
+
+  it("with recovery on, starts a new session under the same id carrying the kept history, in one line", async () => {
+    ai().resume_recovery = true;
+    const session = await provider.createSession({});
+    seedTrace(session.id);
+    provider.markAsResumed(session.id);
+    mockQueryFn
+      .mockImplementationOnce(replying([noConversation(session.id)]))
+      .mockImplementationOnce(replying(answered("Picking up at the schema.")));
+
+    const events = await drain(session.id, "Continue from where you left off.");
+
+    expect(mockQueryFn).toHaveBeenCalledTimes(2);
+    expect(mockQueryFn.mock.calls[0]![0].options.resume).toBe(session.id);
+    const second = mockQueryFn.mock.calls[1]![0].options;
+    expect(second.sessionId).toBe(session.id);
+    expect(second.resume).toBeUndefined();
+    const sent = await firstPrompt(1);
+    expect(sent).toContain("User: Plan the migration");
+    expect(sent).toContain("Assistant: Step one is the schema.");
+    expect(sent.trimEnd().endsWith("Continue from where you left off.")).toBe(true);
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    const notice = events.find((e) => e.type === "session_recovered") as any;
+    expect(notice).toMatchObject({ turns: 1, omittedTurns: 0 });
+    expect((events.find((e) => e.type === "done") as any).resultSubtype).toBe("success");
+  });
+
+  it("with recovery off, stops with one clear line and lets the next message start a new session", async () => {
+    const session = await provider.createSession({});
+    seedTrace(session.id);
+    provider.markAsResumed(session.id);
+    mockQueryFn.mockImplementationOnce(() => createMockQueryIterator([noConversation(session.id)], 0));
+
+    const events = await drain(session.id, "Continue from where you left off.");
+
+    // No resume retry: it could only fail the same way.
+    expect(mockQueryFn).toHaveBeenCalledTimes(1);
+    const errors = events.filter((e) => e.type === "error").map((e) => (e as any).message);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toStartWith("Claude Code on this computer no longer has this conversation.");
+    expect(errors[0]).toContain("Settings → AI Provider");
+    expect((events.find((e) => e.type === "done") as any).resultSubtype).toBe("error_session_missing");
+
+    mockQueryFn.mockImplementationOnce(() => createMockQueryIterator(answered("Fresh start."), 0));
+    await drain(session.id, "hello again");
+    const next = mockQueryFn.mock.calls[1]![0].options;
+    expect(next.sessionId).toBe(session.id);
+    expect(next.resume).toBeUndefined();
+  });
+
+  it("says PPM has no copy either when the trace holds nothing, even with recovery on", async () => {
+    ai().resume_recovery = true;
+    const session = await provider.createSession({});
+    provider.markAsResumed(session.id);
+    mockQueryFn.mockImplementationOnce(() => createMockQueryIterator([noConversation(session.id)], 0));
+    const events = await drain(session.id, "Continue from where you left off.");
+    expect(mockQueryFn).toHaveBeenCalledTimes(1);
+    expect(events.filter((e) => e.type === "error").map((e) => (e as any).message)[0]).toContain("PPM has no copy of it either");
+  });
+
+  it("after a restart, a chat with no transcript carries its kept history instead of starting blank", async () => {
+    ai().resume_recovery = true;
+    const id = crypto.randomUUID();
+    seedTrace(id);
+    await provider.resumeSession(id);
+    mockQueryFn.mockImplementationOnce(replying(answered("Back on the schema.")));
+
+    const events = await drain(id, "Where were we?");
+
+    const options = mockQueryFn.mock.calls[0]![0].options;
+    expect(options.sessionId).toBe(id);
+    expect(options.resume).toBeUndefined();
+    expect(await firstPrompt(0)).toContain("User: Plan the migration");
+    expect(events.some((e) => e.type === "session_recovered")).toBe(true);
+  });
+
+  it("after a restart with recovery off, says the history is gone instead of answering as if it remembered", async () => {
+    const id = crypto.randomUUID();
+    seedTrace(id);
+    await provider.resumeSession(id);
+    const events = await drain(id, "Where were we?");
+    expect(mockQueryFn).not.toHaveBeenCalled();
+    expect((events.find((e) => e.type === "done") as any).resultSubtype).toBe("error_session_missing");
+
+    mockQueryFn.mockImplementationOnce(() => createMockQueryIterator(answered("Fresh."), 0));
+    await drain(id, "Start over");
+    expect(mockQueryFn.mock.calls[0]![0].options.sessionId).toBe(id);
+  });
+
+  it("after a restart, a chat PPM kept nothing of starts as it always did", async () => {
+    const id = crypto.randomUUID();
+    await provider.resumeSession(id);
+    mockQueryFn.mockImplementationOnce(() => createMockQueryIterator(answered("Hi."), 0));
+    const events = await drain(id, "hi");
+    expect(mockQueryFn.mock.calls[0]![0].options.sessionId).toBe(id);
+    expect(events.some((e) => e.type === "session_recovered" || e.type === "error")).toBe(false);
+  });
+
+  it("retries a first message that failed at once by starting it again, never by resuming an id the CLI never wrote", async () => {
+    const session = await provider.createSession({});
+    mockQueryFn
+      .mockImplementationOnce(() => createMockQueryIterator([{ type: "result", subtype: "error_during_execution", is_error: true, num_turns: 0, errors: ["spawn failed"] } as any], 0))
+      .mockImplementationOnce(() => createMockQueryIterator(answered("ok"), 0));
+    await drain(session.id, "hi");
+    expect(mockQueryFn).toHaveBeenCalledTimes(2);
+    const retry = mockQueryFn.mock.calls[1]![0].options;
+    expect(retry.sessionId).toBe(session.id);
+    expect(retry.resume).toBeUndefined();
+  });
+
+  it("shows an error result once, not again when the SDK repeats it as the CLI exits", async () => {
+    const session = await provider.createSession({});
+    provider.markAsResumed(session.id);
+    const failed = { type: "result", subtype: "error_during_execution", is_error: true, num_turns: 2, errors: ["The model went away"] };
+    mockQueryFn.mockImplementationOnce(() => {
+      let sent = false;
+      return {
+        close() {},
+        [Symbol.asyncIterator]() { return this; },
+        async next() {
+          if (!sent) { sent = true; return { done: false, value: failed }; }
+          throw new Error("Claude Code returned an error result: The model went away");
+        },
+      };
+    });
+    const events = await drain(session.id, "go");
+    const errors = events.filter((e) => e.type === "error").map((e) => (e as any).message);
+    expect(errors).toEqual(["Agent encountered an error during execution.\nThe model went away"]);
+  });
+
+  it("tells a signed-out Claude CLI apart and names both ways to sign in", async () => {
+    const savedKey = process.env.ANTHROPIC_API_KEY;
+    const savedToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    try {
+      const session = await provider.createSession({});
+      mockQueryFn.mockImplementationOnce(() => createMockQueryIterator([
+        { type: "assistant", error: "authentication_failed", message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "Not logged in · Please run /login" }] } },
+        { type: "result", subtype: "success", is_error: true, num_turns: 1, total_cost_usd: 0 },
+      ] as any, 0));
+      const events = await drain(session.id, "run it");
+      const errors = events.filter((e) => e.type === "error").map((e) => (e as any).message);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toStartWith("Claude Code on this computer is signed out.");
+      expect(errors[0]).toContain("`claude auth login`");
+      expect(errors[0]).toContain("Settings → Accounts");
+    } finally {
+      if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+      if (savedToken !== undefined) process.env.CLAUDE_CODE_OAUTH_TOKEN = savedToken;
+    }
   });
 });

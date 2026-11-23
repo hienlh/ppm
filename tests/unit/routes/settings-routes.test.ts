@@ -248,6 +248,23 @@ describe("PUT /settings/ai", () => {
     expect(configService.load().ai.hide_builtin_cron).toBe(true);
   });
 
+  it("saves whether a lost Claude chat is recovered, as a boolean only, and settles its feature question", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    configService.set("feature_intros", {});
+    expect(configService.get("ai").resume_recovery).toBeUndefined();
+    for (const value of ["true", 1, null]) expect((await put({ resume_recovery: value })).status).toBe(400);
+    const res = await put({ resume_recovery: true });
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.resume_recovery).toBe(true);
+    expect(configService.load().ai.resume_recovery).toBe(true);
+    expect((configService.get("feature_intros") as any)["resume-recovery-2026-11"]).toMatchObject({ answer: "on", via: "settings" });
+    expect((await put({ share_provider_context: true })).status).toBe(200);
+    expect(configService.load().ai.resume_recovery).toBe(true);
+  });
+
   it("switches PPM's tools one at a time, and refuses tool names and values it does not know", async () => {
     const app = createApp();
     const put = (body: Record<string, unknown>) => app.request("/settings/ai", {

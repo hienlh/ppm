@@ -53,7 +53,9 @@ import type {
   ModelOption,
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
-import { withSharedContext, stripSharedContext } from "../shared/provider-context.ts";
+import { withSharedContext, stripSharedContext, withAddedSharedContext } from "../shared/provider-context.ts";
+import { cliSignedOutMessage, isCliSignInRequest, isEchoOfResultError, isSessionMissingResult, resultErrorText, resumeRecoveryOn, SESSION_MISSING_SUBTYPE, sessionMissingMessage } from "./claude-session-missing.ts";
+import { buildResumeHandoff, type ResumeHandoff } from "../services/session-trace/resume-handoff.ts";
 import { mcpConfigService } from "../services/mcp-config.service.ts";
 import { listInheritedClaudeMcpServers } from "../services/claude-code-mcp.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
@@ -65,6 +67,7 @@ import { accountService, type AccountWithTokens } from "../services/account.serv
 import { parseSessionMessage, mergeToolResultMessages, nestChildEventsAcrossMessages, parseJsonlTranscript, fullParseWindow } from "../services/jsonl-transcript-parser.ts";
 import { applyBackgroundAgentStatus } from "../shared/background-agent-status.ts";
 import { mergeSubagentChildren, resolveSessionDir } from "../services/subagent-transcript-merger.ts";
+import { claudeProjectsRoot } from "../services/agent-transcript/claude-projects-root.ts";
 import { readCompactions, applyCompactions } from "../services/compaction-savings.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 import { isCompiledBinary } from "../services/autostart-generator.ts";
@@ -81,7 +84,8 @@ const log = createLogger("sdk");
 const usageLog = createLogger("usage");
 const mcpControlLog = createLogger("mcp-control");
 
-const CLAUDE_PROJECTS_DIR = resolve(homedir(), ".claude/projects");
+/** Where the CLI PPM spawns writes transcripts: `CLAUDE_CONFIG_DIR`-aware, read per call. */
+const claudeProjectsDir = (): string => resolve(claudeProjectsRoot());
 /** A running CLI answers `get_settings` in a few ms; this only bounds one that never does. */
 const EFFORT_READ_TIMEOUT_MS = 5_000;
 
@@ -321,6 +325,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   private activeSessions = new Map<string, Session>();
   private messageCount = new Map<string, number>();
+  /**
+   * Sessions PPM knew whose transcript Claude Code no longer has, found when they were reopened
+   * after a restart (`resumeSession`). Their first message goes through the same recovery as a
+   * live "No conversation found" instead of quietly starting a session with no history.
+   */
+  private missingTranscript = new Set<string>();
   /** Pending approval promises keyed by requestId */
   private pendingApprovals = new Map<string, PendingApproval>();
   /** Active query objects for abort support */
@@ -469,7 +479,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     mode: StripMode,
     includeAttachments: boolean,
   ): Promise<{ removed: number; bytesFreed: number; reason: string; failed: boolean }> {
-    const dir = resolve(CLAUDE_PROJECTS_DIR);
+    const dir = claudeProjectsDir();
     if (!existsSync(dir)) return { removed: 0, bytesFreed: 0, reason: "no transcript directory", failed: true };
     let jsonlPath = "";
     for (const sub of readdirSync(dir)) {
@@ -674,6 +684,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     };
     this.activeSessions.set(sessionId, meta);
     this.messageCount.set(sessionId, hasTranscript ? 1 : 0);
+    // Whether PPM kept any history for it is decided at the first message, when it is needed.
+    if (!hasTranscript) this.missingTranscript.add(sessionId);
     return meta;
   }
 
@@ -782,6 +794,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     this.closeStreamingSession(sessionId);
     this.activeSessions.delete(sessionId);
     this.messageCount.delete(sessionId);
+    this.missingTranscript.delete(sessionId);
     // Resolve and clean up all pending approvals for this session
     for (const [reqId, pending] of this.pendingApprovals) {
       if (pending.sessionId === sessionId) {
@@ -794,11 +807,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // Best-effort: delete JSONL from ~/.claude/projects/
     try {
-      if (existsSync(CLAUDE_PROJECTS_DIR)) {
-        const projectDirs = readdirSync(CLAUDE_PROJECTS_DIR);
+      if (existsSync(claudeProjectsDir())) {
+        const projectDirs = readdirSync(claudeProjectsDir());
         for (const dir of projectDirs) {
           if (dir.includes("..") || dir.includes("/")) continue; // safety
-          const jsonlPath = resolve(CLAUDE_PROJECTS_DIR, dir, `${sessionId}.jsonl`);
+          const jsonlPath = resolve(claudeProjectsDir(), dir, `${sessionId}.jsonl`);
           if (existsSync(jsonlPath)) { unlinkSync(jsonlPath); break; }
         }
       }
@@ -1143,7 +1156,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     message: string,
     opts?: import("./provider.interface.ts").SendMessageOpts & { forkSession?: boolean; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> },
   ): AsyncIterable<ChatEvent> {
-    const modelInput = withSharedContext(message, opts?.sharedContext);
+    let modelInput = withSharedContext(message, opts?.sharedContext);
     // SDK requires valid UUID session IDs. Short/random IDs can leak from
     // tab derivation or URL parsing — migrate to a real UUID early.
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1216,6 +1229,25 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const forkSourceId = this.forkSources.get(sessionId);
     const shouldFork = !!forkSourceId && isFirstMessage;
     if (forkSourceId) this.forkSources.delete(sessionId);
+
+    // Reopened after a restart with no transcript: a chat whose history only PPM still has.
+    // With nothing kept (its first turn never got an answer) it simply starts, as it always did.
+    let recoveredFrom: ResumeHandoff | null = null;
+    if (isFirstMessage && !shouldFork && this.missingTranscript.delete(sessionId)) {
+      const handoff = buildResumeHandoff(sessionId);
+      if (handoff && resumeRecoveryOn(configService.get("ai"))) {
+        recoveredFrom = handoff;
+        modelInput = withAddedSharedContext(modelInput, handoff.text);
+        log.warn(`session=${sessionId} Claude Code has no transcript for this session — starting a new one with ${handoff.turns} kept turn(s)`);
+      } else if (handoff) {
+        // Off: say so instead of answering as if the chat were remembered. The next message starts.
+        log.warn(`session=${sessionId} Claude Code has no transcript for this session and recovery is off — stopping the turn`);
+        this.messageCount.set(sessionId, 0);
+        yield { type: "error", message: sessionMissingMessage("off") };
+        yield { type: "done", sessionId, resultSubtype: SESSION_MISSING_SUBTYPE };
+        return;
+      }
+    }
 
     // Resolve permission mode early — canUseTool needs isBypass
     const providerConfig = this.getProviderConfig();
@@ -1700,6 +1732,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // body and cleared the very flag that keeps the retry from re-sending the prompt. It is
       // reset at the end of each turn instead.
       let turnProgressed = false;
+      /** The last result error shown this turn, so the SDK's echo of it on exit is not shown again. */
+      let lastResultErrorDetail: string | undefined;
+      /** A new session already carries the kept history: never start a second one in this turn. */
+      let recoveredThisTurn = recoveredFrom !== null;
+      if (recoveredFrom) {
+        yield { type: "session_recovered", turns: recoveredFrom.turns, omittedTurns: recoveredFrom.omittedTurns, sent: recoveredFrom.text };
+      }
 
       crashRetryLoop: for (;;) {
       try {
@@ -1875,6 +1914,40 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         hadAnyEvents = true;
         if (sdkEventCount === 1) {
           log.debug(`session=${sessionId} first event received: type=${(msg as any).type} subtype=${(msg as any).subtype ?? "none"}`);
+          // Claude Code no longer has the transcript. Resuming again can never work, so this is
+          // not the transient failure below: carry the kept history into a new session under the
+          // same id, or stop the turn and let the next message start one.
+          if (!shouldFork && isSessionMissingResult(msg)) {
+            const recoveryOn = resumeRecoveryOn(configService.get("ai"));
+            const handoff = recoveryOn && !recoveredThisTurn ? buildResumeHandoff(sessionId) : null;
+            if (handoff) {
+              recoveredThisTurn = true;
+              log.warn(`session=${sessionId} Claude Code has no transcript for this session — starting a new one with ${handoff.turns} kept turn(s)`);
+              const retryM = buildRetryMsg();
+              const content = withAddedSharedContext(retryM.lastUserContent, handoff.text);
+              closeCurrentStream();
+              const recoverEnv = queryEnvFor(account);
+              const { generator: recoverGen, controller: recoverCtrl } = createMessageChannel();
+              recoverCtrl.push({ ...retryM.msg, message: buildMessageParam(content, retryM.lastUserImages) });
+              const rq = startQuery({
+                prompt: recoverGen,
+                // `sessionId`, not `resume`: there is no transcript under this id for the CLI to load.
+                options: { ...queryOptions, sessionId, resume: undefined, forkSession: undefined, env: recoverEnv, hooks: queryHooks, canUseTool } as any,
+              });
+              this.streamingSessions.set(sessionId, { meta, query: rq, controller: recoverCtrl, lastUserContent: content, lastUserImages: retryM.lastUserImages, lastClientMessageId: retryM.lastClientMessageId, credential: credentialOf(recoverEnv, account?.id), startedAt: streamStartedAt });
+              this.activeQueries.set(sessionId, rq);
+              eventSource = rq;
+              yield { type: "session_recovered", turns: handoff.turns, omittedTurns: handoff.omittedTurns, sent: handoff.text };
+              continue retryLoop;
+            }
+            log.warn(`session=${sessionId} Claude Code has no transcript for this session (${recoveryOn ? "PPM kept no history" : "recovery is off"}) — stopping the turn`);
+            // The next message starts a new session instead of resuming one that is not there.
+            this.messageCount.set(sessionId, 0);
+            turnEndedInError = true;
+            resultSubtype = SESSION_MISSING_SUBTYPE;
+            yield { type: "error", message: sessionMissingMessage(recoveryOn ? "no-history" : "off") };
+            break;
+          }
           // Detect immediate failure: first event is a result with error + 0 turns
           if ((msg as any).type === "result" && (msg as any).subtype === "error_during_execution" && ((msg as any).num_turns ?? 0) === 0 && retryCount < MAX_RETRIES) {
             retryCount++;
@@ -1884,8 +1957,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             closeCurrentStream();
             const { generator: retryGen, controller: retryCtrl } = createMessageChannel();
             retryCtrl.push(retry1.msg);
-            // Retry with resume (safe even if JSONL doesn't exist yet — SDK handles gracefully)
-            const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId };
+            // Resume only a conversation that exists: resuming an id with no transcript fails with
+            // "No conversation found", which would hide the real error behind that one. A first
+            // message the CLI never wrote is started again under its id instead.
+            const startAgain = isFirstMessage && !shouldFork && resolveSessionDir(sessionId, meta.projectPath) === null;
+            const retryOpts = startAgain
+              ? { ...queryOptions, sessionId, resume: undefined }
+              : { ...queryOptions, sessionId: undefined, resume: sessionId };
             const rq = startQuery({
               prompt: retryGen,
               options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
@@ -2349,12 +2427,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               rate_limit: `Rate limited by the API. Retried ${MAX_RATE_LIMIT_RETRIES} times without success.`,
               invalid_request: "Invalid request sent to the API.",
               server_error: `Anthropic API server error. Retried ${MAX_RATE_LIMIT_RETRIES} times without success.`,
-              unknown: `API error in project "${effectiveCwd}". Debug:\n1. Run: \`cd ${effectiveCwd} && claude -p "hi"\`\n2. Check env: \`echo $ANTHROPIC_API_KEY $ANTHROPIC_BASE_URL\` — stale/invalid keys cause this\n3. Try: \`ANTHROPIC_API_KEY="" ANTHROPIC_BASE_URL="" claude -p "hi"\`\n4. Refresh auth: \`claude login\``,
+              unknown: `API error in project "${effectiveCwd}". Debug:\n1. Run: \`cd ${effectiveCwd} && claude -p "hi"\`\n2. Check env: \`echo $ANTHROPIC_API_KEY $ANTHROPIC_BASE_URL\` — stale/invalid keys cause this\n3. Try: \`ANTHROPIC_API_KEY="" ANTHROPIC_BASE_URL="" claude -p "hi"\`\n4. Refresh auth: \`claude auth login\``,
             };
             // A refusal also arrives as invalid_request, and the CLI's own text is the only place
             // that says why and what to do next (rephrase in a new session, or change the model).
             const refusalText = (msg as any).message?.stop_reason === "refusal" ? this.extractAssistantText(msg) : "";
-            const hint = refusalText || (errorHints[assistantError] ?? `API error: ${assistantError}`);
+            // With no PPM account and no key, the CLI is running on its own sign-in: "Settings →
+            // Accounts" alone pointed at an empty list, and the CLI's own words were dropped.
+            // Only when the CLI itself asks for a sign-in ("Not logged in · Please run /login"): a
+            // 401 for a key or token it was handed is a bad credential, not a signed-out CLI.
+            const usesCliSignIn = !account && !cliEnv?.ANTHROPIC_API_KEY && !cliEnv?.CLAUDE_CODE_OAUTH_TOKEN;
+            const cliAuthText = this.extractAssistantText(msg);
+            const hint = refusalText
+              || (assistantError === "authentication_failed" && usesCliSignIn && isCliSignInRequest(cliAuthText) ? cliSignedOutMessage(cliAuthText) : undefined)
+              || (errorHints[assistantError] ?? `API error: ${assistantError}`);
             turnEndedInError = true;
             yield { type: "error", message: hint };
             // Skip emitting the raw 401 error as text content — already shown as error event
@@ -2539,6 +2625,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             log.info(`session=${sessionId} ignoring empty task-notification result (no turn ran)`);
             continue;
           }
+          // Remembered so the SDK's copy of it, thrown when the CLI exits, is not shown a second time.
+          lastResultErrorDetail = resultErrorText(result) ?? lastResultErrorDetail;
 
           // Write cost to shared usage cache
           if (result.total_cost_usd != null) {
@@ -2762,6 +2850,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         log.error(`session=${sessionId} CLI crashed after retry: ${crashMsg}${stderrInfo}`);
         const userHint = stderrInfo ? ` (${stderrBuffer.trim().slice(-200)})` : "";
         yield { type: "error", message: `SDK subprocess crashed.${userHint} Send another message to auto-recover.` };
+      } else if (isEchoOfResultError(crashMsg, lastResultErrorDetail)) {
+        // The result that ended the turn already said this; the CLI then exited with code 1.
+        log.info(`session=${sessionId} CLI exited after the error result already shown: ${crashMsg.slice(0, 300)}`);
       } else {
         log.error(`session=${sessionId} cwd=${meta.projectPath} error: ${crashMsg}${stderrInfo}`);
         yield { type: "error", message: `SDK error: ${crashMsg}` };
@@ -3088,13 +3179,13 @@ function findMissingSessions(
   try { resolvedDir = require("node:fs").realpathSync(dir).normalize("NFC"); } catch { resolvedDir = dir; }
   // Match SDK's path encoding: replace all non-alphanumeric chars with "-"
   const encodedDir = resolvedDir.replace(/[^a-zA-Z0-9]/g, "-");
-  let jsonlDir = resolve(CLAUDE_PROJECTS_DIR, encodedDir);
+  let jsonlDir = resolve(claudeProjectsDir(), encodedDir);
   // SDK truncates to 200 chars + hash for long paths; try prefix match as fallback
   if (!existsSync(jsonlDir) && encodedDir.length > 200) {
     const prefix = encodedDir.slice(0, 200);
     try {
-      const match = readdirSync(CLAUDE_PROJECTS_DIR).find((d) => d.startsWith(prefix + "-"));
-      if (match) jsonlDir = resolve(CLAUDE_PROJECTS_DIR, match);
+      const match = readdirSync(claudeProjectsDir()).find((d) => d.startsWith(prefix + "-"));
+      if (match) jsonlDir = resolve(claudeProjectsDir(), match);
       else return [];
     } catch { return []; }
   }

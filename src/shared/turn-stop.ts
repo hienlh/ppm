@@ -13,8 +13,18 @@ export interface TurnStop {
   at: number;
 }
 
+/** Claude Code no longer had the conversation and PPM did not carry it over (`claude-session-missing.ts`). */
+export const isSessionMissingStop = (stop: TurnStop): boolean => stop.subtype === "error_session_missing";
+
+/** A Claude CLI running on its own sign-in, signed out (`cliSignedOutMessage`). */
+export const isCliSignedOutStop = (stop: TurnStop): boolean => stop.message.startsWith("Claude Code on this computer is signed out.");
+
 /** The headline and an optional second line, shared by the chat's stop bar and the notification. */
 export function describeTurnStop(stop: TurnStop): { title: string; detail: string | null } {
+  if (isSessionMissingStop(stop)) {
+    const [, ...rest] = stop.message.split("\n").map((line) => line.trim()).filter(Boolean);
+    return { title: "This conversation is gone from Claude Code", detail: rest.length > 0 ? rest.join(" ") : null };
+  }
   if (stop.subtype === "error_max_turns") {
     const limit = /maximum number of turns \((\d+)\)/i.exec(stop.message)?.[1];
     return {

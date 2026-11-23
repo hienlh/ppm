@@ -215,6 +215,7 @@ settingsRoutes.put("/ai", async (c) => {
       tab_tools?: boolean;
       ppm_tools?: PpmToolSwitches;
       hide_builtin_cron?: boolean;
+      resume_recovery?: boolean;
       leftover_processes_idle_minutes?: number;
       memory_warn_free_gb?: number;
       memory_block_free_gb?: number;
@@ -240,6 +241,9 @@ settingsRoutes.put("/ai", async (c) => {
     }
     if ("hide_builtin_cron" in body && typeof body.hide_builtin_cron !== "boolean") {
       return c.json(err("hide_builtin_cron must be a boolean"), 400);
+    }
+    if ("resume_recovery" in body && typeof body.resume_recovery !== "boolean") {
+      return c.json(err("resume_recovery must be a boolean"), 400);
     }
     if ("leftover_processes_idle_minutes" in body && !isValidLeftoverIdleMinutes(body.leftover_processes_idle_minutes)) {
       return c.json(err(`leftover_processes_idle_minutes must be a whole number from 0 to ${MAX_LEFTOVER_IDLE_MINUTES}, 0 for never`), 400);
@@ -291,6 +295,7 @@ settingsRoutes.put("/ai", async (c) => {
       share_provider_context: body.share_provider_context ?? currentAi.share_provider_context ?? true,
       ...(typeof body.tab_tools === "boolean" && { tab_tools: body.tab_tools }),
       ...(typeof body.hide_builtin_cron === "boolean" && { hide_builtin_cron: body.hide_builtin_cron }),
+      ...(typeof body.resume_recovery === "boolean" && { resume_recovery: body.resume_recovery }),
       ...(body.leftover_processes_idle_minutes !== undefined && { leftover_processes_idle_minutes: body.leftover_processes_idle_minutes }),
       ...(body.memory_warn_free_gb !== undefined && { memory_warn_free_gb: body.memory_warn_free_gb }),
       ...(body.memory_block_free_gb !== undefined && { memory_block_free_gb: body.memory_block_free_gb }),
@@ -331,7 +336,7 @@ settingsRoutes.put("/ai", async (c) => {
     configService.set("ai", updated);
     configService.save();
     // A switch of an introduced feature set here is the user's answer: no device asks again.
-    if (body.ppm_tools && settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
+    if ((body.ppm_tools || typeof body.resume_recovery === "boolean") && settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
 
     return c.json(ok(withResolvedSessionCollab(stripSensitiveFields(updated))));
   } catch (e) {

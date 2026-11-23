@@ -719,7 +719,10 @@ function resolveSessionJsonlPath(sessionId: string): { jsonlPath: string; jsonlD
   const projectPath = provider?.activeSessions?.get(sessionId)?.projectPath
     ?? storedProjectPath
     ?? "";
-  const projectsRoot = homedir ? resolve(homedir, ".claude", "projects") : "";
+  // Where the CLI PPM spawns writes: it inherits CLAUDE_CONFIG_DIR, so the transcript is there when set.
+  const projectsRoot = process.env.CLAUDE_CONFIG_DIR
+    ? resolve(process.env.CLAUDE_CONFIG_DIR, "projects")
+    : homedir ? resolve(homedir, ".claude", "projects") : "";
   // SDK encodes cwd by replacing path separators + drive colon with "-".
   const encodedCwd = projectPath ? projectPath.replace(/[/\\:]/g, "-") : "";
   let jsonlDir = encodedCwd && projectsRoot ? resolve(projectsRoot, encodedCwd) : "";

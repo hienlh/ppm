@@ -671,6 +671,13 @@ export function useChat(
         break;
       }
 
+      case "session_recovered": {
+        // One line at the head of the answer: the turn goes on in a new Claude session.
+        streamingEventsRef.current.push(ev as ChatEvent);
+        syncMessages();
+        break;
+      }
+
       case "status_update": {
         const label = ev.accountLabel ? ` (${ev.accountLabel})` : "";
         setStatusMessage(`${ev.message}${label}`);

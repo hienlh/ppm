@@ -597,6 +597,37 @@ session moves the local draft to that session; handing the message to the
 socket clears it. This protects reloads in the same browser tab, not delivery
 after the socket accepts a message or recovery after browser storage is cleared.
 
+### A chat Claude Code no longer has
+
+Claude Code resumes a chat by re-reading its transcript under `CLAUDE_CONFIG_DIR` (else
+`~/.claude`). When the file is gone (the folder was wiped or reinstalled, the CLI's own
+`cleanupPeriodDays` clean-up removed a chat older than 30 days, another config folder, another
+machine), the CLI answers every resume with one result, `No conversation found with session ID`,
+and exits. Signing out does not cause it: a signed-out CLI still writes and resumes its
+transcripts, so Continue works again after signing in.
+
+`claude-session-missing.ts` recognises that result on the first event of an attempt and never
+retries it with resume. What follows depends on **Recover lost Claude chats**
+(`ai.resume_recovery`, Settings → AI Provider, asked once as the feature introduction
+`resume-recovery-2026-11`, off until answered):
+
+- **On**: PPM starts a new Claude session under the **same id** (`sessionId`, not `resume`) and adds
+  the history it kept to the first message's shared-context block (`resume-handoff.ts`: each
+  turn's message, the answer and the tools that ran, at most 30,000 characters, newest turns kept,
+  tool output left out, PPM tags defused). The chat shows one `session_recovered` line with the
+  sent block behind "What was sent". The line is live and in the reconnect buffer, not in history.
+- **Off, or nothing kept** (the session trace keeps 30 days): the turn ends with `done`
+  `resultSubtype: "error_session_missing"` and one error line. The stop bar offers **Start fresh
+  here** and **New chat** instead of Continue, and the next message starts a new session.
+
+The same applies to a chat reopened after a restart with no transcript (`resumeSession`), which
+used to start an empty session silently. Two related fixes: a first message that fails at once is
+retried by starting it again, not by resuming an id the CLI never wrote, and the SDK's
+`Claude Code returned an error result: …`, thrown when the CLI exits after an error result, is
+not shown a second time. A signed-out CLI in the no-account mode (no PPM account, no key) gets
+"Claude Code on this computer is signed out" with the CLI's own words, `claude auth login` and an
+Accounts button, instead of a bare pointer at an empty Settings → Accounts.
+
 ### WebSocket Reconnection Sync
 
 Codex history loaded from disk uses asynchronous file reads and yields between

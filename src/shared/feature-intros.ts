@@ -39,9 +39,9 @@ export interface FeatureIntro {
  * Settings a feature introduction can stand for. `assistant_permission_mode`: on = Full, off = Ask.
  * `voice_messages`: `voice_message.enabled`. `voice_self_learning`: `voice_message.self_learning`,
  * asked only once voice messages are on (it means nothing without them).
- * `assistant_settings_tools`: `assistant.settings_tools`.
+ * `assistant_settings_tools`: `assistant.settings_tools`. `resume_recovery`: `ai.resume_recovery`.
  */
-export type FeatureIntroSetting = "assistant_permission_mode" | "voice_messages" | "voice_self_learning" | "assistant_settings_tools";
+export type FeatureIntroSetting = "assistant_permission_mode" | "voice_messages" | "voice_self_learning" | "assistant_settings_tools" | "resume_recovery";
 
 export const FEATURE_INTROS: readonly FeatureIntro[] = [
   {
@@ -112,6 +112,17 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
       + "Settings → PPM Assistant → Changes. It stays off until you choose.",
     tools: [],
     setting: "assistant_settings_tools",
+    since: "2026-11",
+  },
+  {
+    id: "resume-recovery-2026-11",
+    title: "Recover chats Claude Code lost",
+    body: "When Claude Code on this computer no longer has a chat (its folder was deleted or reinstalled, the chat is "
+      + "over 30 days old, or it moved to another machine), PPM starts a new Claude session in the same chat and sends "
+      + "along the messages and answers it kept, with one line saying so. Off, the chat says the history is gone and "
+      + "your next message starts fresh. It stays off until you choose.",
+    tools: [],
+    setting: "resume_recovery",
     since: "2026-11",
   },
 ];

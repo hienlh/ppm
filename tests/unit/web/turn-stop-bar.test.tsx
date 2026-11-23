@@ -32,6 +32,33 @@ describe("TurnStopBar", () => {
     expect(view.container.innerHTML).toBe("");
   });
 
+  it("offers a fresh start or a new chat, never Continue, when Claude Code lost the conversation", async () => {
+    let newChats = 0;
+    const stop = { message: "Claude Code on this computer no longer has this conversation.\nYour next message starts a new session here without its history.", subtype: "error_session_missing", at: 7 };
+    view = await mount(<TurnStopBar stop={stop} onContinue={() => {}} onNewChat={() => { newChats++; }} />);
+    const bar = view.container.querySelector("[data-testid=turn-stop-bar]");
+    expect(bar?.getAttribute("data-stop-kind")).toBe("session-missing");
+    expect(bar?.textContent).toContain("This conversation is gone from Claude Code");
+    const labels = [...view.container.querySelectorAll("button")].map((b) => b.textContent?.trim());
+    expect(labels).toEqual(["Start fresh here", "New chat"]);
+    for (const button of view.container.querySelectorAll("button")) expect(button.getAttribute("class")).toContain("max-md:min-h-11");
+    await click([...view.container.querySelectorAll("button")].find((b) => b.textContent?.includes("New chat")) ?? null);
+    expect(newChats).toBe(1);
+    await click([...view.container.querySelectorAll("button")].find((b) => b.textContent?.includes("Start fresh")) ?? null);
+    expect(view.container.querySelector("[data-testid=turn-stop-bar]")).toBeNull();
+  });
+
+  it("links to Accounts beside Continue when the Claude CLI is signed out", async () => {
+    let opened = 0;
+    const stop = { message: "Claude Code on this computer is signed out.\nAdd an account in Settings → Accounts, or run `claude auth login`.", subtype: "error_during_execution", at: 3 };
+    view = await mount(<TurnStopBar stop={stop} onContinue={() => {}} onOpenAccounts={() => { opened++; }} />);
+    expect(view.container.querySelector("[data-testid=turn-stop-bar]")?.getAttribute("data-stop-kind")).toBe("signed-out");
+    const labels = [...view.container.querySelectorAll("button")].map((b) => b.textContent?.trim());
+    expect(labels).toEqual(["Accounts", "Continue"]);
+    await click([...view.container.querySelectorAll("button")].find((b) => b.textContent?.includes("Accounts")) ?? null);
+    expect(opened).toBe(1);
+  });
+
   it("continues with the wording PPM's own retry uses", () => {
     expect(CONTINUE_AFTER_STOP).toBe("Continue from where you left off.");
   });
