@@ -223,15 +223,34 @@ every layout change, before paint. The pin lets go only on the reader's own inpu
 scroll key, a press on the scrollbar, or a scroll position it did not write); a hidden tab and the
 offsets `reparenting-tab.tsx` restores when a tab moves panel are ignored for a frame.
 
-**The reading anchor** (the history window only, `{ readingAnchor: true }`): once the reader has
-let go of a landing, the same pin remembers the row at the top on every scroll (once per frame) and
-puts it back in its ResizeObserver callback, so an image in an older page decoding above the reader
-no longer pushes that row down. The live list does not use it: its bottom follower owns the position.
+**The reading anchor**: once the reader has let go of a landing, the same pin remembers the place at
+the top on every scroll and puts it back in its ResizeObserver callback, so an image in an older
+page decoding above the reader no longer pushes that row down. The history window keeps it always
+(`{ readingAnchor: true }`). The live list keeps it only while it does not follow its bottom
+(`readingAnchor: () => !state.isAtBottom`): there use-stick-to-bottom owns the position while it
+follows, and the place is taken 2 ms after each scroll, once the follower has judged it. Three more
+things make it hold in the live list:
+- The place is the rows around the top plus a key of each user message's text
+  (`data-anchor-key`), so it survives rows being *replaced*: a streamed answer is finalised under a
+  `final-` id at `done`, and a history read after a disconnect replaces every row the browser made.
+- Content below the reader getting shorter puts the view at the bottom, and the follower reads that
+  as the reader returning there. With no wheel, touch or key from the reader, the pin hands the
+  position back (`onLayoutTookOver` → `stopScroll`) and keeps the place it had, which the browser
+  clamped, until the content is long enough to put it back. The bottom button, Back to latest and a
+  session switch call `follow()` first, so following on request is never undone.
+- A restore under a pixel is not written: the follower reads any write downward as the reader.
+
+Rows are placed by time against items the server dated (the Assistant's cards and folded wake
+lines), so every row the browser makes is dated on the **server's** clock (`src/web/lib/server-clock.ts`,
+learned from `serverTime` on `session_state` and `message_accepted`). Dated by a browser clock
+running ahead, a card made during an answer was drawn above the message just sent.
 
 `tests/e2e/session-turn-refs-e2e.mjs` measures the landing (16 ± 2 px for 3 s while images arrive
 late), the offset change per window load (with no image delay, and no scroll step while a page is
 in flight), late images above an unpinned reader (4c), a panel split while pinned, and the phone's
-long press, `touchcancel` and pill.
+long press, `touchcancel` and pill. The live list's reading anchor is measured by
+`tests/e2e/chat-scroll-jump-e2e.mjs` (`reading-done`, `reading-reconnect`, `reading-missed-done`)
+and, with cards, wake turns and a skewed browser clock, `tests/e2e/assistant-scroll-jump-e2e.mjs`.
 
 ## Chat footer
 

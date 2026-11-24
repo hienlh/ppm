@@ -7,11 +7,11 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { installDom, uninstallDom } from "../../helpers/react-dom";
 
 installDom();
-const { firstVisibleRow, restoreRow, turnStartAt, attrSelector } = await import("../../../src/web/components/chat/scroll-row-anchor");
+const { firstVisibleRow, restoreRow, turnStartAt, attrSelector, readingAnchorAt, restoreReadingAnchor, userAnchorKey } = await import("../../../src/web/components/chat/scroll-row-anchor");
 afterAll(() => uninstallDom());
 
-/** A container at y=100 holding rows of the given heights; `turn` marks a turn's first row. */
-function scene(rows: Array<{ id: string; h: number; turn?: string }>) {
+/** A container at y=100 holding rows of the given heights; `turn` marks a turn's first row, `user` a user message's text. */
+function scene(rows: Array<{ id: string; h: number; turn?: string; user?: string }>) {
   const el = document.createElement("div");
   const g = { scrollTop: 0, rows: [...rows] };
   Object.defineProperty(el, "scrollTop", { get: () => g.scrollTop, set: (v: number) => { g.scrollTop = v; } });
@@ -23,6 +23,7 @@ function scene(rows: Array<{ id: string; h: number; turn?: string }>) {
       const row = document.createElement("div");
       row.dataset.msgId = r.id;
       if (r.turn) row.dataset.turnStart = r.turn;
+      if (r.user) row.dataset.anchorKey = userAnchorKey(r.user);
       const top = y;
       row.getBoundingClientRect = () => ({ top: 100 + top - g.scrollTop, bottom: 100 + top + r.h - g.scrollTop } as DOMRect);
       el.appendChild(row);
@@ -43,6 +44,36 @@ describe("scroll-row-anchor", () => {
     s.draw();
     expect(restoreRow(s.el, anchor)).toBe(true);
     expect(Math.abs(s.top("b") - -50)).toBeLessThanOrEqual(2);
+  });
+
+  it("finds the first visible row in a long list", () => {
+    const s = scene(Array.from({ length: 500 }, (_, i) => ({ id: `r${i}`, h: 50 })));
+    s.g.scrollTop = 12_345;
+    expect(firstVisibleRow(s.el)).toEqual({ key: "r246", offset: -45 });
+  });
+
+  it("keeps the place when the answer being read is finalised under another id and a card goes in above", () => {
+    const s = scene([{ id: "old", h: 400 }, { id: "user-1", h: 80, user: "hi" }, { id: "streaming-1", h: 900 }]);
+    s.g.scrollTop = 700; // reading inside the answer
+    const anchor = readingAnchorAt(s.el)!;
+    const before = s.top("streaming-1");
+    s.g.rows = [{ id: "old", h: 400 }, { id: "card", h: 300 }, { id: "user-1", h: 80, user: "hi" }, { id: "final-1", h: 900 }];
+    s.draw();
+    expect(restoreReadingAnchor(s.el, anchor)).toBe(true);
+    expect(Math.abs(s.top("final-1") - before)).toBeLessThanOrEqual(2);
+  });
+
+  it("keeps the place when history replaces every row the browser made, by the reader's own message", () => {
+    const s = scene([{ id: "old", h: 400 }, { id: "user-1", h: 80, user: "what changed?" }, { id: "streaming-1", h: 900 }]);
+    s.g.scrollTop = 700;
+    const anchor = readingAnchorAt(s.el)!;
+    const before = s.top("streaming-1");
+    // History: the same message under the server's id, the answer split per block, a card above it.
+    s.g.rows = [{ id: "old", h: 400 }, { id: "card", h: 300 }, { id: "9f0c", h: 80, user: "what changed?" }, { id: "b1", h: 400 }, { id: "b2", h: 500 }];
+    s.draw();
+    expect(restoreReadingAnchor(s.el, anchor)).toBe(true);
+    // Restored by the reader's message, not by "old" further up, which the card moved away from it.
+    expect(Math.abs(s.top("b1") - before)).toBeLessThanOrEqual(2);
   });
 
   it("says when the anchored row is gone", () => {

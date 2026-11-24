@@ -18,6 +18,16 @@ import { RenderErrorBoundary } from "@/components/shared/markdown-error-boundary
 import { resolveReplyMessage } from "./message-reply-reference";
 import { MessageBubble, assistantMessageText } from "./message-bubble";
 import { CompactionDivider } from "./compaction-divider";
+import { userAnchorKey } from "./scroll-row-anchor";
+
+/** A user message's anchor key, once per message object (rows keep their objects across flushes). */
+const anchorKeys = new WeakMap<ChatMessage, string>();
+function anchorKeyOf(msg: ChatMessage): string | undefined {
+  if (msg.role !== "user") return undefined;
+  let key = anchorKeys.get(msg);
+  if (!key) { key = userAnchorKey(decodeMessageBlocks(msg.content).content.trim()); anchorKeys.set(msg, key); }
+  return key;
+}
 
 export interface MessageRowsProps {
   /** The messages to draw, already filtered to the ones that render. */
@@ -114,6 +124,7 @@ export function MessageRows({
             data-msg-index={globalIdx}
             data-msg-id={msg.id}
             data-turn-start={starts[globalIdx]}
+            data-anchor-key={anchorKeyOf(msg)}
             className="px-4 pt-4 select-none"
           >
             {/* Above the summary rather than beside it: the rule is what marks

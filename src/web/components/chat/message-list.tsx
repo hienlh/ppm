@@ -34,7 +34,8 @@ import { lastLocalSendId, pendingAsyncQuestion } from "@/lib/history-window-live
 import { ChatHistoryWindow, type HistoryWindowHandle, type MergeAnchor } from "./chat-history-window";
 import { attrSelector, restoreRow } from "./scroll-row-anchor";
 import { useHistoryWindow } from "@/hooks/use-history-window";
-import { useScrollAnchorPin } from "@/hooks/use-scroll-anchor-pin";
+import { useScrollAnchorPin, type AnchorPinHandle } from "@/hooks/use-scroll-anchor-pin";
+import { rowKind, watchScrollJumps, type ScrollJumpContext } from "@/lib/scroll-jump-log";
 import { useChatTurnJump } from "@/hooks/use-chat-turn-jump";
 import { canMergeToLive } from "@/lib/history-window-model";
 import { placeTimelineItems } from "@/lib/assistant-timeline-merge";
@@ -196,7 +197,7 @@ export function MessageList({
   // native browser behavior, not something we compute. use-stick-to-bottom owns the
   // only scroll write: follow-to-bottom while locked, release the lock on user
   // up-scroll, re-lock when the user returns to the bottom.
-  const { scrollRef, contentRef, scrollToBottom, stopScroll, isAtBottom } = useStickToBottom({
+  const { scrollRef, contentRef, scrollToBottom, stopScroll, isAtBottom, state: stickState } = useStickToBottom({
     initial: "instant",
     resize: "instant",
   });
@@ -321,7 +322,10 @@ export function MessageList({
   // Jump to the newest message when the conversation/session swaps (initial mount is
   // handled by `initial: "instant"`). Keyed on sessionId — NOT on filtered[0].id,
   // which also changes on compact prepend and would fight the prepend-preserve above.
+  // The live list's pin is made further down; the place it kept belongs to the session left.
+  const livePinRef = useRef<AnchorPinHandle | null>(null);
   useLayoutEffect(() => {
+    livePinRef.current?.follow();
     if (scrollEl) scrollToBottom({ animation: "instant" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, scrollEl]);
@@ -355,7 +359,9 @@ export function MessageList({
     /** The container's height at the last scroll event, for a clamp seen before the resize. */
     let heightAtScroll = el.clientHeight;
     let relockUntil = 0;
-    const relock = () => setTimeout(() => scrollToBottom({ animation: "instant" }), RELOCK_AFTER_SCROLL_MS);
+    // Following again on the reader's behalf: the place the pin may have taken from the clamp goes.
+    const follow = () => { livePinRef.current?.follow(); scrollToBottom({ animation: "instant" }); };
+    const relock = () => setTimeout(follow, RELOCK_AFTER_SCROLL_MS);
     const onScroll = () => {
       const h = el.clientHeight;
       const grewFirst = heightAtScroll > 0 && h > heightAtScroll && followIntentRef.current;
@@ -380,7 +386,7 @@ export function MessageList({
       if (grew && heightAtScroll < h) relockUntil = performance.now() + RELOCK_WINDOW_MS;
       heightAtScroll = h;
       if (grew) relock();
-      else scrollToBottom({ animation: "instant" });
+      else follow();
     });
     el.addEventListener("scroll", onScroll, { passive: true });
     ro.observe(el);
@@ -426,7 +432,19 @@ export function MessageList({
   // the history window, a container of its own laid over this one.
   const history = useHistoryWindow({ projectName, sessionId, providerId });
   // A row pinned here is held against the follow-to-bottom as well (see the pin's `onHold`).
-  const livePin = useScrollAnchorPin(scrollEl, undefined, stopScroll);
+  // Away from the bottom, the reader's place is kept across layout changes above it: a card or a
+  // folded line placed there, an answer finalised, history read again. While following, the
+  // follower owns the position (`state.isAtBottom` is the follower's own, current flag).
+  // Content below the reader getting shorter puts the view at the bottom, and the follower reads that
+  // as the reader returning there; nobody asked to follow, so the reader keeps their place instead.
+  const readingWhileAway = useCallback(() => !stickState.isAtBottom, [stickState]);
+  const livePin = useScrollAnchorPin(scrollEl, undefined, stopScroll, { readingAnchor: readingWhileAway, onLayoutTookOver: stopScroll });
+  livePinRef.current = livePin;
+  /** The bottom button and its kin: following again is what the reader asked for. */
+  const followBottom = useCallback((options?: Parameters<typeof scrollToBottom>[0]) => {
+    livePin.follow();
+    return scrollToBottom(options);
+  }, [livePin, scrollToBottom]);
   const windowHandle = useRef<HistoryWindowHandle | null>(null);
   useChatTurnJump({
     sessionId, scrollEl, filtered, messagesLoading, stopScroll, handleJumpToEdit, showMessageAt, livePin, history, windowHandle,
@@ -449,8 +467,8 @@ export function MessageList({
   const handleBackToLatest = useCallback(() => {
     exitWindow();
     livePin.unpin();
-    scrollToBottom({ animation: "instant" });
-  }, [exitWindow, livePin, scrollToBottom]);
+    followBottom({ animation: "instant" });
+  }, [exitWindow, livePin, followBottom]);
   // The live list has moved on since the jump: something is streaming, or a message arrived.
   const lastLiveId = filtered[filtered.length - 1]?.id ?? null;
   const [enteredAt, setEnteredAt] = useState<string | null | undefined>(undefined);
@@ -552,6 +570,30 @@ export function MessageList({
     return { before: new Map([...before].map(([i, items]) => [i, items.map(draw)] as const)), trailing: trailing.map(draw) };
   }, [extension, filtered, hasMore]);
   const manualPaging = !!timeline?.manualPaging;
+
+  // Temporary diagnostic (see `scroll-jump-log.ts`): records an upward move the reader did not ask for.
+  const jumpContext = useRef<ScrollJumpContext | null>(null);
+  jumpContext.current = {
+    surface: timeline ? "assistant" : "chat",
+    sessionId: sessionId ?? null,
+    phase: phase ?? null,
+    isStreaming,
+    isAtBottom,
+    rows: filtered.length,
+    lastRowKind: rowKind(filtered[filtered.length - 1]?.id),
+    hiddenRows: extension?.hidden?.size ?? 0,
+    timelineItems: extension?.items.length ?? 0,
+    pinned: !!livePin.pinned(),
+    historyWindow: !!windowView,
+  };
+  const jumpWatch = useRef<ReturnType<typeof watchScrollJumps> | null>(null);
+  useEffect(() => {
+    if (!scrollEl) return;
+    const watch = watchScrollJumps(scrollEl, () => jumpContext.current!);
+    jumpWatch.current = watch;
+    return () => { watch.stop(); if (jumpWatch.current === watch) jumpWatch.current = null; };
+  }, [scrollEl]);
+  useLayoutEffect(() => { jumpWatch.current?.commit(); });
 
   // Fetch pre-compact history from the server (prepends older messages).
   // Older pages of this segment first; only once they are all in does the top of the
@@ -750,7 +792,7 @@ export function MessageList({
         <HistoryWindowPendingPrompts approval={pendingApproval} onRespond={onApprovalResponse} question={pendingQuestion} />
       )}
       </div>
-      {!windowView && <ChatScrollNav scrollElement={scrollEl} userIndices={userIndices} scrollToBottom={scrollToBottom} hideOnPhone={dockApproval} />}
+      {!windowView && <ChatScrollNav scrollElement={scrollEl} userIndices={userIndices} scrollToBottom={followBottom} hideOnPhone={dockApproval} />}
     </div>
   );
 }

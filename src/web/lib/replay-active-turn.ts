@@ -13,12 +13,13 @@
  * A completed earlier turn (a different prompt) is left as it is.
  */
 import type { ChatEvent, ChatMessage } from "../../types/chat";
+import { serverNow } from "./server-clock";
 
 export function replayActiveTurn(
   prev: readonly ChatMessage[],
   userMessage: string | null,
   clientMessageId: string | undefined,
-  now: () => number = Date.now,
+  now: () => number = serverNow,
 ): ChatMessage[] {
   let updated = [...prev];
   let k = updated.length;
@@ -79,7 +80,7 @@ export function commitReplayedTurn(
   userMessage: string | null,
   clientMessageId: string | undefined,
   rebuilt: ReplayedTurn,
-  now: () => number = Date.now,
+  now: () => number = serverNow,
 ): ChatMessage[] {
   const out = [...replayActiveTurn(prev, userMessage, clientMessageId, now), ...rebuilt.standaloneErrors];
   if (!rebuilt.content && rebuilt.events.length === 0) return out;

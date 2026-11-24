@@ -76,6 +76,12 @@ function script(message: string): Script {
   const events: ChatEvent[] = [];
   const stored: ChatEvent[] = [];
   const push = (ev: ChatEvent, keep = true) => { events.push(ev); if (keep) stored.push(ev); };
+  // A wake turn PPM starts in the Assistant's chat, answered the way the Assistant answers news
+  // that needs nothing from the user: the chat folds the whole turn into one muted line.
+  if (message.trimStart().startsWith("[PPM] News")) {
+    push({ type: "text", content: "[no reply]" } as ChatEvent);
+    return { events, stored: { id: crypto.randomUUID(), role: "assistant", content: "[no reply]", events: stored as never, timestamp: new Date().toISOString() } };
+  }
   if (lower.includes("seed")) {
     const text = `Seeded answer for "${message}".\n\n${CODE}\n\nThat is all for this one.`;
     push({ type: "text", content: text } as ChatEvent);
@@ -166,10 +172,33 @@ function asTranscript(msg: ProviderMessage): ProviderMessage[] {
   return out;
 }
 
-const turns: { message: string; at: number; yielded: number; ended?: number; tasksDoneAt?: number; paused?: boolean }[] = [];
+const turns: { message: string; sessionId: string; at: number; yielded: number; ended?: number; tasksDoneAt?: number; paused?: boolean }[] = [];
+
+// ------------------------------------------------------------------ the Assistant's cards
+// Cards go through the real card service, so every open tab hears of them the way it does from a
+// manager's report: a card created mid-answer lands in the stream by its time, and a waiting card
+// answered mid-answer folds to one line.
+const cards = () => import("../../../src/services/assistant-cards/assistant-cards.service");
+/** Waiting cards the e2e made, oldest first: `answer-mid` / `answer-end` answer the oldest open one. */
+const waitingCards: string[] = [];
+async function cardOps(lower: string, at: "mid" | "end"): Promise<void> {
+  const { assistantCards } = await cards();
+  if (at === "mid" && lower.includes("card-mid")) {
+    assistantCards.create({
+      kind: "done", projectName: null, projectPath: null, sessionId: null,
+      title: "A manager finished something", body: Array.from({ length: 6 }, (_, i) => `- finished item ${i + 1}`).join("\n"),
+    });
+  }
+  if (lower.includes(`answer-${at}`)) {
+    const id = waitingCards.shift();
+    if (id) assistantCards.transition(id, "answered", { by: "user", channel: "ppm", at: Date.now() });
+  }
+}
 
 class ScrollScriptMock extends MockProvider {
   readonly history = new Map<string, ProviderMessage[]>();
+  /** The same script runs the PPM Assistant's chat (`assistant-scroll-jump-e2e.mjs`). */
+  override supportsAssistantSessions = true;
   /** Puts `n` finished exchanges at the start of a session's history, so it pages like a long chat. */
   seed(sessionId: string, n: number): number {
     const older: ProviderMessage[] = [];
@@ -193,7 +222,7 @@ class ScrollScriptMock extends MockProvider {
     return this.history.get(sessionId) ?? [];
   }
   override async *sendMessage(sessionId: string, message: string, _opts?: SendOpts): AsyncIterable<ChatEvent> {
-    const turn = { message, at: Date.now(), yielded: 0 } as (typeof turns)[number];
+    const turn = { message, sessionId, at: Date.now(), yielded: 0 } as (typeof turns)[number];
     turns.push(turn);
     const history = this.history.get(sessionId) ?? [];
     history.push({ id: crypto.randomUUID(), role: "user", content: message, timestamp: new Date().toISOString() });
@@ -216,6 +245,7 @@ class ScrollScriptMock extends MockProvider {
         await sleep(pauseMs);
         turn.paused = false;
       }
+      if (i === Math.floor(events.length / 2)) await cardOps(lower, "mid");
       yield ev;
       turn.yielded++;
       if (ev.type === "tool_use" && (ev as { tool?: string }).tool === "TaskUpdate") turn.tasksDoneAt = Date.now();
@@ -226,6 +256,7 @@ class ScrollScriptMock extends MockProvider {
     history.push(...asTranscript(stored));
     this.history.set(sessionId, history);
     if (bgbar && !lower.includes("bgbar-after")) yield { type: "background_registry", shells: [] } as never;
+    await cardOps(lower, "end");
     turn.ended = Date.now();
     yield { type: "done", sessionId } as ChatEvent;
     if (bgbar && lower.includes("bgbar-after")) {
@@ -249,6 +280,59 @@ const { globalWebSocket } = await import("../../../src/server/ws/global");
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
+/**
+ * What the Assistant e2e drives besides the chat itself:
+ * - `POST cards/old?n=&spanMs=`: `n` report cards spread over the last `spanMs`, so the stream has
+ *   more than one page of cards and loads older ones as the history reaches back;
+ * - `POST cards/waiting`: one card that waits on the user (drawn whole, with its buttons);
+ * - `POST wake?session=`: a wake turn PPM starts in that chat (origin `watch`), as the hub does;
+ * - `GET scroll-jumps`: the `[scroll-jump]` rows the page shipped to the session trace, read with
+ *   the same query the report gives for a real install.
+ */
+async function assistantTestRoute(url: URL, method: string): Promise<Response> {
+  const path = url.pathname.slice("/__scroll-test/".length);
+  if (path === "cards/old" && method === "POST") {
+    const { insertCardRow } = await import("../../../src/services/assistant-cards/assistant-cards-db");
+    const n = Number(url.searchParams.get("n") ?? 90);
+    const span = Number(url.searchParams.get("spanMs") ?? 45 * 60_000);
+    const now = Date.now();
+    for (let i = 0; i < n; i++) {
+      insertCardRow({
+        kind: "done", projectKey: null, sessionId: null, title: `Older report ${i + 1}`,
+        body: "- one finished item\n- another", payload: {}, status: "open", wake: "none",
+        at: now - 60_000 - Math.round((span * (n - i)) / n),
+      });
+    }
+    return json({ inserted: n });
+  }
+  if (path === "cards/waiting" && method === "POST") {
+    const { assistantCards } = await cards();
+    const card = assistantCards.create({
+      kind: "question", projectName: null, projectPath: null, sessionId: null,
+      title: "Which build should go out?", body: "The manager needs a pick before it can go on.\n\n- the one with the fix\n- the one without",
+    });
+    waitingCards.push(card.id);
+    return json({ id: card.id });
+  }
+  if (path === "wake" && method === "POST") {
+    const { chatControl } = await import("../../../src/services/chat-control/chat-control");
+    const control = chatControl();
+    if (!control) return json({ error: "no chat control" }, 500);
+    const result = await control.sendUserMessage(url.searchParams.get("session") ?? "", "[PPM] News from manager chats — details are in the context.", {
+      origin: "watch", projectName: "__assistant__", providerId: "claude",
+    });
+    return json({ result });
+  }
+  if (path === "scroll-jumps" && method === "GET") {
+    const { getTraceDb } = await import("../../../src/services/session-trace/session-trace-db");
+    const rows = getTraceDb().query(
+      "SELECT ts, ref_id, payload_json FROM session_events WHERE source = 'browser' AND type = 'console_warn' AND payload_json LIKE '%[scroll-jump]%' ORDER BY ts",
+    ).all();
+    return json({ rows });
+  }
+  return json({ error: "unknown test route" }, 404);
+}
+
 type SocketData = { type: "health" | "global" | "chat"; sessionId?: string; projectName?: string };
 const server = Bun.serve<SocketData>({
   hostname: "127.0.0.1", port,
@@ -259,6 +343,9 @@ const server = Bun.serve<SocketData>({
       return new Response("Stopping fixture");
     }
     if (url.pathname === "/__scroll-test/state") return json({ turns });
+    if (url.pathname.startsWith("/__scroll-test/") && url.pathname !== "/__scroll-test/state" && url.pathname !== "/__scroll-test/seed") {
+      return assistantTestRoute(url, req.method).catch((e) => json({ error: String((e as Error)?.stack ?? e) }, 500));
+    }
     if (url.pathname === "/__scroll-test/seed" && req.method === "POST") {
       const session = url.searchParams.get("session") ?? "";
       return json({ total: claude.seed(session, Number(url.searchParams.get("n") ?? 30)) });

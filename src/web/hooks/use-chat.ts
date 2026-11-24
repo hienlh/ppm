@@ -38,6 +38,8 @@ import { getChatClientId } from "@/lib/chat-client-id";
 import { CHAT_CLIENT_ID_PARAM } from "../../shared/chat-client-id";
 import { commitReplayedTurn, replayReplacedIds, type ReplayedTurn } from "@/lib/replay-active-turn";
 import { idleGreetingNeedsHistory } from "@/lib/idle-greeting-refetch";
+import { noteScrollJumpEvent } from "@/lib/scroll-jump-log";
+import { noteServerTime, serverNowIso } from "@/lib/server-clock";
 import { VAULT_CARD_APPROVAL, VAULT_NOTIFICATION_BODY } from "../../shared/vault";
 
 /** The toast a session-collaboration card raises while its chat is not on screen. */
@@ -538,7 +540,7 @@ export function useChat(
           role: "assistant" as const,
           content,
           events,
-          timestamp: new Date().toISOString(),
+          timestamp: serverNowIso(),
           ...account,
         }];
       });
@@ -861,7 +863,7 @@ export function useChat(
           if (streamingContentRef.current || evs.length > 0) { streamingEventsRef.current = [...evs, ev as ChatEvent]; break; }
           const errors = replayErrorsRef.current;
           if (errors[errors.length - 1]?.content !== ev.message) {
-            errors.push({ id: `error-${Date.now()}-${errors.length}`, role: "system", content: ev.message, events: [ev as ChatEvent], timestamp: new Date().toISOString() });
+            errors.push({ id: `error-${Date.now()}-${errors.length}`, role: "system", content: ev.message, events: [ev as ChatEvent], timestamp: serverNowIso() });
           }
           break;
         }
@@ -886,7 +888,7 @@ export function useChat(
             role: "system" as const,
             content: ev.message,
             events: [ev as ChatEvent],
-            timestamp: new Date().toISOString(),
+            timestamp: serverNowIso(),
           }];
         });
         // Phase reset comes from BE via phase_changed
@@ -1000,7 +1002,7 @@ export function useChat(
               role: "assistant" as const,
               content: finalContent,
               events: finalEvents,
-              timestamp: new Date().toISOString(),
+              timestamp: serverNowIso(),
               ...(doneUuid && { sdkUuid: doneUuid }),
               ...(doneUsage && { usage: doneUsage }),
               ...finalAccount,
@@ -1046,6 +1048,8 @@ export function useChat(
     } catch {
       return;
     }
+    // Temporary diagnostic (see `scroll-jump-log.ts`): which socket messages came just before a jump.
+    noteScrollJumpEvent(sessionIdRef.current, (data as { type?: unknown }).type);
 
     // The AI asked, through a tab tool, for a tab on this device. The server is waiting for
     // the answer, so it is never queued behind a replay.
@@ -1142,11 +1146,16 @@ export function useChat(
     // The server took a message this socket sent: adopt its text for the bubble drawn at send.
     // Every later dedupe (a replay's user message, a history reload) compares by content.
     if (data.type === "message_accepted") {
-      const { clientMessageId, content } = data;
+      const { clientMessageId, content, serverTime } = data;
       pendingSendsRef.current = pendingSendsRef.current.filter((pending) => pending.id !== clientMessageId);
-      if (typeof content === "string") {
-        setMessages((prev) => prev.some((m) => m.id === clientMessageId && m.content !== content)
-          ? prev.map((m) => (m.id === clientMessageId ? { ...m, content } : m))
+      noteServerTime(serverTime);
+      // Dated when the server took it, on the server's clock: the time cards and history are dated by.
+      const acceptedAt = typeof serverTime === "number" && Number.isFinite(serverTime) ? new Date(serverTime).toISOString() : null;
+      if (typeof content === "string" || acceptedAt) {
+        setMessages((prev) => prev.some((m) => m.id === clientMessageId && ((typeof content === "string" && m.content !== content) || (acceptedAt && m.timestamp !== acceptedAt)))
+          ? prev.map((m) => (m.id === clientMessageId
+            ? { ...m, ...(typeof content === "string" ? { content } : {}), ...(acceptedAt ? { timestamp: acceptedAt } : {}) }
+            : m))
           : prev);
       }
       return;
@@ -1178,7 +1187,7 @@ export function useChat(
           id: `user-remote-${Date.now()}`,
           role: "user" as const,
           content,
-          timestamp: (data as any).timestamp ?? new Date().toISOString(),
+          timestamp: (data as any).timestamp ?? serverNowIso(),
           ...(typeof clientId === "string" ? { clientId } : {}),
         }];
       });
@@ -1267,6 +1276,7 @@ export function useChat(
 
     // Handle session state (replaces connected + status)
     if ((data as any).type === "session_state") {
+      noteServerTime((data as any).serverTime);
       setIsConnected(true);
       // A live session may have no buffered events yet, so no turn_events frame
       // will follow. This acknowledgement already confirms the connection.
@@ -1733,7 +1743,7 @@ export function useChat(
           clientId: optimisticId,
           role: "user" as const,
           content: encodedContent,
-          timestamp: new Date().toISOString(),
+          timestamp: serverNowIso(),
         },
       ]);
 
