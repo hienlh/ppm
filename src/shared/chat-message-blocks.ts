@@ -16,6 +16,7 @@ import {
   decodeScheduleRun, encodeScheduleRun, SCHEDULE_RUN_BLOCK_END, SCHEDULE_RUN_BLOCK_END_AFTER, SCHEDULE_RUN_BLOCK_START,
   type ScheduleRunPlacement, type ScheduleRunReference,
 } from "./chat-schedule-run";
+import { decodeVoiceHints, encodeVoiceHints, VOICE_HINTS_BLOCK_END, VOICE_HINTS_BLOCK_START, type VoiceHints } from "./chat-voice-hints";
 
 /**
  * The structured blocks PPM appends to a user message, in their fixed order: the text the person
@@ -25,7 +26,9 @@ import {
  * stays last, so a build that only knows `decodeReply` still finds it. A session schedule's run is
  * the one block in front of the text instead, so the model reads it before the prompt — unless the
  * text is a slash command its provider runs as one, which must stay first: then the block follows
- * the text, before any other block (see `chat-schedule-run.ts`).
+ * the text, before any other block (see `chat-schedule-run.ts`). A voice message the user sent may
+ * carry a voice-hints block right after its text, before every other block (only the server writes
+ * one: `chat-voice-hints.ts`); it is never on another session's message, forwarded words or a run.
  *
  * Every reader of a stored user message goes through {@link decodeMessageBlocks}, and every writer
  * through {@link encodeMessageBlocks}, which neutralizes the body first: only PPM's own encoder
@@ -47,6 +50,8 @@ export interface MessageBlocks {
   userWords: UserWordsReference | null;
   /** Set when a session schedule sent the message; only the server encodes one. */
   scheduleRun: ScheduleRunReference | null;
+  /** Hints for reading a voice message sent as Whisper heard it; only the server encodes one. */
+  voiceHints: VoiceHints | null;
 }
 
 const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
@@ -60,6 +65,7 @@ const SENTINELS: ReadonlyArray<readonly [string, string]> = [
   REPLY_BLOCK_START, REPLY_BLOCK_END, TURN_REFS_BLOCK_START, TURN_REFS_LEGACY_BLOCK_START, TURN_REFS_BLOCK_END,
   FROM_SESSION_BLOCK_START, FROM_SESSION_BLOCK_END, PROVENANCE_BLOCK_START, PROVENANCE_BLOCK_END,
   USER_WORDS_BLOCK_START, USER_WORDS_BLOCK_END, TASK_REFS_BLOCK_START, TASK_REFS_BLOCK_END, SCHEDULE_RUN_BLOCK_START, SCHEDULE_RUN_BLOCK_END, SCHEDULE_RUN_BLOCK_END_AFTER,
+  VOICE_HINTS_BLOCK_START, VOICE_HINTS_BLOCK_END,
 ].map((s) => [s, s.replace("<", `<${ZERO_WIDTH_SPACE}`)] as const);
 
 /**
@@ -85,9 +91,11 @@ export function decodeMessageBlocks(content: string): MessageBlocks {
   const words = from.fromSession ? { content: prov.content, userWords: null } : decodeUserWords(prov.content);
   // A schedule's run is never another session's message nor the user's forwarded words.
   const run = from.fromSession || words.userWords ? { content: words.content, scheduleRun: null } : decodeScheduleRun(words.content);
+  // Voice hints ride only on a message the user sent themself: no other sender, no forward, no run.
+  const hints = from.fromSession || words.userWords || run.scheduleRun ? { content: run.content, voiceHints: null } : decodeVoiceHints(run.content);
   return {
-    content: run.content, replyTo: reply.replyTo, turnRefs: refs.turnRefs, taskRefs: tasks.taskRefs, fromSession: from.fromSession,
-    provenance: prov.provenance, userWords: words.userWords, scheduleRun: run.scheduleRun,
+    content: hints.content, replyTo: reply.replyTo, turnRefs: refs.turnRefs, taskRefs: tasks.taskRefs, fromSession: from.fromSession,
+    provenance: prov.provenance, userWords: words.userWords, scheduleRun: run.scheduleRun, voiceHints: hints.voiceHints,
   };
 }
 
@@ -114,13 +122,18 @@ export function encodeMessageBlocks(
     scheduleRun?: ScheduleRunReference | null;
     /** Where the run's block goes (`scheduleRunPlacement`); in front unless said otherwise. */
     scheduleRunPlacement?: ScheduleRunPlacement;
+    /** Hints for a voice message the user sent; written by the chat socket alone (`voice-hints.ts`). */
+    voiceHints?: VoiceHints | null;
     ownProject?: string;
   },
 ): string {
   if (blocks?.provenance && blocks.fromSession?.kind !== "assistant") throw new Error("A provenance block needs a PPM Assistant sender");
   if (blocks?.userWords && blocks.fromSession) throw new Error("The user's words never carry another session as sender");
   if (blocks?.scheduleRun && (blocks.fromSession || blocks.userWords)) throw new Error("A schedule's run is sent by PPM alone");
-  const safeBody = encodeScheduleRun(neutralizeBlockMarkers(body), blocks?.scheduleRun, blocks?.scheduleRunPlacement);
+  if (blocks?.voiceHints && (blocks.fromSession || blocks.userWords || blocks.scheduleRun)) {
+    throw new Error("Voice hints ride only on a message the user sent themself");
+  }
+  const safeBody = encodeScheduleRun(encodeVoiceHints(neutralizeBlockMarkers(body), blocks?.voiceHints), blocks?.scheduleRun, blocks?.scheduleRunPlacement);
   const withProv = blocks?.userWords ? encodeUserWords(safeBody, blocks.userWords) : encodeProvenance(safeBody, blocks?.provenance);
   const withFrom = encodeFromSession(withProv, blocks?.fromSession);
   const withTasks = encodeTaskRefs(withFrom, blocks?.taskRefs);

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import {
   parseWhisperText,
+  supportsCarryPrompt,
   threadCount,
   whisperArgs,
 } from "../../../src/services/speech-to-text/whisper-transcribe.service.ts";
@@ -93,5 +94,17 @@ describe("whisperArgs", () => {
     expect(withPrompt[withPrompt.indexOf("--prompt") + 1]).toBe('Hono, Bun, "quoted" `x`');
     const long = whisperArgs("/w", "/a.wav", "/m.bin", "vi", "x".repeat(5000));
     expect(long[long.indexOf("--prompt") + 1]!.length).toBe(1000);
+  });
+
+  it("carries the word list into every 30-second window only when asked, and only with a list", () => {
+    expect(whisperArgs("/w", "/a.wav", "/m.bin", "vi", "Hono")).not.toContain("--carry-initial-prompt");
+    expect(whisperArgs("/w", "/a.wav", "/m.bin", "vi", "Hono", { carryPrompt: true })).toContain("--carry-initial-prompt");
+    expect(whisperArgs("/w", "/a.wav", "/m.bin", "vi", "  ", { carryPrompt: true })).not.toContain("--carry-initial-prompt");
+  });
+});
+
+describe("supportsCarryPrompt", () => {
+  it("answers false for a binary that cannot be run, instead of failing the transcription", async () => {
+    expect(await supportsCarryPrompt("/nonexistent/whisper-cli")).toBe(false);
   });
 });

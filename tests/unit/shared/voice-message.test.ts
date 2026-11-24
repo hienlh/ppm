@@ -2,6 +2,9 @@ import { describe, expect, it } from "bun:test";
 import {
   encodeVoicePart, formatVoiceDuration, isStoredVoicePath, splitVoiceMessage, VOICE_NOTE, voiceMarkerLine, voicePlainText,
   whisperVocabularyPrompt,
+  whisperPromptWords,
+  estimateWhisperTokens,
+  WHISPER_PROMPT_MAX_TOKENS,
 } from "../../../src/shared/voice-message.ts";
 
 const PATH = "C:\\Users\\me\\.ppm\\uploads\\voice-1.wav";
@@ -120,6 +123,19 @@ describe("whisperVocabularyPrompt", () => {
     const prompt = whisperVocabularyPrompt(["aaaa", "bbbb", "cccc"], 11);
     expect(prompt).toBe("aaaa, bbbb");
     expect(whisperVocabularyPrompt(Array.from({ length: 500 }, (_, i) => `word${i}`)).length).toBeLessThanOrEqual(600);
+  });
+
+  it("also stops under Whisper's token limit, which marked letters reach long before 600 characters", () => {
+    expect(estimateWhisperTokens("PPM")).toBe(2);
+    expect(estimateWhisperTokens("người")).toBe(1 + 2 * 2 + 1);
+    // 600 characters of plain identifiers fit; the same length of Vietnamese phrases does not.
+    const ascii = whisperPromptWords(Array.from({ length: 100 }, (_, i) => `ab${i}`));
+    expect(ascii.reduce((n, w) => n + estimateWhisperTokens(w), 0)).toBeLessThanOrEqual(WHISPER_PROMPT_MAX_TOKENS);
+    const marked = whisperPromptWords(Array.from({ length: 100 }, (_, i) => `đường ống ${i}`));
+    expect(marked.join(", ").length).toBeLessThan(400);
+    expect(marked.reduce((n, w) => n + estimateWhisperTokens(w), 0)).toBeLessThanOrEqual(WHISPER_PROMPT_MAX_TOKENS);
+    // The user's own words come first, so the cut lands on the end of the list, never its start.
+    expect(marked[0]).toBe("đường ống 0");
   });
 });
 

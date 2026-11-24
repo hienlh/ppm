@@ -221,6 +221,8 @@ try {
 
   // ST2: Full, two ordinary settings, no card; Undo from the chat card.
   {
+    // A fresh install sends voice as heard (no Haiku): start from Haiku on, so turning it off is a change.
+    await fx.api("/api/speech/voice-settings", { method: "PUT", body: JSON.stringify({ cleanupEnabled: true }) });
     await fx.script("st2", [{ mcp: "settings_set", args: { changes: [{ key: "voice.cleanup_enabled", value: false }, { key: "notifications.delay_seconds", value: 120 }] } }, { text: "ST2 done." }], { match: "ST2" });
     await send(desk, "ST2 tắt Haiku dọn chữ và cho thông báo chờ 2 phút");
     await desk.page.getByText("ST2 done.").first().waitFor({ timeout: 120000 });

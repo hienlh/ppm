@@ -4,7 +4,7 @@ import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
 import { DEFAULT_ASSISTANT_SETTINGS, type AssistantSettings } from "../shared/assistant-settings.ts";
 import type { PpmToolSwitches } from "../shared/ppm-tools.ts";
 import type { FeatureIntroStates } from "../shared/feature-intros.ts";
-import type { VoiceMessageConfig } from "../shared/voice-message.ts";
+import { DEFAULT_TRANSCRIPT_FIX, type VoiceMessageConfig } from "../shared/voice-message.ts";
 import type { SessionCollabSettings } from "../shared/session-collab-settings.ts";
 import { isValidLeftoverIdleMinutes } from "../shared/leftover-processes.ts";
 
@@ -311,7 +311,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   log_level: DEFAULT_LOG_LEVEL,
   feature_intros: {},
   voice_message: {
-    review_before_send: true, cleanup_enabled: true, learn_auto_vocabulary: true, learn_from_cleanup: true,
+    review_before_send: true, transcript_fix: { ...DEFAULT_TRANSCRIPT_FIX }, learn_auto_vocabulary: true, learn_from_cleanup: true,
     weekly_summary: true, vietnamese_fixes: true, words: [], projects: {},
   },
 };

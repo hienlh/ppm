@@ -50,8 +50,8 @@ describe("voice message step timings", () => {
 
   it("says the clean-up is off rather than failed when Settings turned it off", () => {
     const off = { ...LONG, cleaned: false, cleanupSkipped: true, cleanupMs: 0 };
-    expect(timingSummary(off)).toBe("19.0s · Whisper 12.5s · Haiku off");
-    expect(timingRows(off).find((r) => r.label.startsWith("Claude Haiku"))?.value).toBe("off in Settings");
+    expect(timingSummary(off)).toBe("19.0s · Whisper 12.5s · as heard");
+    expect(timingRows(off).find((r) => r.label.startsWith("Claude Haiku"))?.value).toBe("not used: sent as heard, with hints");
   });
 
   it("offers Whisper's original only when Haiku changed it", () => {

@@ -62,8 +62,15 @@ const MAX_PROMPT_CHARS = 1_000;
  * `prompt` is whisper.cpp's `--prompt`, the "previous text" it conditions on: a list of the
  * project's words makes it spell an English identifier inside Vietnamese speech the way the
  * project does. Passed as its own argv element, so nothing in it can reach a shell.
+ *
+ * `carryPrompt` adds `--carry-initial-prompt`. Whisper reads audio in 30-second windows and, by
+ * default, conditions each window after the first on the text it just wrote, so the word list
+ * fades out of a two-minute message after its first half minute; with the flag every window
+ * starts from the list again.
  */
-export function whisperArgs(binary: string, wavPath: string, modelPath: string, language: string, prompt?: string): string[] {
+export function whisperArgs(
+  binary: string, wavPath: string, modelPath: string, language: string, prompt?: string, opts: { carryPrompt?: boolean } = {},
+): string[] {
   const hint = prompt?.replace(/\s+/g, " ").trim().slice(0, MAX_PROMPT_CHARS) ?? "";
   return [
     binary,
@@ -77,7 +84,35 @@ export function whisperArgs(binary: string, wavPath: string, modelPath: string, 
     "--vad",
     "--vad-model", vadModelPath(),
     ...(hint ? ["--prompt", hint] : []),
+    ...(hint && opts.carryPrompt ? ["--carry-initial-prompt"] : []),
   ];
+}
+
+const CARRY_FLAG = "--carry-initial-prompt";
+const carrySupport = new Map<string, Promise<boolean>>();
+
+/**
+ * Whether this `whisper-cli` knows `--carry-initial-prompt`: an older build (Homebrew's, on a Mac
+ * that has not upgraded) rejects an unknown flag and every transcription would fail. Asked once
+ * per binary, from its own `--help`.
+ */
+export function supportsCarryPrompt(binary: string): Promise<boolean> {
+  let known = carrySupport.get(binary);
+  if (!known) {
+    known = (async () => {
+      try {
+        const proc = Bun.spawn({ cmd: [binary, "--help"], stdout: "pipe", stderr: "pipe", stdin: "ignore", windowsHide: true });
+        const timer = setTimeout(() => proc.kill(), 10_000);
+        const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+        clearTimeout(timer);
+        return out.includes(CARRY_FLAG) || err.includes(CARRY_FLAG);
+      } catch {
+        return false;
+      }
+    })();
+    carrySupport.set(binary, known);
+  }
+  return known;
 }
 
 let queue: Promise<unknown> = Promise.resolve();
@@ -105,9 +140,11 @@ async function runOnce(wav: Uint8Array, language: string, prompt: string | undef
   const wavPath = resolve(whisperTmpDir(), `${randomUUID()}.wav`);
   await Bun.write(wavPath, wav);
 
+  // Asked before the clock starts: the first message after a start pays one `--help` run for it.
+  const carryPrompt = !!prompt?.trim() && (await supportsCarryPrompt(binary.path));
   const started = Date.now();
   try {
-    const cmd = whisperArgs(binary.path, wavPath, resolve(whisperModelDir(), model.file), language, prompt);
+    const cmd = whisperArgs(binary.path, wavPath, resolve(whisperModelDir(), model.file), language, prompt, { carryPrompt });
     const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe", stdin: "ignore", windowsHide: true });
     const timer = setTimeout(() => proc.kill(), TIMEOUT_MS);
     const [stdout, stderr, code] = await Promise.all([

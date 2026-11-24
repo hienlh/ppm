@@ -3,7 +3,9 @@
  * transcript, and learning from a corrected transcript.
  */
 import { api, getAuthToken } from "@/lib/api-client";
-import type { BlockedWord, LearnedWord } from "../../shared/voice-message";
+import {
+  DEFAULT_TRANSCRIPT_FIX, VOICE_SURFACES, type BlockedWord, type LearnedWord, type VoiceSurface, type VoiceTranscriptFix,
+} from "../../shared/voice-message";
 
 /** One word of Whisper's prompt and where it came from: typed by the user, learned, or picked up. */
 export interface PromptWord { word: string; source: "typed" | "learned" | "picked" }
@@ -11,8 +13,8 @@ export interface PromptWord { word: string; source: "typed" | "learned" | "picke
 export interface VoiceSettingsView {
   enabled: boolean;
   reviewBeforeSend: boolean;
-  /** Tidy the transcript with Claude Haiku; off: Whisper's text as it is. */
-  cleanupEnabled: boolean;
+  /** Per surface: tidy with Claude Haiku, or send Whisper's text with hints. */
+  transcriptFix: Record<VoiceSurface, VoiceTranscriptFix>;
   /** Self-learning as chosen (the feature intro or this pane); its parts below. */
   selfLearning: boolean;
   learnAutoVocabulary: boolean;
@@ -34,7 +36,7 @@ export interface VoiceSettingsView {
 export interface VoiceSettingsPatch {
   enabled?: boolean;
   reviewBeforeSend?: boolean;
-  cleanupEnabled?: boolean;
+  transcriptFix?: Partial<Record<VoiceSurface, VoiceTranscriptFix>>;
   selfLearning?: boolean;
   learnAutoVocabulary?: boolean;
   learnFromCleanup?: boolean;
@@ -55,7 +57,7 @@ export interface VoiceTranscript {
   transcribeMs: number;
   cleanupMs: number;
   reviewBeforeSend: boolean;
-  /** The user turned the clean-up off: Whisper's text, by choice, not a failure. */
+  /** The chat box sends Whisper's text with hints instead of a clean-up: by choice, not a failure. */
   cleanupSkipped: boolean;
   /** The server's step timings, when it sends them. */
   convertMs?: number;
@@ -76,6 +78,13 @@ export const VOICE_SETTINGS_CHANGED_EVENT = "ppm:voice-settings-changed";
 
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []);
 
+function parseTranscriptFix(raw: unknown): Record<VoiceSurface, VoiceTranscriptFix> {
+  const v = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const out = { ...DEFAULT_TRANSCRIPT_FIX };
+  for (const surface of VOICE_SURFACES) if (v[surface] === "haiku" || v[surface] === "hints") out[surface] = v[surface] as VoiceTranscriptFix;
+  return out;
+}
+
 /** What the server answered, with anything missing read as off or empty. */
 export function parseVoiceSettings(raw: unknown): VoiceSettingsView {
   const v = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -95,7 +104,7 @@ export function parseVoiceSettings(raw: unknown): VoiceSettingsView {
   return {
     enabled: v.enabled === true,
     reviewBeforeSend: v.reviewBeforeSend !== false,
-    cleanupEnabled: v.cleanupEnabled !== false,
+    transcriptFix: parseTranscriptFix(v.transcriptFix),
     selfLearning: v.selfLearning === true,
     learnAutoVocabulary: v.learnAutoVocabulary !== false,
     learnFromCleanup: v.learnFromCleanup !== false,

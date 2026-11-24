@@ -84,6 +84,8 @@ import {
   effectivePermissionMode, targetChatMode, providerDefaultMode, type ChatDeliveryState,
 } from "./chat-deliver-user-message.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
+import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
+import { splitVoiceMessage } from "../../shared/voice-message.ts";
 import { collabCardForListeners, settleCollabApprovalFromServer } from "./chat-collab-approval-relay.ts";
 import { assistantProviderDefaults, onAssistantSettingsSaved, startupPermissionsChanged } from "../../services/assistant/assistant-settings.service.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
@@ -2419,10 +2421,20 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   // the alias and sigil rewrites above have already given it the name that provider knows.
   const runPlacement = opts.origin === "schedule" && opts.scheduleRun ? scheduleRunPlacement(parsed.content.trimStart(), providerId) : "before";
   if (runPlacement === "after") parsed.content = parsed.content.trimStart();
+  // A voice message the person sent as Whisper heard it gets the words it may have got wrong,
+  // written here and nowhere else. A script posting through the socket is not a person.
+  const voiceHints = fromUser && !opts.traceOrigin && splitVoiceMessage(parsed.content).voice
+    ? await (await import("../../services/voice-message/voice-hints.ts")).voiceHintsForMessage(
+      parsed.content,
+      isAssistantSession(sessionId, entry.projectPath) ? ASSISTANT_PROJECT_NAME : entry.projectName ?? "",
+      opts.origin === "telegram" ? "telegram" : "composer",
+    )
+    : null;
   // The typed text has its block markers broken, so the only blocks that decode are these.
   parsed.content = encodeMessageBlocks(parsed.content, {
     turnRefs: opts.turnRefs ?? null, taskRefs: opts.taskRefs ?? null, replyTo: opts.replyTo ?? null, ownProject: entry.projectName || undefined,
     ...(opts.origin === "schedule" && opts.scheduleRun ? { scheduleRun: opts.scheduleRun, scheduleRunPlacement: runPlacement } : {}),
+    ...(voiceHints ? { voiceHints } : {}),
   });
   // The sender drew its own copy of this message before sending. Hand it the text as it now
   // stands, so the copy matches the transcript, the echo and a replay byte for byte.

@@ -9,7 +9,7 @@ import {
 const AT = "2026-11-20T10:00:00.000Z";
 /** A row with nothing chosen: every switch at its default, self-learning not chosen. */
 const DEFAULTS = {
-  review_before_send: true, cleanup_enabled: true, learn_auto_vocabulary: true, learn_from_cleanup: true,
+  review_before_send: true, transcript_fix: { composer: "hints", telegram: "hints" }, learn_auto_vocabulary: true, learn_from_cleanup: true,
   weekly_summary: true, vietnamese_fixes: true, words: [], projects: {},
 };
 
@@ -22,10 +22,23 @@ describe("normalizeVoiceConfig", () => {
     }
   });
 
-  it("keeps the Haiku clean-up on for a row written before the switch existed, off only when it says false", () => {
-    expect(normalizeVoiceConfig({ review_before_send: true, words: [], projects: {} }).cleanup_enabled).toBe(true);
-    expect(normalizeVoiceConfig({ cleanup_enabled: "no" }).cleanup_enabled).toBe(true);
-    expect(normalizeVoiceConfig({ cleanup_enabled: false }).cleanup_enabled).toBe(false);
+  it("sends both surfaces as heard with hints unless a surface says haiku, whatever the old single switch said", () => {
+    const both = { composer: "hints", telegram: "hints" };
+    expect(normalizeVoiceConfig({ review_before_send: true, words: [], projects: {} }).transcript_fix).toEqual(both);
+    // The old switch was written into nearly every row, so it says nothing about the user's choice now.
+    expect(normalizeVoiceConfig({ cleanup_enabled: true }).transcript_fix).toEqual(both);
+    expect(normalizeVoiceConfig({ transcript_fix: { telegram: "haiku", composer: "tidy", extra: "haiku" } }).transcript_fix)
+      .toEqual({ composer: "hints", telegram: "haiku" });
+    expect(normalizeVoiceConfig({ transcript_fix: "haiku" }).transcript_fix).toEqual(both);
+  });
+
+  it("changes one surface at a time, and the older single switch changes both", () => {
+    configService.set("voice_message", {});
+    expect(updateVoiceSettings({ transcriptFix: { telegram: "haiku" } }).transcript_fix).toEqual({ composer: "hints", telegram: "haiku" });
+    expect(updateVoiceSettings({ cleanupEnabled: true }).transcript_fix).toEqual({ composer: "haiku", telegram: "haiku" });
+    expect(updateVoiceSettings({ cleanupEnabled: false }).transcript_fix).toEqual({ composer: "hints", telegram: "hints" });
+    // A value that is neither choice changes nothing.
+    expect(updateVoiceSettings({ transcriptFix: { composer: "tidy" as never } }).transcript_fix.composer).toBe("hints");
   });
 
   it("keeps enabled only when it is a boolean, and review on unless it is false", () => {

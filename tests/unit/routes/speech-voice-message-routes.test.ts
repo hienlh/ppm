@@ -66,7 +66,7 @@ describe("/voice-settings", () => {
     ready = false;
     const res = await app().request("/speech/voice-settings?project=demo");
     expect((await json(res)).data).toEqual({
-      enabled: false, reviewBeforeSend: true, cleanupEnabled: true,
+      enabled: false, reviewBeforeSend: true, transcriptFix: { composer: "hints", telegram: "hints" }, cleanupEnabled: false,
       selfLearning: false, learnAutoVocabulary: true, learnFromCleanup: true, weeklySummary: true, vietnameseFixes: true,
       words: [], projectWords: [], projectLearned: [], projectBlocked: [],
       whisperPrompt: [], whisperPromptMaxChars: 600, whisperReady: false,
@@ -101,7 +101,22 @@ describe("/voice-settings", () => {
   it("saves the Haiku clean-up switch and refuses a value that is not a boolean", async () => {
     expect((await json(await put({ cleanupEnabled: false }))).data).toMatchObject({ cleanupEnabled: false });
     expect((await put({ cleanupEnabled: "off" })).status).toBe(400);
-    expect((await json(await put({ cleanupEnabled: true }))).data).toMatchObject({ cleanupEnabled: true });
+    expect((await json(await put({ cleanupEnabled: true }))).data)
+      .toMatchObject({ cleanupEnabled: true, transcriptFix: { composer: "haiku", telegram: "haiku" } });
+  });
+
+  it("saves each surface's choice apart and refuses an unknown surface or value", async () => {
+    const data = (await json(await put({ transcriptFix: { telegram: "haiku" } }))).data;
+    expect(data).toMatchObject({ transcriptFix: { composer: "hints", telegram: "haiku" }, cleanupEnabled: false });
+    expect((await put({ transcriptFix: { email: "haiku" } })).status).toBe(400);
+    expect((await put({ transcriptFix: { composer: "tidy" } })).status).toBe(400);
+    expect((await put({ transcriptFix: ["haiku"] })).status).toBe(400);
+  });
+
+  it("records a chat-box recording and a chat-box edit as the chat box's", async () => {
+    await put({ enabled: true });
+    expect((await postVoice({ audio: audio(), project: "demo" })).status).toBe(200);
+    expect(processed.at(-1)).toMatchObject({ project: "demo", surface: "composer" });
   });
 
   it("saves lists and the review switch", async () => {

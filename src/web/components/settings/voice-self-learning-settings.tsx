@@ -26,6 +26,7 @@ export function VoiceSelfLearningSettings({ view, busy, projectSelect, save }: {
   save: (patch: VoiceSettingsPatch) => void;
 }) {
   const on = view.selfLearning;
+  const haikuInUse = Object.values(view.transcriptFix).includes("haiku");
   return (
     <>
       <Group title="Self-learning">
@@ -47,11 +48,11 @@ export function VoiceSelfLearningSettings({ view, busy, projectSelect, save }: {
             />
             <SwitchRow
               label="Learn from the clean-up's corrections"
-              note={view.cleanupEnabled
+              note={haikuInUse
                 ? "A word the clean-up fixed the same way in three messages (two when the project already uses it) is learned, and one nobody says for 30 days leaves the list by itself. No extra Haiku call."
-                : "Needs the Haiku clean-up, which is off."}
-              checked={view.learnFromCleanup && view.cleanupEnabled}
-              disabled={busy || !view.cleanupEnabled}
+                : "Needs the Haiku clean-up, which neither the chat box nor Telegram uses."}
+              checked={view.learnFromCleanup && haikuInUse}
+              disabled={busy || !haikuInUse}
               onChange={(learnFromCleanup) => save({ learnFromCleanup })}
             />
             <SwitchRow

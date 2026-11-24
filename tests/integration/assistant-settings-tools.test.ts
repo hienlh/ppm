@@ -57,7 +57,7 @@ describe("the switch", () => {
     expect(assistantToolOff("projects_list")).toBeNull();
     const r = await call("settings_set", ctx(allowAuto), { changes: [{ key: "voice.cleanup_enabled", value: false }] });
     expect(text(r)).toContain("off");
-    expect(readVoiceSettings().cleanup_enabled).toBe(true);
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "haiku", telegram: "haiku" });
   });
 });
 
@@ -66,10 +66,20 @@ describe("settings_set", () => {
     const r = json(await call("settings_set", ctx(allowAuto, "user_telegram"), { changes: [{ key: "voice.cleanup_enabled", value: false }] }));
     expect(r.outcome).toBe("changed");
     expect(r.approval).toBe("full");
-    expect(readVoiceSettings().cleanup_enabled).toBe(false);
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "hints", telegram: "hints" });
     expect(asked[0]!.alwaysAsk).toBeUndefined();
     const [row] = listSettingChanges({ limit: 1 });
     expect(row).toMatchObject({ key: "voice.cleanup_enabled", beforeText: "On", afterText: "Off", origin: "telegram", approval: "full" });
+  });
+
+  it("changes one surface's choice between Haiku and hints, leaving the other", async () => {
+    const r = json(await call("settings_set", ctx(allowAuto), { changes: [{ key: "voice.transcript_fix.telegram", value: "hints" }] }));
+    expect(r.outcome).toBe("changed");
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "haiku", telegram: "hints" });
+    const [row] = listSettingChanges({ limit: 1 });
+    expect(row).toMatchObject({ key: "voice.transcript_fix.telegram", beforeText: "Tidied by Claude Haiku", afterText: "As heard, with hints" });
+    expect(text(await call("settings_set", ctx(allowAuto), { changes: [{ key: "voice.transcript_fix.composer", value: "tidy" }] }))).not.toContain('"changed"');
+    expect(readVoiceSettings().transcript_fix.composer).toBe("haiku");
   });
 
   it("asks with an always-ask reason for a permission setting, and changes nothing when denied", async () => {

@@ -1,15 +1,18 @@
 /**
  * A voice message from recording to text: the audio becomes a WAV (ffmpeg for anything that is
- * not one already), Whisper transcribes it on this host with the project's words as a hint, and
- * Claude Haiku tidies the transcript with the chat's context. The audio and the transcript go
- * nowhere else. Shared by the composer's route and the Telegram bridge, which passes the OGG a
+ * not one already), Whisper transcribes it on this host with the project's words as a hint, and —
+ * where the surface is set to it — Claude Haiku tidies the transcript with the chat's context.
+ * Otherwise the transcript goes as Whisper heard it, and the chat socket attaches the hints when
+ * the message is sent (`voice-hints.ts`). The audio and the transcript go nowhere else. Shared by the composer's route and the Telegram bridge, which passes the OGG a
  * voice note arrives as and the project `__assistant__`.
  *
  * The feature switch is the callers' to check; this only does the work.
  */
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import { redactLogText } from "../../shared/log-redact.ts";
-import { VOICE_MAX_SECONDS, whisperVocabularyPrompt, type LearnedWord, type VoiceFix } from "../../shared/voice-message.ts";
+import {
+  VOICE_MAX_SECONDS, whisperVocabularyPrompt, type LearnedWord, type VoiceFix, type VoiceSurface,
+} from "../../shared/voice-message.ts";
 import { assistantWorkDir } from "../assistant/assistant-work-dir.ts";
 import { configService } from "../config.service.ts";
 import { createLogger } from "../logger.ts";
@@ -25,7 +28,7 @@ import { extractLearnedWords } from "./voice-learn.ts";
 import { fixesToShow, replacements } from "./voice-learn-from-cleanup.ts";
 import { appendLearnedWords, markLearnedUse, recordCleanupReplacements } from "./voice-learned-store.ts";
 import { VoiceMessageError } from "./voice-message-errors.ts";
-import { readVoiceSettings, selfLearningOn, vocabularyOf } from "./voice-settings.ts";
+import { readVoiceSettings, selfLearningOn, transcriptFixFor, vocabularyOf } from "./voice-settings.ts";
 import { composeVoiceWords, looksLikePromptEcho } from "./voice-vocabulary.ts";
 
 const log = createLogger("voice-message");
@@ -38,6 +41,8 @@ const DURATION_SLACK_SEC = 5;
 export interface ProcessVoiceInput {
   audio: Uint8Array;
   project: string;
+  /** Where it was recorded: chooses Haiku or hints (Settings → Voice). The chat box when left out. */
+  surface?: VoiceSurface;
   sessionId?: string;
   providerId?: string;
   /** What the user already typed into the same message; context only, never merged. */
@@ -52,8 +57,8 @@ export interface ProcessVoiceResult {
   cleaned: boolean;
   cleanupError?: string;
   /**
-   * The user turned the Haiku clean-up off: `text` is Whisper's own, by choice rather than failure,
-   * so it neither warns nor forces a review.
+   * The surface sends Whisper's text with hints instead of a Haiku clean-up: `text` is Whisper's
+   * own, by choice rather than failure, so it neither warns nor forces a review.
    */
   cleanupSkipped?: true;
   /** Words the clean-up replaced ("BPM" → "PPM"), for the Telegram card; absent when none. */
@@ -127,8 +132,9 @@ export async function processVoiceMessage(
     selfLearning, auto: await autoWords, nowMs: (deps.now?.() ?? new Date()).getTime(),
   });
   const words = lists.cleanup;
-  // Clean-up off: no context is read and Haiku is never asked; the word lists still help Whisper.
-  const cleanupOn = settings.cleanup_enabled;
+  // Hints instead of Haiku: no context is read and Haiku is never asked; the word lists still help
+  // Whisper, and the chat socket attaches the misheard words when the message is sent.
+  const cleanupOn = transcriptFixFor(settings, input.surface ?? "composer") === "haiku";
   // Read while Whisper runs: the chat, the docs and the file index cost nothing on the critical path.
   const context = !cleanupOn ? null : deps.gatherContext({
     project: input.project, projectPath, sessionId: input.sessionId, providerId: input.providerId, typed: input.typed, words,
@@ -196,6 +202,8 @@ export async function processVoiceMessage(
 
 export interface LearnFromEditInput {
   project: string;
+  /** Where the transcript was recorded; the chat box when left out. */
+  surface?: VoiceSurface;
   /** The transcript as PPM produced it (cleaned, or raw when the clean-up failed). */
   before: string;
   /** The transcript as the user sent it. */
@@ -209,8 +217,9 @@ export interface LearnFromEditInput {
 export async function learnFromEdit(input: LearnFromEditInput, ask: VoiceAsk = askClaudeHaiku): Promise<LearnedWord[]> {
   requireProject(input.project);
   const settings = readVoiceSettings();
-  // Learning asks Haiku too: with the clean-up off, Haiku is not called at all.
-  if (!settings.cleanup_enabled) return [];
+  // Learning asks Haiku once, after the message went. A surface set to hints keeps Haiku off its
+  // messages unless self-learning was chosen, which is what asks for learning.
+  if (transcriptFixFor(settings, input.surface ?? "composer") !== "haiku" && !selfLearningOn(settings)) return [];
   const known = vocabularyOf(settings, input.project);
   let learned: LearnedWord[];
   try {

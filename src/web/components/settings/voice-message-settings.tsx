@@ -1,6 +1,6 @@
 /**
  * Settings → Voice, the voice-message half: the feature's own switch, whether the transcript
- * waits to be read, what the clean-up is, and the word lists Whisper and the clean-up are given
+ * waits to be read, what each surface does with misheard words, and the word lists Whisper and the clean-up are given
  * (one for every project, one per project with the words PPM learned from your corrections).
  *
  * Every change is saved at once; the server answers with the whole state, which replaces ours.
@@ -12,6 +12,7 @@ import { ChevronDown } from "@/lib/icons";
 import { SwitchRow } from "./settings-rows";
 import { VoiceWordsEditor } from "./voice-words-editor";
 import { VoiceSelfLearningSettings } from "./voice-self-learning-settings";
+import { VoiceTranscriptFixRows } from "./voice-transcript-fix-rows";
 import { useProjectStore } from "@/stores/project-store";
 import {
   fetchVoiceSettings, putVoiceSettings, type VoiceSettingsPatch, type VoiceSettingsView,
@@ -81,7 +82,7 @@ export function VoiceMessageSettings({ onEnabledChange }: { onEnabledChange?: (e
       <Group title="Voice messages">
         <SwitchRow
           label="Voice messages"
-          note="The mic in the chat box records a message: Whisper turns it into text on this host, then it is tidied for you to read. Off: the mic dictates into the box as before."
+          note="The mic in the chat box records a message and Whisper turns it into text on this host. Off: the mic dictates into the box as before."
           checked={view.enabled}
           disabled={busy}
           onChange={(enabled) => void save({ enabled })}
@@ -95,14 +96,12 @@ export function VoiceMessageSettings({ onEnabledChange }: { onEnabledChange?: (e
               disabled={busy}
               onChange={(reviewBeforeSend) => void save({ reviewBeforeSend })}
             />
-            <SwitchRow
-              label="Tidy the transcript with Claude Haiku"
-              note="One call per message on your Claude account. Reads the last 8 messages, memory and CLAUDE.md, file names and your word lists, and fixes misheard words and punctuation only. It also learns words from your edits. Off: Whisper's transcript is used as it is and Haiku is never called; your word lists still help Whisper."
-              checked={view.cleanupEnabled}
+            <VoiceTranscriptFixRows
+              value={view.transcriptFix}
               disabled={busy}
-              onChange={(cleanupEnabled) => void save({ cleanupEnabled })}
+              onChange={(surface, fix) => void save({ transcriptFix: { [surface]: fix } })}
             />
-            {view.cleanupEnabled && (
+            {Object.values(view.transcriptFix).includes("haiku") && (
               <SwitchRow
                 label="Fix Vietnamese words by context"
                 note={'The clean-up also fixes ordinary words Whisper misheard ("ta lệnh" → "ra lệnh") when the sentence makes the meaning clear. The Telegram card lists every word it changed.'}

@@ -69,6 +69,15 @@ if (voiceAnswer === "on" || voiceAnswer === "off") {
   if (!result.ok) throw new Error(`Could not answer the voice introduction: ${JSON.stringify(result)}`);
 }
 
+// The scenarios were written for the Haiku clean-up, which is no longer the default (each surface
+// now sends Whisper's text with hints unless set otherwise). PPM_VOICE_TRANSCRIPT_FIX=hints runs
+// the fixture as a fresh install would.
+{
+  const fix = process.env.PPM_VOICE_TRANSCRIPT_FIX === "hints" ? "hints" : "haiku";
+  const { updateVoiceSettings } = await import("../../../src/services/voice-message/voice-settings");
+  updateVoiceSettings({ transcriptFix: { composer: fix, telegram: fix } });
+}
+
 // PPM_VOICE_SELF_LEARNING=seed: self-learning on, with a week of learned words and one undone word,
 // as a user who has had it on for a while would have them (the Settings pane's list has rows to show).
 if (process.env.PPM_VOICE_SELF_LEARNING === "seed") {

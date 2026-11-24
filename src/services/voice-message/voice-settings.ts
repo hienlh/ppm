@@ -1,6 +1,6 @@
 /**
- * The `voice_message` config row: on/off, "read the transcript before it is sent", the clean-up
- * and self-learning switches, and the word lists Whisper and the clean-up are given. Everything
+ * The `voice_message` config row: on/off, "read the transcript before it is sent", what each
+ * surface does with Whisper's text (Haiku or hints), the self-learning switches, and the word lists Whisper and the clean-up are given. Everything
  * read from the row goes through {@link normalizeVoiceConfig}, because the row is user data that a
  * CLI, an older build or a hand edit may have left in any shape.
  *
@@ -8,8 +8,10 @@
  * in `voice-learned-store.ts`; this file only reads, cleans and applies Settings' changes.
  */
 import { configService } from "../config.service.ts";
-import type {
-  BlockedWord, LearnedWord, VoiceCandidate, VoiceMessageConfig, VoiceProjectWords,
+import {
+  DEFAULT_TRANSCRIPT_FIX, VOICE_SURFACES,
+  type BlockedWord, type LearnedWord, type VoiceCandidate, type VoiceMessageConfig, type VoiceProjectWords, type VoiceSurface,
+  type VoiceTranscriptFix,
 } from "../../shared/voice-message.ts";
 
 export const VOICE_LIMITS = {
@@ -144,12 +146,26 @@ function cleanProjects(raw: unknown): Record<string, VoiceProjectWords> {
   return out;
 }
 
+const isTranscriptFix = (v: unknown): v is VoiceTranscriptFix => v === "haiku" || v === "hints";
+
+/**
+ * Each surface's choice, or its default. A row from before the choice existed carries only
+ * `cleanup_enabled`, which is not read: the switch was on in nearly every row (it defaulted on and
+ * every save wrote it), so it says nothing about what the user wants now.
+ */
+function cleanTranscriptFix(raw: unknown): Record<VoiceSurface, VoiceTranscriptFix> {
+  const value = isObj(raw) ? raw : {};
+  const out = { ...DEFAULT_TRANSCRIPT_FIX };
+  for (const surface of VOICE_SURFACES) if (isTranscriptFix(value[surface])) out[surface] = value[surface];
+  return out;
+}
+
 /** The stored row in a shape every reader can trust; anything missing takes its default. */
 export function normalizeVoiceConfig(raw: unknown): VoiceMessageConfig {
   const value = isObj(raw) ? raw : {};
   const config: VoiceMessageConfig = {
     review_before_send: value.review_before_send !== false,
-    cleanup_enabled: value.cleanup_enabled !== false,
+    transcript_fix: cleanTranscriptFix(value.transcript_fix),
     learn_auto_vocabulary: value.learn_auto_vocabulary !== false,
     learn_from_cleanup: value.learn_from_cleanup !== false,
     weekly_summary: value.weekly_summary !== false,
@@ -177,6 +193,16 @@ export function voiceMessagesEnabled(): boolean {
   return readVoiceSettings().enabled === true;
 }
 
+/** What `surface` does with Whisper's text: tidy it with Haiku, or send it with hints. */
+export function transcriptFixFor(config: VoiceMessageConfig, surface: VoiceSurface): VoiceTranscriptFix {
+  return config.transcript_fix[surface];
+}
+
+/** Whether any surface still tidies with Haiku (what learning from the clean-up needs). */
+export function haikuCleanupInUse(config: VoiceMessageConfig): boolean {
+  return VOICE_SURFACES.some((s) => config.transcript_fix[s] === "haiku");
+}
+
 /** Self-learning runs only inside a switched-on voice feature, and only once somebody chose it. */
 export function selfLearningOn(config: VoiceMessageConfig): boolean {
   return config.enabled === true && config.self_learning === true;
@@ -197,6 +223,12 @@ export function vocabularyOf(config: VoiceMessageConfig, project: string): strin
 export interface VoiceSettingsPatch {
   enabled?: boolean;
   reviewBeforeSend?: boolean;
+  /** Per surface; a surface left out keeps its choice. */
+  transcriptFix?: Partial<Record<VoiceSurface, VoiceTranscriptFix>>;
+  /**
+   * The older single switch, still taken from the Assistant's settings tools and its undo rows:
+   * true tidies both surfaces with Haiku, false sends both with hints.
+   */
   cleanupEnabled?: boolean;
   selfLearning?: boolean;
   learnAutoVocabulary?: boolean;
@@ -214,7 +246,7 @@ export interface VoiceSettingsPatch {
 }
 
 const SWITCHES = [
-  ["enabled", "enabled"], ["reviewBeforeSend", "review_before_send"], ["cleanupEnabled", "cleanup_enabled"],
+  ["enabled", "enabled"], ["reviewBeforeSend", "review_before_send"],
   ["selfLearning", "self_learning"], ["learnAutoVocabulary", "learn_auto_vocabulary"],
   ["learnFromCleanup", "learn_from_cleanup"], ["weeklySummary", "weekly_summary"], ["vietnameseFixes", "vietnamese_fixes"],
 ] as const satisfies ReadonlyArray<readonly [keyof VoiceSettingsPatch, keyof VoiceMessageConfig]>;
@@ -224,6 +256,14 @@ export function updateVoiceSettings(patch: VoiceSettingsPatch, now = new Date())
   for (const [from, to] of SWITCHES) {
     const value = patch[from];
     if (typeof value === "boolean") (config as unknown as Record<string, boolean>)[to] = value;
+  }
+  if (typeof patch.cleanupEnabled === "boolean") {
+    const fix: VoiceTranscriptFix = patch.cleanupEnabled ? "haiku" : "hints";
+    config.transcript_fix = { composer: fix, telegram: fix };
+  }
+  for (const surface of VOICE_SURFACES) {
+    const fix = patch.transcriptFix?.[surface];
+    if (isTranscriptFix(fix)) config.transcript_fix = { ...config.transcript_fix, [surface]: fix };
   }
   if (patch.words) config.words = cleanWordList(patch.words, VOICE_LIMITS.globalWords);
   const project = patch.project;

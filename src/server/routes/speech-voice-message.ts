@@ -22,7 +22,7 @@ import {
 import { autoVocabulary, clearAutoVocabularyCache } from "../../services/voice-message/voice-auto-vocabulary-sources.ts";
 import { whisperPromptPreview } from "../../services/voice-message/voice-vocabulary.ts";
 import { isFaded } from "../../services/voice-message/voice-learned-fade.ts";
-import { WHISPER_PROMPT_MAX_CHARS } from "../../shared/voice-message.ts";
+import { VOICE_SURFACES, WHISPER_PROMPT_MAX_CHARS, type VoiceSurface } from "../../shared/voice-message.ts";
 
 export interface VoiceRouteDeps {
   broadcast: (event: unknown) => void;
@@ -57,7 +57,9 @@ async function settingsView(project: string | undefined, whisperReady: boolean) 
   return {
     enabled: config.enabled === true,
     reviewBeforeSend: config.review_before_send,
-    cleanupEnabled: config.cleanup_enabled,
+    transcriptFix: config.transcript_fix,
+    /** Both surfaces tidy with Haiku: the older single switch, as the Assistant's settings tools read it. */
+    cleanupEnabled: VOICE_SURFACES.every((s) => config.transcript_fix[s] === "haiku"),
     selfLearning: config.self_learning === true,
     learnAutoVocabulary: config.learn_auto_vocabulary,
     learnFromCleanup: config.learn_from_cleanup,
@@ -87,6 +89,17 @@ function parsePatch(body: unknown): VoiceSettingsPatch | string {
     if (value === undefined) continue;
     if (typeof value !== "boolean") return `${key} must be true or false`;
     patch[key] = value;
+  }
+  if (b.transcriptFix !== undefined) {
+    const fix = b.transcriptFix;
+    if (!fix || typeof fix !== "object" || Array.isArray(fix)) return "transcriptFix must be an object";
+    const out: NonNullable<VoiceSettingsPatch["transcriptFix"]> = {};
+    for (const [surface, value] of Object.entries(fix)) {
+      if (!VOICE_SURFACES.includes(surface as VoiceSurface)) return `Unknown surface "${surface}"`;
+      if (value !== "haiku" && value !== "hints") return "transcriptFix values must be \"haiku\" or \"hints\"";
+      out[surface as VoiceSurface] = value;
+    }
+    patch.transcriptFix = out;
   }
   for (const key of ["words", "projectWords", "removeLearned", "restoreBlocked"] as const) {
     const value = b[key];
@@ -142,6 +155,7 @@ export function registerVoiceMessageRoutes(routes: Hono, deps: VoiceRouteDeps): 
       const result = await deps.process({
         audio: new Uint8Array(await audio.arrayBuffer()),
         project,
+        surface: "composer",
         sessionId: text("sessionId", 200),
         providerId: text("providerId", 40),
         typed: text("typed", MAX_TEXT_CHARS),
@@ -167,7 +181,7 @@ export function registerVoiceMessageRoutes(routes: Hono, deps: VoiceRouteDeps): 
     if (typeof before !== "string" || typeof after !== "string") return fail(c, 400, "before and after must be text");
     if (before.length > MAX_TEXT_CHARS || after.length > MAX_TEXT_CHARS) return fail(c, 400, "The text is too long");
     try {
-      return c.json(ok({ learned: await deps.learn({ project, before, after }) }));
+      return c.json(ok({ learned: await deps.learn({ project, surface: "composer", before, after }) }));
     } catch (e) {
       if (e instanceof VoiceMessageError) return fail(c, STATUS[e.code], e.message, e.code);
       return fail(c, 500, (e as Error)?.message || "Learning failed");
