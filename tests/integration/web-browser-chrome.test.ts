@@ -9,7 +9,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { applyDbPragmas, runMigrations, setDb } from "../../src/services/db.service.ts";
+import { applyDbPragmas, openTestDb, runMigrations, setDb } from "../../src/services/db.service.ts";
 import { configService } from "../../src/services/config.service.ts";
 import { parseWebBrowserSettings } from "../../src/shared/web-browser-settings.ts";
 import { findBrowsers } from "../../src/services/web-browser/chrome-locate.ts";
@@ -20,6 +20,14 @@ import { decodeBinaryFrame } from "../../src/shared/web-browser-binary-frames.ts
 import type { WebBrowserServerMessage } from "../../src/shared/web-browser-protocol.ts";
 
 const hasBrowser = (await findBrowsers()).length > 0;
+const previousPpmHome = process.env.PPM_HOME;
+
+/** Other test files share this process and expect the preload's in-memory, auth-off config. */
+function restoreSharedConfig(): void {
+  setDb(openTestDb());
+  configService.load();
+  (configService as unknown as { config: { auth: unknown } }).config.auth = { enabled: false, token: "" };
+}
 let dir = "";
 let db: Database | null = null;
 let page: ReturnType<typeof Bun.serve> | null = null;
@@ -109,6 +117,9 @@ describe.skipIf(!hasBrowser)("PPM's browser with a real Chrome", () => {
     await webBrowserHost.stop();
     page?.stop(true);
     fakePpm?.stop(true);
+    restoreSharedConfig();
+    if (previousPpmHome === undefined) delete process.env.PPM_HOME;
+    else process.env.PPM_HOME = previousPpmHome;
     db?.close();
     try { rmSync(dir, { recursive: true, force: true }); } catch {}
   }, 30_000);
