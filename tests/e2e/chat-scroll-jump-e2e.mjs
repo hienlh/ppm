@@ -213,6 +213,39 @@ async function readFromTurnStart(page, tabId, prompt) {
   throw new Error("could not scroll the run's prompt to the top");
 }
 
+/**
+ * How the reader moves the transcript: `wheel` (a mouse wheel; the default on a desktop) or
+ * `scrollTop` (offsets written step by step, the scroll events a finger produces on a phone,
+ * which sends no wheel events).
+ */
+const SCROLL_INPUT = process.env.PPM_SCROLL_INPUT ?? (process.env.PPM_SCROLL_PHONE === "1" ? "scrollTop" : "wheel");
+
+/** Moves the transcript by `dy` pixels the way the reader would (negative is up). */
+async function readerScrollBy(page, tabId, dy) {
+  const root = `[data-tab-pool-id="${tabId}"]`;
+  const steps = Math.max(1, Math.ceil(Math.abs(dy) / 100));
+  if (SCROLL_INPUT === "wheel") {
+    const box = await page.locator(`${root} .chat-scroll-fade`).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    for (let i = 0; i < steps; i++) { await page.mouse.wheel(0, dy / steps); await sleep(30); }
+  } else {
+    for (let i = 0; i < steps; i++) {
+      await page.evaluate(({ root, d }) => { document.querySelector(`${root} .chat-scroll-fade`).scrollTop += d; }, { root, d: dy / steps });
+      await sleep(16);
+    }
+  }
+}
+
+/** Scrolls by hand until the transcript's end is in view, the way a reader goes back down. */
+async function readerScrollToEnd(page, tabId) {
+  for (let i = 0; i < 60; i++) {
+    const d = await distance(page, tabId);
+    if (d && d.dist <= 2) return;
+    await readerScrollBy(page, tabId, Math.min(400, Math.max(100, d?.dist ?? 400)));
+    await sleep(40);
+  }
+}
+
 /** Where the latest paragraph or heading matching `pattern` sits, below the scroller's top. */
 const headingOffsetOf = (page, tabId, pattern) => page.evaluate(({ root, source }) => {
   const el = document.querySelector(`${root} .chat-scroll-fade`);
@@ -232,7 +265,10 @@ try {
   if (!created.ok) throw new Error(`Could not register the project: ${created.status} ${await created.text()}`);
 
   // PPM_SCROLL_DPR: a Windows display at 125% or 150% gives the scroller fractional offsets.
-  const context = await harness.browser.newContext({ viewport: { width: 1280, height: 860 }, deviceScaleFactor: Number(process.env.PPM_SCROLL_DPR ?? 1) });
+  // PPM_SCROLL_PHONE=1: a phone (390 x 844, touch, the mobile layout).
+  const context = process.env.PPM_SCROLL_PHONE === "1"
+    ? await harness.browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
+    : await harness.browser.newContext({ viewport: { width: 1280, height: 860 }, deviceScaleFactor: Number(process.env.PPM_SCROLL_DPR ?? 1) });
   await context.addInitScript(instantInstrumentation, { api: harness.api, blockStorage: false });
   await context.addInitScript(scrollProbe);
   const page = await context.newPage();
@@ -302,6 +338,8 @@ try {
     let readingShift = null;
     /** idle-loop: history reloads made in a 10 s idle window. */
     let idleReads = null;
+    /** rescroll: how far from the end the view was 1.5 s after the reader came back down. */
+    let rescrollLater = null;
     if (VARIANT === "idle-reconnect") {
       // The turn ends normally; then the chat socket drops and comes back while idle, as after a
       // network blip. The greeting finds the history stale and refetches it, replacing every row.
@@ -354,6 +392,39 @@ try {
       const headAfter = await headingOffsetOf(page, tabId, /Let me look at the scroll code first/);
       readingShift = headAfter === null || headBefore === null ? null : Math.round(headAfter - headBefore);
       extra = `refetches=${historyReads(reads, dropAt)} leadBefore=${Math.round(headBefore ?? -1)} leadAfter=${Math.round(headAfter ?? -1)}`;
+    } else if (VARIANT === "rescroll") {
+      // The reader scrolls up while the answer streams, then goes back down to its end by hand.
+      // Back at the end, the view has to follow the answer again, without the bottom button.
+      const before = await turnsEnded();
+      await send(page, tabId, `long run ${run} deltas=4000`);
+      await until("the answer to be streaming", async () => ((await serverTurns()).at(-1)?.yielded ?? 0) > 600, { timeout: 60000, interval: 50 });
+      await sleep(400);
+      await readerScrollBy(page, tabId, -500);
+      await sleep(600);
+      await readerScrollToEnd(page, tabId);
+      const back = await distance(page, tabId);
+      await sleep(1500); // the answer keeps growing meanwhile
+      const later = await distance(page, tabId);
+      const stillStreaming = !(await serverTurns()).at(-1)?.ended;
+      await waitEnded(page, tabId, before, 1500);
+      rescrollLater = later?.dist ?? null;
+      extra = `backDist=${Math.round(back?.dist ?? -1)} distAfter1500ms=${Math.round(later?.dist ?? -1)} streamingThen=${stillStreaming}`;
+    } else if (VARIANT === "send-unlocked") {
+      // The reader has scrolled up a little to read the last answer, then sends a new message.
+      // Sending is the reader asking to see what comes next: the view has to go to the end and
+      // follow the answer, whatever they were reading before.
+      await readerScrollBy(page, tabId, -250);
+      await sleep(500);
+      const before = await turnsEnded();
+      await send(page, tabId, `long run ${run} deltas=${300 + (run % 4) * 150}`);
+      await sleep(800);
+      const promptTop = await page.evaluate(({ root, prompt }) => {
+        const el = document.querySelector(`${root} .chat-scroll-fade`);
+        const row = [...el.querySelectorAll("[data-msg-id]")].reverse().find((r) => (r.textContent ?? "").includes(prompt));
+        return row ? Math.round(row.getBoundingClientRect().top - el.getBoundingClientRect().top) : null;
+      }, { root: `[data-tab-pool-id="${tabId}"]`, prompt: `run ${run} deltas=` });
+      await waitEnded(page, tabId, before, 1500);
+      extra = `sentPromptTop800msAfterSend=${promptTop}`;
     } else if (VARIANT === "idle-loop") {
       // A chat left open and idle: count the history reloads it makes on its own.
       const t0 = Date.now();
@@ -439,6 +510,9 @@ try {
       // The reader is not at the bottom: what must hold is the place they were reading.
       ok = readingShift !== null && Math.abs(readingShift) <= READING_SHIFT_TOLERANCE_PX && answerShown && gone.longest <= ANSWER_GONE_TOLERANCE_MS;
       extra += ` readingShift=${readingShift}px`;
+    } else if (VARIANT === "rescroll") {
+      // Back at the end by hand, the view follows again: while the answer streams and once it ends.
+      ok = after && after.dist <= AT_BOTTOM_PX && rescrollLater !== null && rescrollLater <= AT_BOTTOM_PX && answerShown;
     } else if (VARIANT === "idle-loop") {
       // No turn runs here; an idle chat reloading its history on its own is what is measured.
       ok = idleReads !== null && idleReads <= MAX_IDLE_HISTORY_READS;
