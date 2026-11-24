@@ -1,7 +1,7 @@
 /**
  * Which chats' waiting cards the PPM Assistant puts in front of the user: every chat of a project,
  * watched or not, and whoever opened it (a manager chat too, at any depth), except the Assistant's
- * own, a manager, an extension's turn and a Design chat.
+ * own, a manager and an extension's turn. A Design chat is mirrored as a link to its design.
  */
 import { describe, expect, it } from "bun:test";
 import { ordinaryChatFor, UNTITLED_CHAT, type OrdinaryChatDeps } from "../../../src/services/assistant-cards/ordinary-chat-cards.ts";
@@ -12,7 +12,7 @@ function deps(over: Partial<OrdinaryChatDeps> = {}): OrdinaryChatDeps {
     projects: () => [{ name: "ppm", path: "C:/ppm" }],
     isAssistant: (id) => id === "asst",
     isManager: (id) => id === "mgr",
-    isDesign: (id) => id === "design-chat",
+    designSlug: (id) => (id === "design-chat" ? "landing" : null),
     turnOrigin: (id) => (id === "ext-chat" ? "extension" : "ws"),
     title: (id) => (id === "kho-task" ? "  Kho   task " : null),
     ...over,
@@ -43,9 +43,20 @@ describe("ordinary chats whose cards the Assistant shows", () => {
     expect(ordinaryChatFor(at("x", ASSISTANT_PROJECT_NAME), deps())).toBeNull();
   });
 
-  it("leaves out an extension's turn, a Design chat and a project PPM does not list", () => {
+  it("takes a Design chat as a link to its design", () => {
+    expect(ordinaryChatFor(at("design-chat"), deps())).toMatchObject({ sessionId: "design-chat", design: { slug: "landing" } });
+    expect(ordinaryChatFor(at("kho-task"), deps())).not.toHaveProperty("design");
+  });
+
+  it("finds the project by its folder when the chat knows it, however its name was spelled", () => {
+    const d = deps({ projects: () => [{ name: "Nxsys", path: "D:/Projects/nxsys" }] });
+    const spelled = { sessionId: "kho-task", projectName: "nxsys", providerId: "claude", projectPath: "D:/Projects/nxsys" };
+    expect(ordinaryChatFor(spelled, d)?.projectName).toBe("Nxsys");
+    expect(ordinaryChatFor({ ...spelled, projectPath: undefined }, d)).toBeNull();
+  });
+
+  it("leaves out an extension's turn and a project PPM does not list", () => {
     expect(ordinaryChatFor(at("ext-chat"), deps())).toBeNull();
-    expect(ordinaryChatFor(at("design-chat"), deps())).toBeNull();
     expect(ordinaryChatFor(at("kho-task", "gone"), deps())).toBeNull();
     expect(ordinaryChatFor(at("kho-task", ""), deps())).toBeNull();
   });

@@ -27,6 +27,7 @@ import { step7 } from "./assistant-manager-loop/steps-rules.mjs";
 import { step8, step9 } from "./assistant-manager-loop/steps-limits.mjs";
 import { step10, step11 } from "./assistant-manager-loop/steps-digest-notebook.mjs";
 import { step12 } from "./assistant-manager-loop/steps-child-cards.mjs";
+import { step13, step14 } from "./assistant-manager-loop/steps-remembered-approvals.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-manager-loop-e2e-"));
 const shotsDir = resolve(process.env.PPM_MANAGER_LOOP_SHOTS ?? join(sandbox, "shots"));
@@ -121,7 +122,7 @@ try {
   await k.idle(aChat);
   const s = { alpha, beta, main, aChat, aTitle };
 
-  for (const [id, step] of [[1, step1], [2, step2], [3, step3], [4, step4], [5, step5], [6, step6], [7, step7], [8, step8], [9, step9], [10, step10], [11, step11], [12, step12]]) {
+  for (const [id, step] of [[1, step1], [2, step2], [3, step3], [4, step4], [5, step5], [6, step6], [7, step7], [8, step8], [9, step9], [10, step10], [11, step11], [12, step12], [13, step13], [14, step14]]) {
     try {
       await step(k, s);
     } catch (error) {
@@ -148,7 +149,7 @@ try {
   if (fake && fake.exitCode === null) fake.kill();
   await writeFile(join(shotsDir, "results.json"), JSON.stringify({ results, failures }, null, 2));
   for (const f of failures) console.error(`FAILED step ${f.step}: ${f.error.split("\n")[0]}`);
-  console.log(`${results.length} of 12 steps passed, ${failures.length} failed; screenshots in ${shotsDir}; logs in ${logs}`);
+  console.log(`${results.length} of 14 steps passed, ${failures.length} failed; screenshots in ${shotsDir}; logs in ${logs}`);
   if (failures.length) process.exitCode = 1;
   else if (process.env.PPM_MANAGER_LOOP_KEEP !== "1") {
     try { rmSync(sandbox, { recursive: true, force: true }); } catch (e) { console.error(`could not remove ${sandbox}: ${e.message}`); }

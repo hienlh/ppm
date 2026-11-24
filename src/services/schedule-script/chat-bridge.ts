@@ -10,6 +10,7 @@
  */
 import type { Schedule } from "../../types/scheduler.ts";
 import { chatService } from "../chat.service.ts";
+import { chatControl } from "../chat-control/chat-control.ts";
 import { claudeTranscriptExists } from "../claude-transcript-exists.ts";
 import { deleteChatSession, renameChatSession } from "../chat-session-admin.ts";
 import { getSessionProjectPath, getSessionProvider, getSessionTitle } from "../db.service.ts";
@@ -38,12 +39,36 @@ export interface ChatCallResult {
   costUsd?: number;
   account?: string;
   busy?: boolean;
+  /**
+   * With `busy`: the card the chat is stopped on, when that is why it is busy — the user has to
+   * answer it before the chat does anything else. `since` is when it came on screen (ms).
+   */
+  waitingOn?: ChatWaitingOn;
   started?: boolean;
   timedOut?: boolean;
   error?: string;
 }
 
 interface Project { name: string; path: string }
+
+export interface ChatWaitingOn {
+  requestId: string;
+  /** `question`, or the tool asking for approval (`ppm:session_collab` for a session tool's card). */
+  kind: string;
+  since?: number;
+}
+
+/** The card a busy chat waits on, as a schedule's script is told it; undefined when none. */
+export function chatWaitingOn(sessionId: string | null): ChatWaitingOn | undefined {
+  if (!sessionId) return undefined;
+  const state = chatControl()?.liveState(sessionId);
+  if (!state?.card) return undefined;
+  return {
+    requestId: state.card.requestId,
+    kind: state.card.isQuestion ? "question" : state.card.tool,
+    ...(state.cardShownAt !== undefined ? { since: state.cardShownAt } : {}),
+  };
+}
 
 export async function scheduleChat(schedule: Schedule, key: string, prompt: string, opts: ChatCallOptions): Promise<ChatCallResult> {
   const requested = registeredProject(opts.projectPath ?? schedule.project_path);
@@ -96,6 +121,7 @@ async function settle(p: {
     ...(outcome.costUsd !== undefined && { costUsd: outcome.costUsd }),
     ...(outcome.account !== undefined && { account: outcome.account }),
     ...(outcome.busy && { busy: true }),
+    ...(outcome.busy && chatWaitingOn(outcome.sessionId) && { waitingOn: chatWaitingOn(outcome.sessionId) }),
     ...(outcome.timedOut && { timedOut: true }),
     ...(outcome.error !== undefined && { error: outcome.error }),
   };

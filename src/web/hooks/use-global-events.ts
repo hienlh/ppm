@@ -239,6 +239,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         || type.startsWith("schedules:")
         || type.startsWith("tasks:")
         || type.startsWith("feature-intros:")
+        || type.startsWith("approvals:")
         || type === "agent-activity"
         || type === SESSION_FILE_CHANGES_PUSH
       ) {

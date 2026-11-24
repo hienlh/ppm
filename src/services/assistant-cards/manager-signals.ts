@@ -1,13 +1,15 @@
 import { createLogger } from "../logger.ts";
 import { resolveMigratedSession } from "../db.service.ts";
 import type { ChatLifecycle, ChatLifecycleEvents } from "../chat-control/chat-lifecycle.ts";
-import { decidingInput } from "../chat-control/approval-deciding-input.ts";
-import { normalizeClaudeQuestions } from "../../shared/approval-questions.ts";
 import type { AssistantClock, Cancel } from "../assistant-wake/assistant-clock.ts";
 import { describeTurnStop } from "../../shared/turn-stop.ts";
 import { FAILED_CARD_GRACE_MS } from "../../shared/assistant-limits.ts";
 import { REPORT_KINDS, type AssistantCardKind } from "../../shared/assistant-cards.ts";
 import { cleanCardBody, cleanCardTitle } from "./card-text-cleaning.ts";
+import {
+  markOverdueCard, mirrorCardInput, mirrorQueuedCard, promoteQueuedCard, raiseMcpSignInCards,
+  type CardOwner, type WaitingCardDeps,
+} from "./chat-waiting-card-signals.ts";
 import type { AssistantCards } from "./assistant-cards.service.ts";
 import type { CardRow } from "./assistant-cards-db.ts";
 import type { LateReply } from "../assistant-wake/manager-wake-sources.ts";
@@ -47,7 +49,7 @@ export interface ManagerSignalsDeps {
   clock: AssistantClock;
   managerFor(sessionId: string): ManagerRef | null;
   /** A chat that is not a manager, when its waiting cards are mirrored; none when left out. */
-  chatFor?(p: { sessionId: string; projectName: string; providerId: string }): ChatCardRef | null;
+  chatFor?(p: { sessionId: string; projectName: string; providerId: string; projectPath?: string }): ChatCardRef | null;
   /**
    * Takes out of a mirrored request every vault value its chat's turn read, before the card is
    * stored, broadcast and backed up (`turnSecretScrubber.scrubIn`); unchanged when left out.
@@ -94,35 +96,26 @@ export function createManagerSignals(deps: ManagerSignalsDeps) {
   let stops: Array<() => void> = [];
 
   /** Where a waiting card of this chat goes: its manager's card, or the chat's own; null for none. */
-  function ownerOf(p: { sessionId: string; projectName: string; providerId: string }):
-    { projectName: string; projectPath: string; sessionId: string; chat?: { title: string; providerId: string } } | null {
+  function ownerOf(p: { sessionId: string; projectName: string; providerId: string; projectPath?: string }): CardOwner | null {
     const m = deps.managerFor(p.sessionId);
     if (m) return m;
     let c: ChatCardRef | null = null;
     try { c = deps.chatFor?.(p) ?? null; } catch (e) { log.warn(`session=${p.sessionId} could not tell whose card this is: ${(e as Error).message}`); }
-    return c ? { projectName: c.projectName, projectPath: c.projectPath, sessionId: c.sessionId, chat: { title: c.title, providerId: c.providerId } } : null;
+    return c ? {
+      projectName: c.projectName, projectPath: c.projectPath, sessionId: c.sessionId,
+      chat: { title: c.title, providerId: c.providerId }, ...(c.design ? { design: c.design } : {}),
+    } : null;
   }
 
+  const waiting: WaitingCardDeps = {
+    cards: deps.cards, openRequestCard: deps.openRequestCard, ...(deps.scrub ? { scrub: deps.scrub } : {}),
+  };
+
   function onApprovalShown(p: ChatLifecycleEvents["approval_shown"]): void {
-    if (deps.openRequestCard(p.card.requestId)) return;
+    if (promoteQueuedCard(p, waiting)) return;
     const m = ownerOf(p);
     if (!m) return;
-    const scrub = <T>(v: T): T => (deps.scrub ? deps.scrub(v, p.sessionId) : v);
-    const deciding = scrub(decidingInput(p.card));
-    const question = p.card.isQuestion;
-    const questions = scrub(question ? (p.card.questions ?? normalizeClaudeQuestions(p.card.input)) : []);
-    const first = questions[0]?.question;
-    deps.cards.create({
-      kind: question ? "question" : "approval",
-      projectName: m.projectName, projectPath: m.projectPath, sessionId: m.sessionId,
-      title: question ? cleanCardTitle(first, "Question") : cleanCardTitle(deciding.title, "Approval"),
-      payload: {
-        requestId: p.card.requestId,
-        ...(question ? { questions } : { deciding }),
-        ...(m.chat ? { chat: m.chat } : {}),
-        ...(p.card.expiresAt ? { expiresAt: p.card.expiresAt } : {}),
-      },
-    });
+    deps.cards.create(mirrorCardInput(m, p.card, p.sessionId, waiting));
   }
 
   function onPpmOnlyCardShown(p: ChatLifecycleEvents["ppm_only_card_shown"]): void {
@@ -140,6 +133,7 @@ export function createManagerSignals(deps: ManagerSignalsDeps) {
         // Nothing of the request itself: the card only says the chat waits, and where.
         deciding: { kind: p.kind, title, facts: [], text: "", complete: false, incompleteReason: PPM_ONLY_REASON },
         ...(m.chat ? { chat: m.chat } : {}),
+        ...(m.design ? { design: m.design } : {}),
       },
     });
   }
@@ -209,6 +203,9 @@ export function createManagerSignals(deps: ManagerSignalsDeps) {
       if (stops.length) return;
       stops = [
         deps.lifecycle.on("approval_shown", onApprovalShown),
+        deps.lifecycle.on("approval_queued", (p) => mirrorQueuedCard(ownerOf(p), p, waiting)),
+        deps.lifecycle.on("approval_overdue", (p) => markOverdueCard(p, waiting)),
+        deps.lifecycle.on("mcp_sign_in_needed", (p) => raiseMcpSignInCards(ownerOf(p), p, waiting)),
         deps.lifecycle.on("ppm_only_card_shown", onPpmOnlyCardShown),
         deps.lifecycle.on("approval_resolved", onApprovalResolved),
         deps.lifecycle.on("turn_ended", onTurnEnded),

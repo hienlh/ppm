@@ -350,6 +350,13 @@ app.route("/api/settings", settingsProxyRoutes);
 // The tour's "PPM has new features" questions, answered once for the whole install.
 import { featureIntroRoutes } from "./routes/feature-intros.ts";
 app.route("/api/feature-intros", featureIntroRoutes);
+import { approvalRuleRoutes } from "./routes/approval-rules.ts";
+app.route("/api/approval-rules", approvalRuleRoutes);
+// Every open PPM refreshes its list of remembered approvals when a rule or the switch changes.
+import { setRememberedApprovalsChanged } from "../services/remembered-approvals/remembered-approvals.service.ts";
+import { REMEMBERED_APPROVALS_CHANGED_EVENT } from "../shared/remembered-approvals.ts";
+import { broadcastGlobalEvent } from "./ws/global.ts";
+setRememberedApprovalsChanged(() => broadcastGlobalEvent({ type: REMEMBERED_APPROVALS_CHANGED_EVENT }));
 import { notificationRoutes } from "./routes/notifications.ts";
 app.route("/api/notifications", notificationRoutes);
 app.route("/api/settings/mcp", mcpRoutes);

@@ -13,6 +13,7 @@ import { answerAssistantCard } from "@/lib/assistant-cards-api";
 import { escapeHiddenCharacters } from "../../../../shared/reveal-hidden-characters";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardButton, CardShell } from "./card-shell";
+import { RememberApprovalControl } from "@/components/chat/remember-approval-control";
 import { QuestionCard } from "@/components/chat/question-card";
 import { questionsFromWire } from "../../../../shared/approval-questions";
 import { openCardManagerChat, useCardAction } from "./use-card-action";
@@ -24,13 +25,21 @@ const OpenChat = ({ card, primary }: { card: AssistantCard; primary?: boolean })
   <CardButton
     variant={primary ? "primary" : "ghost"}
     secondary={!primary}
-    title={card.payload.chat ? "Open the chat" : "Open manager chat"}
+    title={card.payload.design ? "Open the design" : card.payload.chat ? "Open the chat" : "Open manager chat"}
     onClick={() => openCardManagerChat(card)}
     disabled={!card.sessionId}
   >
-    <ExternalLink className="size-3.5" />{primary ? "Open in PPM" : "Open chat"}
+    <ExternalLink className="size-3.5" />{primary ? "Open in PPM" : card.payload.design ? "Open design" : "Open chat"}
   </CardButton>
 );
+
+/** What a card answered only in PPM says it waits for, by why. */
+const IN_PPM_LABELS: Record<NonNullable<AssistantCard["payload"]["answerInPpm"]>, string> = {
+  db_execute: "Needs you in PPM",
+  vault: "Needs you in PPM",
+  design: "Needs you in the design",
+  mcp_sign_in: "Needs a sign-in",
+};
 
 /** "21:09": a deadline as the person reads a clock. */
 const clockTime = (ms: number): string => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -41,6 +50,37 @@ function Asker({ card }: { card: AssistantCard }) {
   const chat = card.payload.chat;
   if (!chat) return <>The {project} manager chat</>;
   return <>Chat <b className="font-semibold text-text-primary">“{escapeHiddenCharacters(chat.title)}”</b> in {project}</>;
+}
+
+/**
+ * A card left unanswered long enough that its chat counts as stopped says since when, loudly, since
+ * nothing else in the chat moves until it is answered. A schedule's turn is named: its schedule is
+ * stuck behind the card too.
+ */
+export function WaitingSince({ card }: { card: AssistantCard }) {
+  const since = card.payload.waitingSince;
+  if (!since || card.status !== "open") return null;
+  return (
+    <p className="text-xs font-medium text-error" data-card-waiting-since="">
+      {card.payload.scheduledTurn ? "A scheduled run of this chat has" : "This chat has"} stood still waiting since {clockTime(since)}.
+    </p>
+  );
+}
+
+/** Whether the card reached the phone; nothing is said while that is still being decided. */
+export function OutboundNote({ card }: { card: AssistantCard }) {
+  if (card.status !== "open" || card.payload.queued) return null;
+  const text = card.outbound === "sent" ? "Sent to Telegram"
+    : card.outbound === "held" ? "Held for the end of quiet hours"
+    : card.outbound === "skipped" ? "Not sent to Telegram: no Telegram chat was reachable"
+    : null;
+  return text ? <p className="text-[11px] text-text-subtle" data-card-outbound={card.outbound}>{text}</p> : null;
+}
+
+/** A card behind another of its chat: shown so the user knows, answered once it is in front. */
+function QueuedNote({ card }: { card: AssistantCard }) {
+  if (!card.payload.queued || card.status !== "open") return null;
+  return <p className="text-xs text-warning" data-card-queued="">Waits behind another card of this chat: answer that one first.</p>;
 }
 
 /** A card that gives up by itself says when, while it still waits. */
@@ -57,18 +97,23 @@ export function ApprovalMirrorCard({ card, onCard }: Props) {
   // A database change or a vault unlock takes a password typed into PPM: there is nothing to press here.
   if (card.payload.answerInPpm) {
     return (
-      <CardShell card={card} look={{ label: "Needs you in PPM", Icon: ShieldAlert, tone: "need" }} error={error} actions={<OpenChat card={card} primary />}>
+      <CardShell card={card} look={{ label: IN_PPM_LABELS[card.payload.answerInPpm], Icon: ShieldAlert, tone: "need" }} error={error} actions={<OpenChat card={card} primary />}>
         <p className="text-[13px] text-text-secondary"><Asker card={card} /> waits: <b className="font-semibold text-text-primary">{card.title}</b>.</p>
-        {d?.incompleteReason && <p className="text-xs text-text-subtle">{d.incompleteReason}</p>}
+        {card.payload.answerInPpm === "design"
+          ? <p className="text-xs text-text-subtle">Answer it in the design: a Design chat is answered beside its canvas.</p>
+          : d?.incompleteReason && <p className="text-xs text-text-subtle">{d.incompleteReason}</p>}
+        <WaitingSince card={card} />
+        <OutboundNote card={card} />
       </CardShell>
     );
   }
+  const queued = card.payload.queued === true;
   return (
     <CardShell
       card={card}
-      look={{ label: "Needs your approval", Icon: ShieldAlert, tone: "need" }}
+      look={{ label: queued ? "Waiting behind another card" : "Needs your approval", Icon: ShieldAlert, tone: "need" }}
       error={error}
-      actions={(
+      actions={queued ? undefined : (
         <>
           {complete && (
             <CardButton variant="primary" disabled={busy} onClick={() => void run(() => answerAssistantCard(card.id, { decision: "allow" }))}>
@@ -98,8 +143,18 @@ export function ApprovalMirrorCard({ card, onCard }: Props) {
           {d.text}
         </pre>
       )}
-      {!complete && <p className="text-xs text-warning">{d?.incompleteReason ?? `Open the ${card.payload.chat ? "chat" : "manager chat"} to see all of it before allowing.`}</p>}
+      {!complete && !queued && <p className="text-xs text-warning">{d?.incompleteReason ?? `Open the ${card.payload.chat ? "chat" : "manager chat"} to see all of it before allowing.`}</p>}
+      {complete && !queued && card.status === "open" && card.payload.remember && (
+        <RememberApprovalControl
+          offer={card.payload.remember}
+          disabled={busy}
+          onRemember={() => void run(() => answerAssistantCard(card.id, { decision: "allow", remember: true }))}
+        />
+      )}
+      <QueuedNote card={card} />
+      <WaitingSince card={card} />
       <Deadline card={card} />
+      <OutboundNote card={card} />
     </CardShell>
   );
 }
@@ -118,7 +173,8 @@ export function QuestionMirrorCard({ card, onCard }: Props) {
   const questions = card.payload.questions ?? [];
   const asked = questionsFromWire(questions) ?? [];
   const open = card.status === "open";
-  const answerHere = open && answerableOnCard(questions) && asked.length === questions.length;
+  const queued = card.payload.queued === true;
+  const answerHere = open && !queued && answerableOnCard(questions) && asked.length === questions.length;
   const many = questions.length > 1;
 
   return (
@@ -156,8 +212,11 @@ export function QuestionMirrorCard({ card, onCard }: Props) {
           </section>
         ))
       )}
-      {open && !answerHere && <p className="text-xs text-text-subtle">Answer it in the {card.payload.chat ? "chat" : "manager chat"}.</p>}
+      {open && !answerHere && !queued && <p className="text-xs text-text-subtle">Answer it in the {card.payload.chat ? "chat" : "manager chat"}.</p>}
       {card.payload.chat && <p className="text-xs text-text-subtle">Asked by <Asker card={card} />.</p>}
+      <QueuedNote card={card} />
+      <WaitingSince card={card} />
+      <OutboundNote card={card} />
     </CardShell>
   );
 }

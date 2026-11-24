@@ -51,6 +51,11 @@ export function createCollabApprovalBroker(opts: {
    * such a turn asks nobody. The session tools refuse first; this keeps any other way of asking shut.
    */
   unattended?: (sessionId: string) => boolean;
+  /**
+   * Whether a rule the user made approves this card without asking (`remembered-approvals/`):
+   * the request is then allowed once with no card at all. Never consulted when left out.
+   */
+  autoApprove?: (sessionId: string, input: SessionCollabApprovalInput) => boolean;
 }) {
   const canonical = opts.canonical ?? ((sessionId: string) => sessionId);
   const pending = new Map<string, Pending>();
@@ -69,6 +74,11 @@ export function createCollabApprovalBroker(opts: {
     if (pendingOf(sessionId)) {
       return Promise.resolve({ allowed: false, reason: "busy", message: "Another request is already waiting for the user's answer in this chat; wait for it, then call again." });
     }
+    let remembered = false;
+    try { remembered = opts.autoApprove?.(sessionId, input) ?? false; } catch (e) {
+      console.warn(`[session-collab] remembered approvals unreadable, asking: ${(e as Error).message}`);
+    }
+    if (remembered) return Promise.resolve({ allowed: true, answer: "allow_once" });
     const requestId = randomUUID();
     const event: SessionCollabApprovalRequest = { type: "approval_request", requestId, tool: SESSION_COLLAB_APPROVAL, input };
     return new Promise<CollabApprovalOutcome>((done) => {
@@ -134,6 +144,11 @@ export function createCollabApprovalBroker(opts: {
     answer,
     cancelSession,
     has: (requestId: string) => pending.has(requestId),
+    /** The chat a waiting card is in, and what it asks; null once it no longer waits. */
+    waitingCard: (requestId: string): { sessionId: string; event: SessionCollabApprovalRequest } | null => {
+      const entry = pending.get(requestId);
+      return entry ? { sessionId: canonical(entry.sessionId), event: entry.event } : null;
+    },
     pendingEvent: (sessionId: string): SessionCollabApprovalRequest | null => pendingOf(sessionId)?.[1].event ?? null,
     /** When a waiting card gives up if nobody answers; null once it no longer waits. */
     expiresAt: (requestId: string): number | null => pending.get(requestId)?.expiresAt ?? null,
@@ -150,8 +165,16 @@ export function setCollabApprovalChat(fn: CollabApprovalChat | null, canonical?:
   resolveSession = canonical ?? ((sessionId) => sessionId);
 }
 
+let autoApprove: ((sessionId: string, input: SessionCollabApprovalInput) => boolean) | null = null;
+
+/** `ws/chat.ts` registers how a remembered approval is found for a chat's card (`remembered-approvals/`). */
+export function setCollabAutoApprove(fn: ((sessionId: string, input: SessionCollabApprovalInput) => boolean) | null): void {
+  autoApprove = fn;
+}
+
 export const collabApprovalBroker = createCollabApprovalBroker({
   chat: () => chat,
   canonical: (sessionId) => resolveSession(sessionId),
   unattended: isUnattendedTurn,
+  autoApprove: (sessionId, input) => autoApprove?.(sessionId, input) ?? false,
 });

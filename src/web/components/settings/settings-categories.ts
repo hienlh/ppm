@@ -28,6 +28,7 @@ import {
   Sparkles,
   Wrench,
   Lock,
+  ShieldCheck,
 } from "@/lib/icons";
 
 /**
@@ -47,6 +48,7 @@ export type SettingsCategoryId =
   | "accounts"
   | "assistant"
   | "vault"
+  | "approvals"
   | "design"
   | "voice"
   | "notifications"
@@ -99,6 +101,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude, Codex and Antigravity sign-ins, rotation", icon: KeyRound },
   { id: "assistant", group: "ai", label: "PPM Assistant", subtitle: "Its own model, instructions, MCP servers, Telegram", icon: Sparkles },
   { id: "vault", group: "ai", label: "Vault", subtitle: "Personal details the AI may read, behind passwords", icon: Lock },
+  { id: "approvals", group: "ai", label: "Approvals", subtitle: "Kinds of request approved without a card", icon: ShieldCheck },
   { id: "design", group: "ai", label: "Design", subtitle: "Design instructions and skills", icon: LayoutGrid },
   { id: "voice", group: "ai", label: "Voice Input", subtitle: "Speech to text for the chat box", icon: Mic },
 

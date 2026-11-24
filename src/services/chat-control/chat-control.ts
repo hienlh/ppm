@@ -1,4 +1,5 @@
 import type { ReplyReference } from "../../shared/chat-reply.ts";
+import type { CardRememberOffer } from "../../shared/remembered-approvals.ts";
 import type { SessionPhase } from "../../types/api.ts";
 import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import type { AnswersById, NormalizedQuestion } from "../../shared/approval-questions.ts";
@@ -123,6 +124,8 @@ export interface LiveApprovalCard {
   questions?: NormalizedQuestion[];
   /** When the request gives up by itself if nobody answers (ms since the epoch); absent when it waits for good. */
   expiresAt?: number;
+  /** What a person may have remembered by pressing "approve this kind next time" (`remembered-approvals/`). */
+  remember?: CardRememberOffer;
 }
 
 /**
@@ -132,6 +135,11 @@ export interface LiveApprovalCard {
  */
 export interface ApprovalAnswer {
   approved: boolean;
+  /**
+   * The person also pressed "approve this kind next time": a rule is made for the card's pattern.
+   * Only a person's press counts (`ws`, `assistant_card`, `telegram`); any other origin is ignored.
+   */
+  remember?: boolean;
   answersById?: AnswersById;
   answers?: unknown;
 }
@@ -143,6 +151,8 @@ export interface LiveChatState {
   projectName: string;
   providerId: string;
   card?: LiveApprovalCard;
+  /** When `card` came on the chat's screen (ms since the epoch): the chat has waited on it since. */
+  cardShownAt?: number;
   /** Cards waiting behind the shown one. */
   queuedCards: number;
   /**

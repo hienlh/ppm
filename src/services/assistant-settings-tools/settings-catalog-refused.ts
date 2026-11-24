@@ -32,6 +32,7 @@ export const REFUSED_SETTINGS: readonly RefusedSetting[] = [
   { key: "tunnel.namedTunnelToken", category: "remote-access", label: "Remote Access → Named tunnel token", reason: SECRET, isSet: () => hasText((configService.get("tunnel") as { namedTunnelToken?: string } | undefined)?.namedTunnelToken) },
   { key: "share_host.token", category: "remote-access", label: "Remote Access → Review address token", reason: SECRET, isSet: () => hasText((configService.get("share_host") as { token?: string } | undefined)?.token) },
   { key: "vault", category: "vault", label: "Vault", reason: "The vault has its own tools and password cards (`vault_list`, `vault_read`, `vault_propose`); its tiers and passwords are the user's alone." },
+  { key: "remembered_approvals", category: "approvals", label: "Approvals → Allow & remember", reason: "Which requests are approved without a card is the user's alone: rules are made by pressing on a card and removed in Settings → Approvals." },
   { key: "accounts.sign_in", category: "accounts", label: "Accounts → Sign in, add, remove, export, import", reason: "Signing in needs the user, and an export holds the accounts' tokens." },
 ];
 

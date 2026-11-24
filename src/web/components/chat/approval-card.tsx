@@ -2,6 +2,8 @@ import { AlertCircle, ShieldAlert } from "@/lib/icons";
 import { hasHiddenCharacters, revealHiddenCharacters } from "@/lib/reveal-hidden-characters";
 import type { ApprovalSummary } from "../../../shared/assistant-approval";
 import { useAssistantDisplayName } from "@/stores/assistant-name-store";
+import type { CardRememberOffer } from "../../../shared/remembered-approvals";
+import { RememberApprovalControl } from "./remember-approval-control";
 
 /**
  * The card a chat shows while a tool waits on the user's approval. A provider's card shows the
@@ -19,6 +21,8 @@ export interface ApprovalCardRequest {
   tool: string;
   input: unknown;
   summary?: ApprovalSummary;
+  /** What "Allow & remember" would remember; absent when the card offers nothing to remember. */
+  remember?: CardRememberOffer;
 }
 
 const WRAPPED_BLOCK = "text-xs font-mono whitespace-pre-wrap break-words bg-background rounded p-2 border border-border max-h-80 overflow-y-auto select-text";
@@ -137,7 +141,7 @@ export function ApprovalCard({
   onRespond,
 }: {
   approval: ApprovalCardRequest;
-  onRespond: (requestId: string, approved: boolean, data?: unknown) => void;
+  onRespond: (requestId: string, approved: boolean, remember?: boolean) => void;
 }) {
   const summary = approval.summary;
   const assistantName = useAssistantDisplayName(!!summary);
@@ -162,6 +166,9 @@ export function ApprovalCard({
           Deny
         </button>
       </div>
+      {approval.remember && (
+        <RememberApprovalControl offer={approval.remember} onRemember={() => onRespond(approval.requestId, true, true)} />
+      )}
     </div>
   );
 }

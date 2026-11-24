@@ -27,6 +27,7 @@ import { createManagerSignals, type ManagerSignals } from "./manager-signals.ts"
 import { setManagerAskedHook } from "./manager-reply-expectations.ts";
 import { ordinaryChatFor, type OrdinaryChatDeps } from "./ordinary-chat-cards.ts";
 import { configService } from "../config.service.ts";
+import { mcpOAuthFlows } from "../mcp-oauth/mcp-oauth-flows.ts";
 import { getSessionDesignSlug, getSessionTitle, resolveMigratedSession } from "../db.service.ts";
 import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { chatService } from "../chat.service.ts";
@@ -39,7 +40,7 @@ const ordinaryChatDeps: OrdinaryChatDeps = {
   projects: () => configService.get("projects"),
   isAssistant: (sessionId) => isAssistantSession(sessionId),
   isManager: (sessionId) => managerChats.forSession(sessionId) !== null,
-  isDesign: (sessionId) => getSessionDesignSlug(resolveMigratedSession(sessionId)) !== null,
+  designSlug: (sessionId) => getSessionDesignSlug(resolveMigratedSession(sessionId)),
   turnOrigin: (sessionId) => chatControl()?.liveState(sessionId)?.turnOrigin,
   // The user's rename, else the title the chat shows (its provider's, from the first message).
   title: (sessionId) => getSessionTitle(sessionId) || chatService.getSession(sessionId)?.title || null,
@@ -90,6 +91,16 @@ export function startAssistantCards(): void {
     assistantCards.onChange((_card, change) => {
       const main = mainSessionId();
       if (change === "created" && main) assistantWakeQueue.schedule(main);
+    }),
+    // A server signed in to from any screen: every chat's card asking for that sign-in is settled.
+    mcpOAuthFlows.onAuthorized((server) => {
+      try {
+        for (const row of findOpenCardsBy("approval", "mcpServer", server)) {
+          assistantCards.transition(row.id, "resolved", { by: "user", channel: "ppm", at: assistantClock.now(), note: `Signed in to ${server}` });
+        }
+      } catch (e) {
+        log.warn(`could not settle the sign-in cards of ${server}: ${(e as Error).message}`);
+      }
     }),
     managerRulesEvents.on((e) => rulesEventCard(eventDeps, e)),
     assistantBudgetEvents.on((e) => budgetEventCard(eventDeps, e)),

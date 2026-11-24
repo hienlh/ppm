@@ -66,3 +66,27 @@ export function callbackUrlFor(redirectUri: string, search: string): string {
   url.search = search.startsWith("?") ? search.slice(1) : search;
   return url.href;
 }
+
+/** The servers the CLI reports as `connected` at init, in order, each once. */
+export function connectedServerNames(servers: unknown): string[] {
+  if (!Array.isArray(servers)) return [];
+  const names: string[] = [];
+  for (const s of servers) {
+    if (s && typeof s === "object" && (s as { status?: unknown }).status === "connected") {
+      const name = (s as { name?: unknown }).name;
+      if (typeof name === "string" && name && !names.includes(name)) names.push(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * Servers that were connected at the chat's previous init and need a sign-in now: they stopped
+ * working mid-session. A server that needed one from the start is the chat's sign-in bar's to show,
+ * not news, so nothing is said of it (an install with a dozen never-signed-in plugin servers would
+ * otherwise be told of each of them in every chat).
+ */
+export function serversThatLostSignIn(previouslyConnected: readonly string[] | undefined, needsAuth: readonly string[]): string[] {
+  if (!previouslyConnected?.length) return [];
+  return needsAuth.filter((name) => previouslyConnected.includes(name));
+}

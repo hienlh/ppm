@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { validateReply } from "../../shared/chat-reply.ts";
 import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
 import { scheduleRunPlacement, validateScheduleRun, type ScheduleRunReference } from "../../shared/chat-schedule-run.ts";
@@ -37,7 +38,7 @@ import {
   type BackgroundTaskState,
 } from "./chat-background-tasks.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
-import { needsAuthServerNames } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
+import { connectedServerNames, needsAuthServerNames, serversThatLostSignIn } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
 import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
 import { refreshEffortStatus, sessionEffortStatus } from "./chat-effort-status.ts";
 import type { EffortStatus } from "../../shared/effort-status.ts";
@@ -54,7 +55,7 @@ import { DB_EXECUTE_APPROVAL, dbExecuteApprovalInput } from "../../shared/db-ai-
 import type { PpmCardEnd } from "../../shared/ppm-card-end.ts";
 import { ppmApprovals } from "./chat-ppm-approvals.ts";
 import { claimTurnOrigin, noteQueuedTurnOrigin, turnOriginAfterTurn, turnRunning, type ArrivingMessage } from "./chat-turn-origin.ts";
-import { setCollabApprovalChat } from "../../services/session-collab/collab-approval-broker.ts";
+import { collabApprovalBroker, setCollabApprovalChat, setCollabAutoApprove } from "../../services/session-collab/collab-approval-broker.ts";
 import { setVaultCardChat, vaultUnlockBroker, type VaultCardEvent } from "../../services/vault/vault-unlock-broker.ts";
 import { VAULT_CARD_APPROVAL } from "../../shared/vault.ts";
 import { setVaultSessionResolver } from "../../services/vault/vault-grants.ts";
@@ -67,7 +68,7 @@ import { isSpawned } from "../../services/session-collab/session-links.service.t
 import type { LiveSessionState } from "../../services/session-collab/collab-context.ts";
 import { collabApprovalTitle } from "../../services/notification-format.ts";
 import {
-  SESSION_COLLAB_APPROVAL_EVENT, sessionCollabApprovalInput,
+  SESSION_COLLAB_APPROVAL, SESSION_COLLAB_APPROVAL_EVENT, sessionCollabApprovalInput,
   type SessionCollabAnswer, type SessionCollabApprovalEvent, type SessionCollabApprovalRequest,
 } from "../../shared/session-collab.ts";
 import { parseTabOpenResult, type TabOpenRequest } from "../../shared/tab-open-protocol.ts";
@@ -84,9 +85,14 @@ import {
   effectivePermissionMode, targetChatMode, providerDefaultMode, type ChatDeliveryState,
 } from "./chat-deliver-user-message.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
-import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
+import { ASSISTANT_PROJECT_NAME, isAssistantProject } from "../../shared/assistant-project.ts";
 import { splitVoiceMessage } from "../../shared/voice-message.ts";
 import { collabCardForListeners, settleCollabApprovalFromServer } from "./chat-collab-approval-relay.ts";
+import { createApprovalOverdueTimers } from "./chat-approval-overdue.ts";
+import { rememberedApprovals, type RememberRequest } from "../../services/remembered-approvals/remembered-approvals.service.ts";
+import type { AutoApprovedEvent } from "../../shared/remembered-approvals.ts";
+import type { ApprovalRuleRow } from "../../services/remembered-approvals/remembered-approvals-db.ts";
+import { APPROVAL_OVERDUE_MS } from "../../shared/assistant-limits.ts";
 import { assistantProviderDefaults, onAssistantSettingsSaved, startupPermissionsChanged } from "../../services/assistant/assistant-settings.service.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
 import type { ReplyReference } from "../../shared/chat-reply.ts";
@@ -287,6 +293,8 @@ export function setExtensionApprovalDeadlineMs(ms: number | null): void {
 }
 const BUFFERABLE_TYPES = new Set([
   "text", "thinking", "tool_use", "tool_result",
+  // The line saying a remembered rule approved a request in place of a card.
+  "auto_approved",
   // A denial is buffered right after the request an unattended extension turn raised, so a
   // device replaying the turn later sees an answered card rather than a live question.
   "approval_request", "approval_resolved", "error", "done", "account_info", "account_retry",
@@ -378,6 +386,8 @@ export interface SessionEntry extends BackgroundTaskState {
   compactStatus?: "compacting" | null;
   /** MCP servers the subprocess reported as `needs-auth` at init — drives the chat's sign-in bar */
   mcpNeedsAuth?: string[];
+  /** MCP servers connected at the last init: one that needs a sign-in at the next has lost it mid-session. */
+  mcpConnected?: string[];
   /** What the subprocess said at the last turn's start about the effort it sends — see chat-effort-status.ts */
   effortStatus?: EffortStatus;
   /** toolUseIds of Bash/Agent calls launched with run_in_background — their spy outlives the tool_result */
@@ -1128,8 +1138,83 @@ function liveApprovalCard(ev: PendingApprovalEvent): LiveApprovalCard {
     isQuestion: ev.tool === "AskUserQuestion",
     ...(ev.questions ? { questions: ev.questions } : {}),
     ...(collab?.expiresAt ? { expiresAt: collab.expiresAt } : {}),
+    ...(ev.remember ? { remember: ev.remember } : {}),
   };
 }
+
+/**
+ * A card's request as remembered approvals see it; null for a chat with no project folder, and for
+ * the PPM Assistant's own sessions, whose requests are answered one at a time by design.
+ */
+function rememberRequest(entry: SessionEntry, tool: string, input: unknown): RememberRequest | null {
+  if (!entry.projectPath || isAssistantProject(entry.projectName)) return null;
+  return { tool, input, projectPath: entry.projectPath, projectName: entry.projectName ?? "" };
+}
+
+/**
+ * A rule the user made approved a request without a card: one line in the chat says so (kept for
+ * a device that replays the turn), so the user can see what ran and remove the rule.
+ */
+function noteAutoApproved(sessionId: string, requestId: string, tool: string, rule: ApprovalRuleRow): void {
+  log.info(`session=${sessionId} ${tool.slice(0, 60)} approved by remembered rule ${rule.id} (${rule.kind} "${rule.pattern.slice(0, 80)}")`);
+  const event: AutoApprovedEvent = { type: "auto_approved", requestId, tool, ruleId: rule.id, label: rule.label };
+  bufferAndBroadcast(sessionId, event);
+}
+
+/**
+ * A person answered a card: an approval counts towards the "remember this?" suggestion, and a
+ * press of "approve this kind next time" makes the rule. Never for an AI's answer (`origin`).
+ */
+function recordPersonAnswer(sessionId: string, entry: SessionEntry, tool: string, input: unknown, approved: boolean, remember: boolean | undefined, origin: ChatMessageOrigin): void {
+  const req = rememberRequest(entry, tool, input);
+  if (!req) return;
+  try {
+    rememberedApprovals.recordAnswer(req, { approved, ...(remember ? { remember } : {}), origin });
+  } catch (e) {
+    log.warn(`session=${sessionId} could not record the answer for remembered approvals: ${(e as Error).message}`);
+  }
+}
+
+/** A session tool's card answered over HTTP in PPM's own chat (`routes/session-collab.ts`). */
+export function recordCollabCardAnswer(sessionId: string, input: unknown, approved: boolean, remember: boolean): void {
+  const resolved = resolveMigratedSession(sessionId);
+  const entry = activeSessions.get(resolved);
+  if (entry) recordPersonAnswer(resolved, entry, SESSION_COLLAB_APPROVAL, input, approved, remember, "ws");
+}
+
+setCollabAutoApprove((sessionId, input) => {
+  const entry = activeSessions.get(sessionId);
+  const req = entry ? rememberRequest(entry, SESSION_COLLAB_APPROVAL, input) : null;
+  const rule = req ? rememberedApprovals.ruleFor(req, entry!.turnOrigin) : null;
+  if (!rule) return false;
+  noteAutoApproved(sessionId, `remembered-${randomUUID()}`, SESSION_COLLAB_APPROVAL, rule);
+  return true;
+});
+
+/** Where a chat's cards belong, as card listeners name it. */
+function cardPlace(entry: SessionEntry): { projectName: string; providerId: string; projectPath?: string } {
+  return { projectName: entry.projectName ?? "", providerId: entry.providerId, ...(entry.projectPath ? { projectPath: entry.projectPath } : {}) };
+}
+
+/**
+ * Cards left unanswered on a chat's screen for {@link APPROVAL_OVERDUE_MS}: the chat has been
+ * stopped on them all that time, so listeners hear it once (the Assistant's card says since when,
+ * Telegram rings again). A schedule's turn counts as `scheduled`: nobody is at that chat.
+ */
+const overdueCards = createApprovalOverdueTimers({
+  // An end-to-end test shortens the wait (`PPM_APPROVAL_OVERDUE_MS`); nothing else sets it.
+  delayMs: () => (Number(process.env.PPM_APPROVAL_OVERDUE_MS) > 0 ? Number(process.env.PPM_APPROVAL_OVERDUE_MS) : APPROVAL_OVERDUE_MS),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  now: () => Date.now(),
+  fire: (sessionId, requestId, shownAt) => {
+    const entry = activeSessions.get(sessionId);
+    if (!entry || entry.pendingApprovalEvent?.requestId !== requestId) return;
+    const scheduled = getSessionTurnOwnerForVault(sessionId) === "schedule";
+    log.info(`session=${sessionId} card ${requestId} unanswered for ${Math.round((Date.now() - shownAt) / 1000)}s${scheduled ? " (scheduled turn)" : ""}`);
+    chatLifecycle.emit("approval_overdue", { sessionId, requestId, shownAt, scheduled, ...cardPlace(entry) });
+  },
+});
 
 /** Who is answering a card right now (see answerApprovalCore); undefined when nobody is. */
 let resolvingBy: ChatMessageOrigin | undefined;
@@ -1162,19 +1247,19 @@ const approvals: PendingApprovals = createPendingApprovals({
       // that the chat waits; Telegram gets a notice with no buttons from `db-attention-events.ts`.
       broadcast(sessionId, ev);
       const relayed = collabCardForListeners(ev);
-      if (relayed) chatLifecycle.emit("approval_shown", { sessionId, card: relayed, projectName: entry.projectName ?? "", providerId: entry.providerId });
+      if (relayed) chatLifecycle.emit("approval_shown", { sessionId, card: relayed, ...cardPlace(entry) });
       else {
         // Only that the chat waits, never what it asks: the Assistant names it and links to the chat.
         const kind = ev.tool === VAULT_CARD_APPROVAL ? "vault" : ev.tool === DB_EXECUTE_APPROVAL ? "db_execute" : null;
-        if (kind) chatLifecycle.emit("ppm_only_card_shown", { sessionId, requestId: ev.requestId, kind, projectName: entry.projectName ?? "", providerId: entry.providerId });
+        if (kind) chatLifecycle.emit("ppm_only_card_shown", { sessionId, requestId: ev.requestId, kind, ...cardPlace(entry) });
       }
+      overdueCards.arm(sessionId, ev.requestId);
       announceApprovalRequest(sessionId, entry, ev, () => activeSessions.get(sessionId)?.pendingApprovalEvent?.requestId === ev.requestId);
       return;
     }
     bufferAndBroadcast(sessionId, ev);
-    chatLifecycle.emit("approval_shown", {
-      sessionId, card: liveApprovalCard(ev), projectName: entry.projectName ?? "", providerId: entry.providerId,
-    });
+    chatLifecycle.emit("approval_shown", { sessionId, card: liveApprovalCard(ev), ...cardPlace(entry) });
+    overdueCards.arm(sessionId, ev.requestId);
     announceApprovalRequest(sessionId, entry, ev, () => activeSessions.get(sessionId)?.pendingApprovalEvent?.requestId === ev.requestId);
     // An endpoint card answers within its own window, counted from now: time spent queued
     // behind another card the user had not answered is not time the user had to answer this one.
@@ -1191,11 +1276,16 @@ const approvals: PendingApprovals = createPendingApprovals({
   },
   endEndpoint: (requestId, reason) => { assistantApprovalBroker.withdraw(requestId, reason.message); },
   denyPpm: (sessionId, reason) => { ppmApprovals.cancelSession(sessionId, reason.message); },
+  queued: (sessionId, ev) => {
+    const entry = activeSessions.get(sessionId);
+    if (entry) chatLifecycle.emit("approval_queued", { sessionId, card: liveApprovalCard(ev), ...cardPlace(entry) });
+  },
   idle: (sessionId, slot) => {
     const waiting = ppmApprovals.pendingEvent(sessionId);
-    if (waiting) approvals.offer(sessionId, slot, ppmApprovalEvent(waiting));
+    if (waiting) approvals.offer(sessionId, slot, ppmApprovalEvent(waiting, activeSessions.get(sessionId)));
   },
   ended: (sessionId, ev, reason, how) => {
+    overdueCards.cancel(ev.requestId);
     // Every card's end is told, PPM's own included: a listener that named one (the Assistant's
     // "Waiting on you") takes it away. A `db_execute` or vault card's end says only whether it was approved.
     chatLifecycle.emit("approval_resolved", {
@@ -1232,8 +1322,11 @@ setAssistantApprovalDelivery(
 );
 
 /** One of PPM's own approvals, as the session's approval slot holds it. */
-function ppmApprovalEvent(event: { requestId: string; tool: string; input: unknown }): PendingApprovalEvent {
-  return { type: "approval_request", requestId: event.requestId, tool: event.tool, input: event.input, origin: "ppm" };
+function ppmApprovalEvent(event: { requestId: string; tool: string; input: unknown }, entry?: SessionEntry): PendingApprovalEvent {
+  // A session tool's card offers to remember its kind; a database change or a vault unlock never does.
+  const req = entry && event.tool === SESSION_COLLAB_APPROVAL ? rememberRequest(entry, event.tool, event.input) : null;
+  const remember = req ? rememberedApprovals.offerFor(req) : null;
+  return { type: "approval_request", requestId: event.requestId, tool: event.tool, input: event.input, origin: "ppm", ...(remember ? { remember } : {}) };
 }
 
 /**
@@ -1249,7 +1342,14 @@ function announcePpmApproval(sessionId: string, event: { type: string; requestId
   // An extension's turn with nobody watching: the broker settles it as unanswerable rather than
   // holding a card for an hour that no device shows.
   if (unattendedExtensionTurn(entry)) return false;
-  approvals.offer(sessionId, entry, ppmApprovalEvent(event));
+  const shownEvent = ppmApprovalEvent(event, entry);
+  const offered = approvals.offer(sessionId, entry, shownEvent);
+  // Held in its broker behind another card: the chat waits on it all the same, so a session
+  // tool's card is told now as queued (a `db_execute` or vault card says nothing until shown).
+  if (offered === "waiting") {
+    const relayed = collabCardForListeners(shownEvent);
+    if (relayed) chatLifecycle.emit("approval_queued", { sessionId, card: relayed, ...cardPlace(entry) });
+  }
   armExtensionApprovalDeadline(sessionId, entry, event.requestId);
   return true;
 }
@@ -1786,6 +1886,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           if (Array.isArray(ev.mcpServers)) {
             entry.mcpNeedsAuth = needsAuthServerNames(ev.mcpServers);
             broadcast(sessionId, mcpStatusEvent(entry.mcpNeedsAuth));
+            const lost = serversThatLostSignIn(entry.mcpConnected, entry.mcpNeedsAuth);
+            entry.mcpConnected = connectedServerNames(ev.mcpServers);
+            if (lost.length) chatLifecycle.emit("mcp_sign_in_needed", { sessionId, servers: lost, ...cardPlace(entry) });
           }
           // Not awaited: the turn goes on while the CLI answers.
           void refreshEffortStatus({
@@ -2092,7 +2195,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // Shown (buffered, broadcast and notified) now, or queued behind the card already
         // shown — e.g. an Assistant endpoint request — and shown once that one is answered.
         // Never anything the provider says: the card's `origin` is the endpoint's alone.
-        const { origin: _origin, summary: _summary, questions: rawQuestions, ...providerEvent } = ev;
+        const { origin: _origin, summary: _summary, questions: rawQuestions, remember: _remember, ...providerEvent } = ev;
         // A turn PPM started to report on a watched chat asks the user nothing: it carries that
         // chat's words, and a card here would be one tap away from acting on them. The provider
         // hears a plain denial; the turn's context already told the model why.
@@ -2113,11 +2216,22 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           bufferAndBroadcast(sessionId, { type: "approval_resolved", requestId: ev.requestId, approved: false, answers: null });
           continue;
         }
+        // A kind of request the user chose to have approved without a card: no card at all.
+        const rememberReq = ev.tool === "AskUserQuestion" ? null : rememberRequest(entry, String(ev.tool), ev.input);
+        const rule = rememberReq ? rememberedApprovals.ruleFor(rememberReq, entry.turnOrigin) : null;
+        if (rule) {
+          chatService.resolveApproval(entry.providerId, sessionId, ev.requestId, true, undefined, { reason: `remembered_rule:${rule.id}` });
+          noteAutoApproved(sessionId, ev.requestId, String(ev.tool), rule);
+          continue;
+        }
+        const remember = rememberReq ? rememberedApprovals.offerFor(rememberReq) : null;
         // A question card carries its questions normalized, so every surface answers it by id:
         // Codex sends them so (read from its own request); Claude's are read off the tool input.
         const questions = questionsFromWire(rawQuestions)
           ?? (ev.tool === "AskUserQuestion" ? normalizeClaudeQuestions(ev.input) : undefined);
-        approvals.offer(sessionId, entry, { ...providerEvent, ...(questions ? { questions } : {}) } as PendingApprovalEvent);
+        approvals.offer(sessionId, entry, {
+          ...providerEvent, ...(questions ? { questions } : {}), ...(remember ? { remember } : {}),
+        } as PendingApprovalEvent);
         armExtensionApprovalDeadline(sessionId, entry, ev.requestId);
         continue;
       } else if (evType === "turn_started") {
@@ -2679,8 +2793,13 @@ function answerApprovalCore(
   if (ppmApprovals.has(requestId)) {
     const previous = resolvingBy;
     resolvingBy = origin;
+    const asked = collabApprovalBroker.pendingEvent(sessionId);
     try {
-      return settleCollabApprovalFromServer(sessionId, requestId, approved, origin);
+      const result = settleCollabApprovalFromServer(sessionId, requestId, approved, origin);
+      if (result === "answered" && asked?.requestId === requestId) {
+        recordPersonAnswer(sessionId, entry, asked.tool, asked.input, approved, answer.remember, origin);
+      }
+      return result;
     } finally {
       resolvingBy = previous;
     }
@@ -2745,6 +2864,7 @@ function answerApprovalCore(
     }
     chatService.resolveApproval(entry.providerId, sessionId, requestId, approved, data, { origin, traceData: traced });
     recordAnswer();
+    if (card && !questions) recordPersonAnswer(sessionId, entry, card.tool, card.input, approved, answer.remember, origin);
     // Tell every connected device this approval was resolved so their live prompt clears —
     // even the device that didn't answer — and show the next card waiting, if any.
     approvals.clear(sessionId, entry, requestId, APPROVAL_END.answered, { announce: true, approved, answers: shown ?? null });
@@ -2827,6 +2947,8 @@ function liveChatState(entry: SessionEntry): LiveChatState {
     // could answer it. The chat still counts as waiting on the user.
     ...(entry.pendingApprovalEvent && entry.pendingApprovalEvent.tool !== VAULT_CARD_APPROVAL
       ? { card: liveApprovalCard(entry.pendingApprovalEvent) } : {}),
+    ...(entry.pendingApprovalEvent && approvalHeldAt.has(entry.pendingApprovalEvent)
+      ? { cardShownAt: approvalHeldAt.get(entry.pendingApprovalEvent)! } : {}),
     queuedCards: entry.approvalQueue?.length ?? 0,
     ...(entry.turnOrigin ? { turnOrigin: entry.turnOrigin } : {}),
     ...(entry.turnBindings?.length ? { turnId: entry.turnBindings[entry.turnBindings.length - 1]!.turnId } : {}),
@@ -3897,6 +4019,8 @@ export const chatWebSocket = {
       const { data, answersById } = parsed as { data?: unknown; answersById?: unknown };
       const answer: ApprovalAnswer = {
         approved: parsed.approved === true,
+        // "Approve this kind next time" counts only from a person's tab, never a script's loopback socket.
+        ...(parsed.remember === true && !ws.data.origin && !ws.data.nonViewer ? { remember: true } : {}),
         // Coerced against the card's own questions in answerApprovalCore; anything else is dropped there.
         ...(answersById && typeof answersById === "object" ? { answersById: answersById as Record<string, string[]> } : { answers: data }),
       };

@@ -22,6 +22,7 @@ import { answersByIdError, type AnswersById, type NormalizedQuestion } from "../
 import type { InlineKeyboardButton, TelegramCallbackQuery } from "../telegram/telegram-types.ts";
 import { redactForTelegram, stripTelegramHtml } from "../telegram/telegram-html-format.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
+import { REMEMBER_SUGGEST_AFTER } from "../../shared/remembered-approvals.ts";
 import type { CardPress } from "./assistant-telegram-actions.ts";
 import type { BridgeCards, BridgeDeps } from "./assistant-telegram.service.ts";
 import { formatApprovalCard, formatQuestionCard, needsPpm, otherButtonLabel, resolutionLine } from "./assistant-telegram-card-format.ts";
@@ -137,6 +138,17 @@ function clockTime(ms: number, zone: string | undefined): string {
 
 function assistantZone(): string | undefined {
   try { return getAssistantSettings().timezone ?? undefined; } catch { return undefined; }
+}
+
+/**
+ * What "Allow & remember" would remember, and — after the user approved the same kind by hand
+ * often enough — the suggestion to. Remembered only when pressed.
+ */
+export function rememberLine(remember: { label: string; suggest: boolean }): string {
+  const what = escapeTelegramHtml(remember.label);
+  return remember.suggest
+    ? `💡 <i>You have allowed this ${REMEMBER_SUGGEST_AFTER} times. “Allow & remember” approves it by itself from now on: ${what}.</i>`
+    : `<i>“Allow & remember” approves this kind by itself from now on: ${what}.</i>`;
 }
 
 /** The line on a card that gives up by itself: how long is left, and that nothing runs after. */
@@ -269,11 +281,18 @@ export class AssistantTelegramCards implements BridgeCards {
       // The deciding part is capped well under Telegram's limit, so the card always fits.
       const formatted = formatApprovalCard(p.card, how.approvalHeadline);
       card.html = formatted.html;
+      // "Allow, and approve this kind next time": PPM works the kind out from the request itself;
+      // the button only says which card was pressed. Offered only where Allow is.
+      const remember = formatted.allow ? p.card.remember : undefined;
+      if (remember) card.html += `
+
+${rememberLine(remember)}`;
       const buttons = [
         ...(formatted.allow ? [{ text: "Allow", callback_data: mint({ op: "allow" }) }] : []),
         { text: "Deny", callback_data: mint({ op: "deny" }) },
       ];
-      rows = () => [buttons];
+      const rememberRow = remember ? [{ text: "Allow & remember", callback_data: mint({ op: "allow_remember" }) }] : [];
+      rows = () => (rememberRow.length ? [buttons, rememberRow] : [buttons]);
     }
     // A card that gives up by itself says when, worked out as it goes out (it may have waited in quiet hours).
     if (p.card.expiresAt) card.html += `\n\n${expiryLine(p.card.expiresAt, this.deps.now())}`;
@@ -361,15 +380,17 @@ export class AssistantTelegramCards implements BridgeCards {
     // Any other button on the card (a choice, Back, Next, Send) ends a wait for words to it: the
     // next message must not answer a question the user has just answered, or left, with a button.
     this.armed.endCard(keyOf(card), card.wizard && press.op !== "send" ? "moved" : "ended");
-    if (card.wizard && press.op !== "send" && press.op !== "allow" && press.op !== "deny") return this.step(card, card.wizard, press);
+    if (card.wizard && press.op !== "send" && press.op !== "allow" && press.op !== "allow_remember" && press.op !== "deny") return this.step(card, card.wizard, press);
     if (press.op === "toggle" || press.op === "next" || press.op === "back") return "This button is no longer valid.";
     if (press.op === "send" && card.wizard?.step !== card.questions.length) {
       if (card.wizard) this.redraw(card);
       return EARLIER_STEP;
     }
-    let answer: { approved: boolean; answersById?: AnswersById };
+    let answer: { approved: boolean; answersById?: AnswersById; remember?: boolean };
     if (press.op === "allow" || press.op === "deny") {
       answer = { approved: press.op === "allow" };
+    } else if (press.op === "allow_remember") {
+      answer = { approved: true, remember: true };
     } else {
       const byId: AnswersById = press.op === "pick" && press.questionId && press.option
         ? { [press.questionId]: [press.option] }
@@ -379,11 +400,11 @@ export class AssistantTelegramCards implements BridgeCards {
       answer = { approved: true, answersById: byId };
     }
     if (!this.answer(card, answer)) return "This card is no longer waiting.";
-    return press.op === "deny" ? "Denied." : press.op === "allow" ? "Allowed." : "Answer sent.";
+    return press.op === "deny" ? "Denied." : press.op === "allow" ? "Allowed." : press.op === "allow_remember" ? "Allowed. PPM will approve this kind by itself from now on." : "Answer sent.";
   }
 
   /** Answers the chat the card waits on; false when nothing waits on it any more (the card then says so). */
-  private answer(card: ShownCard, answer: { approved: boolean; answersById?: AnswersById }): boolean {
+  private answer(card: ShownCard, answer: { approved: boolean; answersById?: AnswersById; remember?: boolean }): boolean {
     this.deps.codes.dropGroup(card.group);
     this.armed.endCard(keyOf(card), "ended");
     const result = chatControl()?.answerApproval(card.sessionId, card.requestId, answer, "telegram") ?? "stale";

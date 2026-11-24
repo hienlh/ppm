@@ -93,6 +93,11 @@ export interface PpmConfig {
    */
   feature_intros?: FeatureIntroStates;
   /**
+   * Remembered approvals (`services/remembered-approvals/`): off until the user turns it on. The
+   * rules themselves live in `approval_rules`; this is only the switch.
+   */
+  remembered_approvals?: { enabled?: boolean };
+  /**
    * Voice messages: on/off, review before send, and the word lists. Read through
    * `readVoiceSettings` (`services/voice-message/voice-settings.ts`), which validates the shape.
    */

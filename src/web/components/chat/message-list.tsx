@@ -56,7 +56,7 @@ interface MessageListProps {
   keepStaleWhileLoading?: boolean;
   pendingApproval: ApprovalRequest | null;
   /** `answersById` answers a question card, by question id. */
-  onApprovalResponse: (requestId: string, approved: boolean, answersById?: AnswersById) => void;
+  onApprovalResponse: (requestId: string, approved: boolean, answersById?: AnswersById, remember?: boolean) => void;
   isStreaming: boolean;
   phase?: SessionPhase;
   connectingElapsed?: number;

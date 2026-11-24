@@ -16,6 +16,8 @@ import {
 } from "../../../shared/session-collab";
 import { ProviderBadge } from "./provider-selector";
 import { SummaryBody } from "./approval-card";
+import { RememberApprovalControl } from "./remember-approval-control";
+import type { CardRememberOffer } from "../../../shared/remembered-approvals";
 
 const MODE_LABELS: Record<string, string> = {
   plan: "Plan",
@@ -68,15 +70,20 @@ function RunsIn({ mode }: { mode: string }) {
   );
 }
 
-export function CollabApprovalCard({ requestId, input }: { requestId: string; input: SessionCollabApprovalInput }) {
+export function CollabApprovalCard({ requestId, input, remember }: {
+  requestId: string;
+  input: SessionCollabApprovalInput;
+  /** What "Allow & remember" would remember; absent when the card offers nothing to remember. */
+  remember?: CardRememberOffer;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const answer = async (choice: SessionCollabAnswer) => {
+  const answer = async (choice: SessionCollabAnswer, rememberIt = false) => {
     setBusy(true);
     setError(null);
     try {
-      await answerCollabApproval(requestId, choice);
+      await answerCollabApproval(requestId, choice, rememberIt);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
@@ -111,6 +118,7 @@ export function CollabApprovalCard({ requestId, input }: { requestId: string; in
           </button>
         ))}
       </div>
+      {remember && <RememberApprovalControl offer={remember} disabled={busy} onRemember={() => void answer("allow_once", true)} />}
       {error && <p className="text-xs text-error">{error}</p>}
     </div>
   );

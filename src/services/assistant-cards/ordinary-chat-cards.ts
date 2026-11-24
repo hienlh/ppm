@@ -1,5 +1,6 @@
 import type { ChatMessageOrigin } from "../chat-control/chat-control.ts";
 import { isAssistantProject } from "../../shared/assistant-project.ts";
+import { projectKey } from "../project-name-for-path.ts";
 
 /**
  * Which chats that are not a manager have their waiting cards put in front of the user by the PPM
@@ -12,9 +13,11 @@ import { isAssistantProject } from "../../shared/assistant-project.ts";
  *
  * - the PPM Assistant's own sessions, whose cards it shows itself;
  * - a manager chat, mirrored as a manager (`manager-signals.ts`);
- * - an extension's turn, which answers its cards itself or has them refused when nobody watches;
- * - a Design chat, which lives in its design's tab with the canvas: opened as a plain chat it would
- *   lose that, and it takes no forwarded words, so a mirror could neither open it nor be replied to.
+ * - an extension's turn, which answers its cards itself or has them refused when nobody watches.
+ *
+ * A Design chat is mirrored as a link only (`design`): it lives in its design's tab with the canvas,
+ * where opened as a plain chat it would lose that, and it takes no forwarded words. Its card says
+ * the chat waits and opens the design; it is answered there.
  *
  * A chat a manager opened is mirrored too: a manager only learns of its child's card when it next
  * looks, often after the card ran out, and the user had to go looking for it. The manager's own
@@ -28,14 +31,16 @@ export interface ChatCardRef {
   sessionId: string;
   title: string;
   providerId: string;
+  /** A Design chat: the design it belongs to. Its cards are links to the design, never answered off it. */
+  design?: { slug: string };
 }
 
 export interface OrdinaryChatDeps {
   projects(): Array<{ name: string; path: string }>;
   isAssistant(sessionId: string): boolean;
   isManager(sessionId: string): boolean;
-  /** A Design chat: one with a design's slug. */
-  isDesign(sessionId: string): boolean;
+  /** A Design chat's design slug; null for any other chat. */
+  designSlug(sessionId: string): string | null;
   /** Who sent the message the running turn answers. */
   turnOrigin(sessionId: string): ChatMessageOrigin | undefined;
   /** The chat's name as PPM shows it; null when it has none yet. */
@@ -46,14 +51,31 @@ export const UNTITLED_CHAT = "Untitled chat";
 
 /** The chat, when its waiting cards are the Assistant's to show (see the header); else null. */
 export function ordinaryChatFor(
-  p: { sessionId: string; projectName: string; providerId: string },
+  p: { sessionId: string; projectName: string; providerId: string; projectPath?: string },
   deps: OrdinaryChatDeps,
 ): ChatCardRef | null {
   if (!p.projectName || isAssistantProject(p.projectName)) return null;
-  if (deps.isAssistant(p.sessionId) || deps.isManager(p.sessionId) || deps.isDesign(p.sessionId)) return null;
+  if (deps.isAssistant(p.sessionId) || deps.isManager(p.sessionId)) return null;
   if (deps.turnOrigin(p.sessionId) === "extension") return null;
-  const project = deps.projects().find((x) => x.name === p.projectName);
+  const project = findProject(deps.projects(), p);
   if (!project) return null;
   const title = deps.title(p.sessionId)?.replace(/\s+/g, " ").trim() || UNTITLED_CHAT;
-  return { projectName: project.name, projectPath: project.path, sessionId: p.sessionId, title, providerId: p.providerId };
+  const slug = deps.designSlug(p.sessionId);
+  return {
+    projectName: project.name, projectPath: project.path, sessionId: p.sessionId, title, providerId: p.providerId,
+    ...(slug ? { design: { slug } } : {}),
+  };
+}
+
+/**
+ * The chat's project: by its folder when the chat knows it (a name is spelled however the chat was
+ * opened, and on Windows two spellings of one folder are one project), else by its name.
+ */
+function findProject(projects: Array<{ name: string; path: string }>, p: { projectName: string; projectPath?: string }) {
+  if (p.projectPath) {
+    const key = projectKey(p.projectPath);
+    const byPath = projects.find((x) => projectKey(x.path) === key);
+    if (byPath) return byPath;
+  }
+  return projects.find((x) => x.name === p.projectName) ?? null;
 }

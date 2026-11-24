@@ -72,6 +72,7 @@ export function findCardByTelegramRef(chatId: string, messageId: number): CardRo
 export function listUnsentWaitingCardRows(): CardRow[] {
   return getDb().query(`SELECT ${CARD_COLUMNS} FROM assistant_cards
     WHERE outbound IN ('pending', 'skipped') AND status = 'open' AND kind IN ('approval', 'question')
+      AND COALESCE(json_extract(payload_json, '$.queued'), 0) = 0
     ORDER BY created_at, rowid`).all().map(rowFromDb);
 }
 

@@ -563,6 +563,8 @@ export type ChatEvent =
    * as `entries` shows it behind "What was sent" (oldest first, as clipped in what was sent).
    */
   | { type: "session_recovered"; turns: number; omittedTurns: number; entries: ResumeHandoffEntry[] }
+  /** A rule the user made approved a request in place of a card (`remembered-approvals/`). */
+  | { type: "auto_approved"; requestId: string; tool: string; ruleId: string; label: string }
   /**
    * A message the browser sent has opened a turn (or, for a steered Codex message, joined the
    * running one). `turnId` is the id the turn index gives that turn; `clientMessageId` is the

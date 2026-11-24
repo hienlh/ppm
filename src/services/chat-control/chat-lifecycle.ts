@@ -34,13 +34,35 @@ export interface ChatLifecycleEvents {
     traceOrigin?: TraceOrigin;
   };
   /** A card is now on the chat's screen (a queued one only once it reaches the front). */
-  approval_shown: { sessionId: string; card: LiveApprovalCard; projectName: string; providerId: string };
+  approval_shown: { sessionId: string; card: LiveApprovalCard; projectName: string; providerId: string; projectPath?: string };
+  /**
+   * A card waits behind another card of the same chat: it cannot be answered until it reaches the
+   * front (`approval_shown` with the same request id then follows), but the chat waits on it too.
+   */
+  approval_queued: { sessionId: string; card: LiveApprovalCard; projectName: string; providerId: string; projectPath?: string };
+  /**
+   * A card has stood unanswered on the chat's screen for `APPROVAL_OVERDUE_MS`, so the chat has been
+   * stopped since `shownAt`. Said once per card. `scheduled`: the turn waiting on it was started by
+   * a schedule (no person is at the chat, and the schedule cannot run again until it is answered).
+   */
+  approval_overdue: {
+    sessionId: string; requestId: string; shownAt: number; scheduled: boolean;
+    projectName: string; providerId: string; projectPath?: string;
+  };
+  /**
+   * MCP servers that were working in this chat and now need a sign-in (they stopped answering
+   * mid-session). A server that already needed one when the chat started is not told: it is the
+   * chat's sign-in bar's to show.
+   */
+  mcp_sign_in_needed: { sessionId: string; servers: string[]; projectName: string; providerId: string; projectPath?: string };
   /**
    * A card only PPM's screen can answer is now on the chat's screen: a `db_execute` change or a
    * vault unlock, both taking a password typed into PPM. Its content is not given: a listener may
    * only say that the chat waits (`approval_resolved` says when it no longer does).
    */
-  ppm_only_card_shown: { sessionId: string; requestId: string; kind: "db_execute" | "vault"; projectName: string; providerId: string };
+  ppm_only_card_shown: {
+    sessionId: string; requestId: string; kind: "db_execute" | "vault"; projectName: string; providerId: string; projectPath?: string;
+  };
   /**
    * A card left, answered or not. `by` names who answered; absent when it went for another
    * reason (`reason`: the turn ended, a message superseded it, the turn was stopped). May name a

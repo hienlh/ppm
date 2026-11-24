@@ -150,7 +150,28 @@ export interface AssistantCardPayload {
    * Approval cards answered in the chat in PPM only: a `db_execute` change or a vault unlock, both
    * of which take a password typed into PPM. Such a card has no Allow or Deny anywhere else.
    */
-  answerInPpm?: "db_execute" | "vault";
+  answerInPpm?: "db_execute" | "vault" | "design" | "mcp_sign_in";
+  /**
+   * Approval and question cards: the card waits behind another card of the same chat, so it cannot
+   * be answered yet anywhere (no buttons). Cleared when it reaches the front.
+   */
+  queued?: boolean;
+  /**
+   * Approval and question cards left unanswered past `APPROVAL_OVERDUE_MS`: when the chat started
+   * waiting on it (ms since the epoch). The chat has done nothing since.
+   */
+  waitingSince?: number;
+  /** An overdue card of a turn a schedule started: nobody is at that chat, and its schedule is stuck too. */
+  scheduledTurn?: boolean;
+  /** A Design chat's card (`answerInPpm: "design"`): the design that opens it. */
+  design?: { slug: string };
+  /** An MCP sign-in card (`answerInPpm: "mcp_sign_in"`): the server that needs signing in to. */
+  mcpServer?: string;
+  /**
+   * Approval cards: what "approve this kind next time" would remember, and whether the card
+   * suggests it (the user approved the same kind by hand often enough). Worked out by PPM.
+   */
+  remember?: { label: string; suggest: boolean };
   /** Approval cards: the part a person must see before Allow means anything. */
   deciding?: {
     kind: string; title: string; facts: Array<{ label: string; value: string }>; text: string;
@@ -233,6 +254,11 @@ export interface AssistantCard {
    * them was hidden as a secret. Worked out by the server, on every surface alike.
    */
   okOffered?: boolean;
+  /**
+   * Whether the card went to Telegram: `sent`, `held` for the end of quiet hours, `skipped` (no
+   * Telegram chat could be reached when it was made), `pending` before it was decided.
+   */
+  outbound?: "pending" | "held" | "sent" | "skipped";
   createdAt: number;
   updatedAt: number;
 }

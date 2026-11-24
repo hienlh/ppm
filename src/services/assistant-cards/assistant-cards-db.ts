@@ -156,6 +156,19 @@ export function casCardStatus(id: string, from: AssistantCardStatus, to: Assista
     .run(to, answer ? JSON.stringify(answer) : null, at, id, from).changes > 0;
 }
 
+/**
+ * Merges `patch` into the payload of a card that is still open; false when it is not. A key set to
+ * `undefined` in the patch is removed.
+ */
+export function patchOpenCardPayload(id: string, patch: Partial<AssistantCardPayload>, at: number): boolean {
+  const row = getCardRow(id);
+  if (!row || row.status !== "open") return false;
+  const merged: Record<string, unknown> = { ...row.payload, ...patch };
+  for (const [k, v] of Object.entries(patch)) if (v === undefined) delete merged[k];
+  return getDb().query("UPDATE assistant_cards SET payload_json = ?, updated_at = ? WHERE id = ? AND status = 'open'")
+    .run(JSON.stringify(merged), at, id).changes > 0;
+}
+
 /** Rewrites the answer of a card that is still `answered`; false when it is not (reopened, say). */
 export function setAnsweredCardAnswer(id: string, answer: AssistantCardAnswer, at: number): boolean {
   return getDb().query("UPDATE assistant_cards SET answer_json = ?, updated_at = ? WHERE id = ? AND status = 'answered'")

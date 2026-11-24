@@ -38,6 +38,11 @@ export interface CardOutboundSink {
   send(cards: AssistantCard[], header?: string): void;
   /** A card shown earlier stopped waiting: its copies lose their buttons and say how it ended. */
   changed(card: AssistantCard): void;
+  /**
+   * A card sent earlier has stood unanswered past `APPROVAL_OVERDUE_MS`: one more message, with a
+   * sound whether or not the user is at PPM, saying the chat has waited since `waitingSince`.
+   */
+  overdue?(card: AssistantCard): void;
 }
 
 export interface CardOutboundDeps {
@@ -101,10 +106,18 @@ export function createCardOutbound(deps: CardOutboundDeps = realDeps) {
     timer = deps.clock.setTimer(() => { timer = null; flush(); }, Math.max(MIN_TIMER_MS, at - deps.clock.now()));
   }
 
+  /** A card that must not wait for quiet hours to end: urgent, answering the phone, or a schedule's chat stuck on it. */
+  const ringsNow = (card: AssistantCard): boolean => card.kind === "urgent" || card.payload.scheduledTurn === true || answersPhone(card);
+
   function onCreated(card: AssistantCard): void {
+    // A card waiting behind another of its chat has no buttons yet: it goes out once in front.
+    if (card.payload.queued) return;
     const now = deps.clock.now();
-    if (!sink?.ready()) return deps.setOutbound(card.id, "skipped", now);
-    const end = card.kind === "urgent" || answersPhone(card) ? null : safeQuietEnd();
+    if (!sink?.ready()) {
+      log.info(`card ${card.id} not sent to Telegram: no Telegram chat can be reached`);
+      return deps.setOutbound(card.id, "skipped", now);
+    }
+    const end = ringsNow(card) ? null : safeQuietEnd();
     if (end !== null) {
       deps.setOutbound(card.id, "held", now);
       log.info(`card ${card.id} held for the end of quiet hours`);
@@ -112,7 +125,33 @@ export function createCardOutbound(deps: CardOutboundDeps = realDeps) {
       return;
     }
     deps.setOutbound(card.id, "sent", now);
+    log.info(`card ${card.id} sent to Telegram`);
     sink.send([card]);
+  }
+
+  /** A queued card reached the front of its chat: it goes out now, as a new card would. */
+  function onShown(card: AssistantCard): void {
+    const outbound = deps.row(card.id)?.outbound;
+    if (outbound === "sent" || outbound === "held") return;
+    onCreated(card);
+  }
+
+  /** A card left unanswered too long: rung once more, or sent now if it never went out. */
+  function onOverdue(card: AssistantCard): void {
+    if (!STILL_SHOWN.has(card.status) || !sink?.ready()) return;
+    const outbound = deps.row(card.id)?.outbound;
+    if (outbound !== "sent") {
+      // Held for quiet hours, or made while nothing could be reached: a schedule's stuck chat goes
+      // now; anything else keeps waiting for quiet hours to end like every other held card.
+      if (outbound === "held" && !ringsNow(card)) return;
+      deps.setOutbound(card.id, "sent", deps.clock.now());
+      log.info(`card ${card.id} sent to Telegram (overdue)`);
+      sink.send([card]);
+      return;
+    }
+    if (!ringsNow(card) && safeQuietEnd() !== null) return;
+    log.info(`card ${card.id} overdue: reminding on Telegram`);
+    sink.overdue?.(card);
   }
 
   function onChanged(card: AssistantCard): void {
@@ -170,7 +209,12 @@ export function createCardOutbound(deps: CardOutboundDeps = realDeps) {
     /** The bridge started: cards go to it, and what quiet hours held goes out if they are over. */
     attach(s: CardOutboundSink): void {
       sink = s;
-      off ??= deps.cards.onChange((card, change) => (change === "created" ? onCreated(card) : onChanged(card)));
+      off ??= deps.cards.onChange((card, change) => {
+        if (change === "created") onCreated(card);
+        else if (change === "shown") onShown(card);
+        else if (change === "overdue") onOverdue(card);
+        else onChanged(card);
+      });
       flush();
       catchUp();
     },

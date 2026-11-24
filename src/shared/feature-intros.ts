@@ -39,9 +39,10 @@ export interface FeatureIntro {
  * Settings a feature introduction can stand for. `assistant_permission_mode`: on = Full, off = Ask.
  * `voice_messages`: `voice_message.enabled`. `voice_self_learning`: `voice_message.self_learning`,
  * asked only once voice messages are on (it means nothing without them).
- * `assistant_settings_tools`: `assistant.settings_tools`.
+ * `assistant_settings_tools`: `assistant.settings_tools`. `remembered_approvals`: `remembered_approvals.enabled`.
  */
-export type FeatureIntroSetting = "assistant_permission_mode" | "voice_messages" | "voice_self_learning" | "assistant_settings_tools";
+export type FeatureIntroSetting =
+  | "assistant_permission_mode" | "voice_messages" | "voice_self_learning" | "assistant_settings_tools" | "remembered_approvals";
 
 export const FEATURE_INTROS: readonly FeatureIntro[] = [
   {
@@ -113,6 +114,18 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
       + "Settings → PPM Assistant → Changes. It stays off until you choose.",
     tools: [],
     setting: "assistant_settings_tools",
+    since: "2026-11",
+  },
+  {
+    id: "remembered-approvals-2026-11",
+    title: "Approve a kind of request once, for good",
+    body: "Approval cards get “Allow & remember”: the same kind of request in that project — a command like `git status`, "
+      + "edits in one folder, opening a chat — is then approved without a card, with one line in the chat saying so. After "
+      + "you allow the same kind three times, the card suggests it. Pushes, deploys, deletions, database changes and "
+      + "anything that leaves the machine are never remembered. See and remove rules in Settings → Approvals. It stays "
+      + "off until you choose.",
+    tools: [],
+    setting: "remembered_approvals",
     since: "2026-11",
   },
 ];
