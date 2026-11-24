@@ -8,7 +8,7 @@ import type { LearnedSource, LearnedWord, VoiceCandidate, VoiceMessageConfig } f
 import { isFaded, isStaleCandidate, wordUsedIn } from "./voice-learned-fade.ts";
 import { readyToLearn, type Replacement } from "./voice-learn-from-cleanup.ts";
 import {
-  cleanCandidateList, cleanLearnedList, projectWordsOf, readVoiceSettings, VOICE_LIMITS, vocabularyOf, writeVoiceSettings,
+  candidateKey, cleanCandidateList, cleanLearnedList, projectWordsOf, readVoiceSettings, VOICE_LIMITS, vocabularyOf, writeVoiceSettings,
 } from "./voice-settings.ts";
 
 const validProject = (project: string) => !!project.trim() && project.length <= VOICE_LIMITS.projectKeyChars;
@@ -44,7 +44,6 @@ export function appendLearnedWords(project: string, entries: readonly LearnedWor
   return added;
 }
 
-const pairKey = (from: string, to: string) => `${from.toLowerCase()}\u0000${to.toLowerCase()}`;
 
 /**
  * Counts one message's replacements for `project` and learns those seen often enough. A
@@ -52,7 +51,9 @@ const pairKey = (from: string, to: string) => `${from.toLowerCase()}\u0000${to.t
  * undid, or typed into a list themself, is not counted. `known` is the project's own text (its
  * picked-up words and its typed words), which lets a term be learned after two messages instead
  * of three — for the clean-up's corrections, not the chat's (`readyToLearn`). `source` is what a
- * newly learned word is marked as. Answers with the words learned by this message.
+ * newly learned word is marked as, and the clean-up and the chat are counted apart. For the chat,
+ * `chatId` names the chat that read it: a chat counts once per pair, since within one
+ * conversation the AI sees and repeats its own earlier reading. Answers with the words learned.
  */
 export function recordCleanupReplacements(
   project: string,
@@ -60,6 +61,7 @@ export function recordCleanupReplacements(
   known: ReadonlySet<string>,
   now = new Date(),
   source: Extract<LearnedSource, "cleanup" | "chat"> = "cleanup",
+  chatId?: string,
 ): LearnedWord[] {
   if (!validProject(project) || found.length === 0) return [];
   const config: VoiceMessageConfig = readVoiceSettings();
@@ -69,13 +71,14 @@ export function recordCleanupReplacements(
   const typed = new Set([...own.words, ...config.words].map((w) => w.toLowerCase()));
   const learned = [...own.learned];
   const learnedAt = new Map(learned.map((l, i) => [l.word.toLowerCase(), i]));
-  const candidates = new Map<string, VoiceCandidate>((own.candidates ?? []).map((c) => [pairKey(c.from, c.to), c]));
+  const candidates = new Map<string, VoiceCandidate>((own.candidates ?? []).map((c) => [candidateKey(c), c]));
+  const chatSource = source === "chat" ? { source: "chat" as const } : {};
   const newlyLearned: LearnedWord[] = [];
   const seenThisMessage = new Set<string>();
 
   for (const r of found) {
     const word = r.to.toLowerCase();
-    const key = pairKey(r.from, r.to);
+    const key = candidateKey({ from: r.from, to: r.to, ...chatSource });
     if (seenThisMessage.has(key) || blocked.has(word) || typed.has(word)) continue;
     seenThisMessage.add(key);
     const index = learnedAt.get(word);
@@ -84,7 +87,11 @@ export function recordCleanupReplacements(
       learned[index] = { ...entry, hits: Math.min((entry.hits ?? 1) + 1, VOICE_LIMITS.maxHits), lastUsedAt: at };
       continue;
     }
-    const hits = (candidates.get(key)?.hits ?? 0) + 1;
+    const previous = candidates.get(key);
+    // The same chat reading the same pair again is one reading, not another.
+    if (source === "chat" && chatId && previous?.chats?.includes(chatId)) continue;
+    const chats = source === "chat" && chatId ? [...(previous?.chats ?? []), chatId].slice(-VOICE_LIMITS.candidateChats) : undefined;
+    const hits = (previous?.hits ?? 0) + 1;
     if (readyToLearn(r, hits, known, source)) {
       const entry: LearnedWord = { word: r.to, from: r.from, at, source, hits, kind: r.kind };
       learned.push(entry);
@@ -92,7 +99,7 @@ export function recordCleanupReplacements(
       candidates.delete(key);
       newlyLearned.push(entry);
     } else {
-      candidates.set(key, { from: r.from, to: r.to, hits, at });
+      candidates.set(key, { from: r.from, to: r.to, hits, at, ...chatSource, ...(chats ? { chats } : {}) });
     }
   }
 

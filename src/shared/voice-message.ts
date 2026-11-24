@@ -41,7 +41,16 @@ export interface LearnedWord {
 }
 
 /** A correction the clean-up made, counted until it is seen often enough to be learned. */
-export interface VoiceCandidate { from: string; to: string; hits: number; at: string }
+export interface VoiceCandidate {
+  from: string; to: string; hits: number; at: string;
+  /**
+   * Counted from the chat's reading rather than the clean-up's fixes; absent: the clean-up. The two
+   * are counted apart, so one source's guess never makes up the other's count.
+   */
+  source?: "chat";
+  /** For the chat's readings: the chats already counted, since one chat repeats its own guess. */
+  chats?: string[];
+}
 
 /**
  * A learned word the user undid: never learned again from the clean-up, until restored. `at` is

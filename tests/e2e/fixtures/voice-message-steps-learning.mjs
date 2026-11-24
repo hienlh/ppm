@@ -30,12 +30,25 @@ export async function runChatLearningScenarios(ctx) {
     // Nothing typed for the project, so Hono can only come from the chat's reading.
     await install.api("/api/speech/voice-settings", { method: "PUT", body: JSON.stringify({ selfLearning: true, project: PROJECT, projectWords: [] }) });
     await install.test("/reply", { text: ANSWER });
-    const { page, errors } = await openChat({ browser, web: install.web, install, title: "Learning" });
-    for (let i = 1; i <= 3; i++) {
-      await sendVoice(page);
-      await until(`answer ${i} drawn`, async () => (await page.locator("[data-voice-understood]").count()) >= i, 30000);
-      if (i < 3) assert.equal((await learned()).length, 0, `nothing learned after ${i} message(s)`);
+    // Within one chat the AI repeats its own earlier reading, so a second message there is no second reading.
+    const first = await openChat({ browser, web: install.web, install, title: "Learning 1" });
+    for (let i = 1; i <= 2; i++) {
+      await sendVoice(first.page);
+      await until(`answer ${i} drawn`, async () => (await first.page.locator("[data-voice-understood]").count()) >= i, 30000);
     }
+    const once = (await install.api(`/api/speech/voice-settings?project=${PROJECT}`)).data;
+    assert.equal(once.projectLearned.length, 0, "nothing learned from one chat");
+    await first.page.context().close();
+    // Two more chats make three readings: learned.
+    let last;
+    for (const n of [2, 3]) {
+      if (last) await last.page.context().close();
+      last = await openChat({ browser, web: install.web, install, title: `Learning ${n}` });
+      await sendVoice(last.page);
+      await last.page.locator("[data-voice-understood]").first().waitFor({ timeout: 30000 });
+      if (n < 3) assert.equal((await learned()).length, 0, `nothing learned after ${n} chats`);
+    }
+    const { page, errors } = last;
     const line = await page.locator("[data-voice-understood]").first().innerText();
     assert.equal(line.replace(/\s+/g, " ").trim(), "AI hiểu: hô nô → Hono", `the line: ${line}`);
     const answerText = await page.locator("[data-voice-understood]").first().locator("xpath=..").innerText();
@@ -46,12 +59,25 @@ export async function runChatLearningScenarios(ctx) {
     await settle(page, 500);
     await shot(page, "desktop", "11-chat-ai-understood");
 
-    // The fourth message carries the learned pair to the AI.
+    // The next message carries the learned pair to the AI.
     const fourth = await sendVoice(page);
     const json = JSON.parse(fourth.slice(fourth.lastIndexOf("Hints (JSON): ") + "Hints (JSON): ".length, fourth.lastIndexOf("\n</ppm-voice-hints-v1>")));
     assert.deepEqual(json.misheard, [{ heard: "hô nô", meant: "Hono" }], "the learned pair rides on the next message");
     assert.deepEqual(errors, [], "no page errors");
-    kit.record("L2: AI hiểu drawn above each answer; Hono learned from the chat after 3 messages; the 4th message's hints name it", { hits: word.hits });
+    kit.record("L2: AI hiểu drawn above each answer; one chat counts once; Hono learned after 3 chats; the next message's hints name it", { hits: word.hits });
+    await page.context().close();
+  });
+
+  await kit.scenario("L2 a typed message's answer that opens with the same words is just text", async () => {
+    const { page } = await openChat({ browser, web: install.web, install, title: "Typed" });
+    const composerBox = page.locator('textarea[aria-label="Message"]:visible').first();
+    const before = (await install.turns()).length;
+    await composerBox.fill("hô nô là gì");
+    await composerBox.press("Enter");
+    await until("typed message answered", async () => (await install.turns()).length > before, 30000);
+    await page.getByText("Hiểu là: hô nô → Hono").first().waitFor({ timeout: 30000 });
+    assert.equal(await page.locator("[data-voice-understood]").count(), 0, "no AI hiểu line for a typed message");
+    kit.record("L2: an answer to a typed message keeps its first line as text");
     await page.context().close();
   });
 

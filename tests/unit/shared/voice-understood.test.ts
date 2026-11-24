@@ -23,9 +23,13 @@ describe("parseUnderstoodPairs", () => {
     expect(parseUnderstoodPairs(`Hiểu là: ${"x".repeat(61)} → y`)).toBeNull();
   });
 
-  it("keeps each heard word once and at most six pairs", () => {
-    const line = `Hiểu là: ${Array.from({ length: 9 }, (_, i) => `a${i} → b${i}`).join("; ")}; a0 → c`;
-    expect(parseUnderstoodPairs(line)).toHaveLength(6);
+  it("is not a line that says anything besides its pairs, names a word twice or lists more than six", () => {
+    // Drawing only the pairs would hide the rest of the AI's sentence.
+    expect(parseUnderstoodPairs("Hiểu là: BPM → PPM; và anh muốn deploy lên prod luôn")).toBeNull();
+    expect(parseUnderstoodPairs("Hiểu là: `a -> b` nghĩa là ánh xạ a sang b")).toBeNull();
+    expect(parseUnderstoodPairs("Hiểu là: a → b; a → c")).toBeNull();
+    expect(parseUnderstoodPairs(`Hiểu là: ${Array.from({ length: 7 }, (_, i) => `a${i} → b${i}`).join("; ")}`)).toBeNull();
+    expect(parseUnderstoodPairs(`Hiểu là: ${Array.from({ length: 6 }, (_, i) => `a${i} → b${i}`).join("; ")}`)).toHaveLength(6);
   });
 });
 
@@ -33,6 +37,11 @@ describe("splitUnderstoodLine", () => {
   it("splits the line off the answer, blank lines before it allowed", () => {
     expect(splitUnderstoodLine("\n\nHiểu là: BPM → PPM\n\nĐã sửa xong.")).toEqual({ pairs: [{ heard: "BPM", meant: "PPM" }], rest: "Đã sửa xong." });
     expect(splitUnderstoodLine("Hiểu là: BPM → PPM")).toEqual({ pairs: [{ heard: "BPM", meant: "PPM" }], rest: "" });
+  });
+
+  it("waits for the line to end while the answer still streams", () => {
+    expect(splitUnderstoodLine("Hiểu là: BPM → P", { complete: false })).toBeNull();
+    expect(splitUnderstoodLine("Hiểu là: BPM → PPM\n", { complete: false })?.pairs).toEqual([{ heard: "BPM", meant: "PPM" }]);
   });
 
   it("reads only the first line of the answer", () => {

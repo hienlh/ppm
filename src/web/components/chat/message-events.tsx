@@ -30,7 +30,9 @@ type EventGroup =
   | { kind: "tool"; tool: ChatEvent; result?: ChatEvent; completed?: boolean }
   | { kind: "notice"; event: SessionRecoveredEvent };
 
-export function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput }: {
+export function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput, voiceAnswer }: {
+  /** This answer replies to a voice message sent as heard: its opening "Hiểu là" line is drawn as one. */
+  voiceAnswer?: boolean;
   events: ChatEvent[];
   isStreaming: boolean;
   projectName?: string;
@@ -165,8 +167,8 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
     }
   }
 
-  // The answer's first text may open with "Hiểu là: …" (how it read a voice message): drawn as a line of its own.
-  const firstText = groups.findIndex((g) => g.kind === "text");
+  // An answer to a voice message may open with "Hiểu là: …" (how it read it): drawn as a line of its own.
+  const firstText = voiceAnswer ? groups.findIndex((g) => g.kind === "text") : -1;
 
   return (
     <>
@@ -176,7 +178,7 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
         }
         if (group.kind === "text") {
           const isLast = isStreaming && i === groups.length - 1;
-          const opening = i === firstText ? splitAnswerOpening(group.content) : { pairs: null, rest: group.content };
+          const opening = i === firstText ? splitAnswerOpening(group.content, !isLast) : { pairs: null, rest: group.content };
           return (
             <div key={`text-${i}`} className={`${CHAT_MESSAGE_TEXT} text-text-primary select-text`}>
               {opening.pairs && <VoiceUnderstoodLine pairs={opening.pairs} />}

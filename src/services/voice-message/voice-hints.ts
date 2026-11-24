@@ -15,7 +15,10 @@
  */
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import { isHintWord, validateVoiceHints, VOICE_HINTS_LIMITS, type VoiceHintPair, type VoiceHints } from "../../shared/chat-voice-hints.ts";
-import { splitVoiceMessage, type LearnedWord, type VoiceMessageConfig, type VoiceSurface } from "../../shared/voice-message.ts";
+import {
+  isStoredVoicePath, splitVoiceMessage, type LearnedWord, type VoiceMessageConfig, type VoicePart, type VoiceSurface,
+} from "../../shared/voice-message.ts";
+import { hasForwardedPart } from "../assistant-telegram/assistant-telegram-inbound-text.ts";
 import { createLogger } from "../logger.ts";
 import type { RankedTerm } from "./voice-auto-vocabulary.ts";
 import { isFaded, selfTaught, wordUsedIn } from "./voice-learned-fade.ts";
@@ -138,6 +141,17 @@ export function voiceHintsFor(input: VoiceHintsInput): VoiceHints | null {
   return misheard.length || close.length ? validateVoiceHints({ version: 1, misheard, close }) : null;
 }
 
+/**
+ * The message's voice part when it is the user's own recording: one PPM stored (the bubble draws
+ * nothing else either), in a message with nothing forwarded in it — a forwarded Telegram message
+ * keeps its marker lines, and someone else's words must not steer hints or learning.
+ */
+export function ownVoicePart(text: string): VoicePart | null {
+  if (hasForwardedPart(text)) return null;
+  const voice = splitVoiceMessage(text).voice;
+  return voice && isStoredVoicePath(voice.path) ? voice : null;
+}
+
 export interface MessageVoiceHintsDeps {
   read?: () => VoiceMessageConfig;
   autoVocabulary?: (project: string) => Promise<RankedTerm[]>;
@@ -154,7 +168,7 @@ export async function voiceHintsForMessage(
   text: string, project: string, surface: VoiceSurface, deps: MessageVoiceHintsDeps = {},
 ): Promise<VoiceHints | null> {
   try {
-    const transcript = splitVoiceMessage(text).voice?.transcript.trim();
+    const transcript = ownVoicePart(text)?.transcript.trim();
     if (!transcript) return null;
     const config = (deps.read ?? readVoiceSettings)();
     if (config.enabled !== true || transcriptFixFor(config, surface) !== "hints") return null;

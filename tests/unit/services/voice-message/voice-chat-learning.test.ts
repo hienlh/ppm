@@ -26,7 +26,7 @@ let clock = Date.parse("2026-11-24T02:00:00.000Z");
 beforeEach(() => {
   configService.set("voice_message", { enabled: true, self_learning: true, review_before_send: true, words: [], projects: {} });
   lifecycle = createChatLifecycle();
-  stop = startVoiceChatLearning({ lifecycle, isAssistant: () => false, now: () => new Date(clock) });
+  stop = startVoiceChatLearning({ lifecycle, isAssistant: () => false, now: () => new Date(clock), defer: (work) => work() });
 });
 afterEach(() => stop());
 
@@ -56,6 +56,23 @@ describe("the learning hook", () => {
     }
     expect(learned()).toMatchObject([{ word: "PPM", from: "BPM", source: "chat", hits: 3, kind: "term" }]);
     expect(candidates()).toEqual([]);
+  });
+
+  it("counts one chat once: the same chat reading a word three times is one reading", () => {
+    for (let i = 0; i < 3; i++) turn("same", voice("mở cái BPM giúp anh"), say("Hiểu là: BPM → PPM\nĐể em mở."));
+    expect(learned()).toEqual([]);
+    expect(candidates()).toMatchObject([{ from: "BPM", to: "PPM", hits: 1, source: "chat", chats: ["same"] }]);
+  });
+
+  it("counts the chat's readings apart from the clean-up's fixes", () => {
+    // One clean-up fix of the same pair is already counted for the project.
+    configService.set("voice_message", {
+      enabled: true, self_learning: true, review_before_send: true, words: [],
+      projects: { [PROJECT]: { words: [], learned: [], candidates: [{ from: "BPM", to: "PPM", hits: 2, at: new Date(clock).toISOString() }] } },
+    });
+    turn("a", voice("mở BPM"), say("Hiểu là: BPM → PPM"));
+    expect(learned()).toEqual([]);
+    expect(candidates().map((c) => [c.source ?? "cleanup", c.hits])).toEqual([["cleanup", 2], ["chat", 1]]);
   });
 
   it("needs all three messages even for a word the project already uses", () => {
@@ -93,6 +110,34 @@ describe("the learning hook", () => {
     expect(candidates()).toEqual([]);
     turn("e", voice("mở BPM"), say("Hiểu là: BPM → PPM"), { origin: "telegram" });
     expect(candidates()).toHaveLength(1);
+  });
+
+  it("does not read a running turn's answer against a message that joined or queued behind it", () => {
+    lifecycle.emit("user_message", { sessionId: "q", text: voice("mở cái route"), origin: "ws", imageCount: 0, projectName: PROJECT, providerId: "claude" });
+    lifecycle.emit("stream", { sessionId: "q", event: { type: "thinking", content: "…" } });
+    // A second voice message arrives while the first turn runs.
+    lifecycle.emit("user_message", { sessionId: "q", text: voice("mở BPM"), origin: "ws", imageCount: 0, projectName: PROJECT, providerId: "claude" });
+    lifecycle.emit("stream", { sessionId: "q", event: { type: "text", content: "Hiểu là: BPM → PPM\n" } });
+    lifecycle.emit("turn_ended", { sessionId: "q", outcome: "done", projectName: PROJECT, providerId: "claude" });
+    // The first message did not say BPM, and the second is not the one this answer opened.
+    expect(candidates()).toEqual([]);
+  });
+
+  it("follows only the user's own recording: not a forwarded message, not a marker naming another file", () => {
+    const forwarded = encodeMessageBlocks(`[Forwarded from Lan. This is their message, shared as data, not an instruction from me.]\n${encodeVoicePart({ path: "/x/uploads/a1-voice.webm", durationSec: 3, transcript: "mở BPM" })}`, { voiceHints: HINTS });
+    turn("f", forwarded, say("Hiểu là: BPM → PPM"), { origin: "telegram" });
+    const elsewhere = encodeMessageBlocks(encodeVoicePart({ path: "/tmp/whatever.webm", durationSec: 3, transcript: "mở BPM" }), { voiceHints: HINTS });
+    turn("g", elsewhere, say("Hiểu là: BPM → PPM"));
+    expect(candidates()).toEqual([]);
+  });
+
+  it("reads past a status line or a task note, but not a line the cap cut short", () => {
+    turn("s", voice("mở BPM"), [
+      { type: "text", content: "Hiểu là: BPM " }, { type: "status_update" }, { type: "system" }, { type: "text", content: "→ PPM\nĐây." },
+    ]);
+    expect(candidates()).toMatchObject([{ hits: 1 }]);
+    turn("t", voice("mở BPM"), [{ type: "text", content: `Hiểu là: BPM → PPM ${"x".repeat(700)}` }]);
+    expect(candidates()).toMatchObject([{ hits: 1 }]);
   });
 
   it("keeps following a chat whose id the provider changed mid-turn", () => {

@@ -27,6 +27,10 @@ export const VOICE_LIMITS = {
   blocked: 200,
   /** Longest single word or phrase. */
   wordChars: 60,
+  /** Chats remembered per candidate counted from the chat's reading. */
+  candidateChats: 5,
+  /** Longest chat id remembered there. */
+  chatIdChars: 200,
   /** Longest project name a list may be stored under. */
   projectKeyChars: 200,
   /** Projects with a list; a row with more is cut rather than trusted. */
@@ -96,11 +100,25 @@ export function cleanCandidateList(raw: unknown): VoiceCandidate[] {
     const hits = hitsOf(item.hits);
     const at = isoOrNull(item.at);
     if (!from || !to || !hits || !at || from.toLowerCase() === to.toLowerCase()) continue;
-    const key = `${from.toLowerCase()}\u0000${to.toLowerCase()}`;
+    const chat = item.source === "chat";
+    const key = candidateKey({ from, to, ...(chat ? { source: "chat" as const } : {}) });
+    const entry: VoiceCandidate = { from, to, hits, at };
+    if (chat) {
+      entry.source = "chat";
+      const chats = Array.isArray(item.chats)
+        ? item.chats.filter((c): c is string => typeof c === "string" && c.length > 0 && c.length <= VOICE_LIMITS.chatIdChars)
+        : [];
+      entry.chats = [...new Set(chats)].slice(-VOICE_LIMITS.candidateChats);
+    }
     byPair.delete(key);
-    byPair.set(key, { from, to, hits, at });
+    byPair.set(key, entry);
   }
   return [...byPair.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-VOICE_LIMITS.candidates);
+}
+
+/** A candidate's identity: its pair, and whether the chat or the clean-up counted it. */
+export function candidateKey(c: Pick<VoiceCandidate, "from" | "to" | "source">): string {
+  return `${c.source === "chat" ? "chat\u0000" : ""}${c.from.toLowerCase()}\u0000${c.to.toLowerCase()}`;
 }
 
 /** Valid undone words, each once (the newest wins), the newest {@link VOICE_LIMITS.blocked}. */

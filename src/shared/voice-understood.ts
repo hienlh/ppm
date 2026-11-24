@@ -17,7 +17,7 @@ export const UNDERSTOOD_PREFIXES = ["Hiểu là", "Understood as"] as const;
 
 export interface UnderstoodPair { heard: string; meant: string }
 
-export const UNDERSTOOD_LIMITS = { pairs: 6, chars: 60 } as const;
+export const UNDERSTOOD_LIMITS = { pairs: 6, chars: 60, words: 4 } as const;
 
 const ARROW = /\s*(?:→|->|=>)\s*/;
 const QUOTES = /^[\s"'`“”‘’*_]+|[\s"'`“”‘’*_.]+$/g;
@@ -26,33 +26,43 @@ const LINE = new RegExp(`^[\\s>*_]*(?:${UNDERSTOOD_PREFIXES.map((p) => p.replace
 
 const clean = (side: string) => side.replace(QUOTES, "").replace(/\s+/g, " ").trim();
 
-/** The pairs on one line written in the understood form, or null when the line is not one. */
+/**
+ * The pairs on one line written in the understood form, or null when the line is not one. Every
+ * piece must be a pair: a line that also says something else is the answer's own sentence, and
+ * drawing only its pairs would hide the rest of what the AI wrote.
+ */
 export function parseUnderstoodPairs(line: string): UnderstoodPair[] | null {
   const m = LINE.exec(line.normalize("NFC"));
   if (!m) return null;
+  const pieces = m[1]!.split(";").filter((p) => p.trim());
+  if (!pieces.length || pieces.length > UNDERSTOOD_LIMITS.pairs) return null;
   const pairs: UnderstoodPair[] = [];
-  for (const piece of m[1]!.split(";")) {
+  for (const piece of pieces) {
     const sides = piece.split(ARROW);
-    if (sides.length !== 2) continue;
+    if (sides.length !== 2) return null;
     const heard = clean(sides[0]!);
     const meant = clean(sides[1]!);
-    if (!heard || !meant || heard.toLowerCase() === meant.toLowerCase()) continue;
-    if (Array.from(heard).length > UNDERSTOOD_LIMITS.chars || Array.from(meant).length > UNDERSTOOD_LIMITS.chars) continue;
-    if (pairs.some((p) => p.heard.toLowerCase() === heard.toLowerCase())) continue;
+    if (!heard || !meant || heard.toLowerCase() === meant.toLowerCase()) return null;
+    // A misheard word or name, not a clause: a few words at most, and no quoting left inside.
+    if (![heard, meant].every((side) => Array.from(side).length <= UNDERSTOOD_LIMITS.chars
+      && side.split(" ").length <= UNDERSTOOD_LIMITS.words && !/["'`“”‘’]/.test(side))) return null;
+    if (pairs.some((p) => p.heard.toLowerCase() === heard.toLowerCase())) return null;
     pairs.push({ heard, meant });
-    if (pairs.length >= UNDERSTOOD_LIMITS.pairs) break;
   }
-  return pairs.length ? pairs : null;
+  return pairs;
 }
 
 /**
  * Splits the understood line off the start of an answer: `pairs` and the answer without it, or
  * null when the answer does not open with one. Blank lines before it are allowed; nothing else.
+ * `complete: false` (the answer is still streaming) asks for a line that has already ended, so a
+ * half-written pair is never drawn or counted.
  */
-export function splitUnderstoodLine(text: string): { pairs: UnderstoodPair[]; rest: string } | null {
+export function splitUnderstoodLine(text: string, opts: { complete?: boolean } = {}): { pairs: UnderstoodPair[]; rest: string } | null {
   const start = text.search(/\S/);
   if (start < 0) return null;
   const end = text.indexOf("\n", start);
+  if (end < 0 && opts.complete === false) return null;
   const line = end < 0 ? text.slice(start) : text.slice(start, end);
   const pairs = parseUnderstoodPairs(line);
   if (!pairs) return null;

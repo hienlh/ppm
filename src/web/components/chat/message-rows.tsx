@@ -74,6 +74,19 @@ function turnStarts(rows: ChatMessage[]): (string | undefined)[] {
   });
 }
 
+/**
+ * Whether the assistant message at `idx` opens the answer to a voice message sent as heard: the
+ * message before its run is the user's, carries a hints block (which asked for the "Hiểu là"
+ * line), and no earlier message of the run has text. Only such an answer gets "AI hiểu".
+ */
+export function opensVoiceAnswer(rows: readonly ChatMessage[], idx: number): boolean {
+  if (rows[idx]?.role !== "assistant") return false;
+  let j = idx - 1;
+  for (; j >= 0 && rows[j]!.role === "assistant"; j--) if (assistantMessageText(rows[j]!)) return false;
+  const user = rows[j];
+  return !!user && user.role === "user" && !!decodeMessageBlocks(user.content).voiceHints;
+}
+
 export function MessageRows({
   rows, userOrdinals, userOrdinalOffset, versionMap, editingMsgId, turnChanges, rollupTurns, isStreaming,
   projectName, sessionId, providerId, historyPredecessorId, onReply, onJumpToReply, onJumpToEdit,
@@ -141,6 +154,7 @@ export function MessageRows({
                 onJumpToReply={onJumpToReply}
                 replyAvailable={replyAvailable}
                 isStreaming={isStreaming && msg.id.startsWith("streaming-")}
+                voiceAnswer={opensVoiceAnswer(rows, globalIdx)}
                 isLastAssistantInTurn={isLastAssistantInTurn}
                 turnCopyText={turnCopyText}
                 turnChanges={isLastAssistantInTurn ? turnChanges?.get(globalIdx) : undefined}

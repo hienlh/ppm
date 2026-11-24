@@ -18,8 +18,12 @@ export function VoiceUnderstoodLine({ pairs }: { pairs: readonly UnderstoodPair[
   );
 }
 
-/** The answer's text split into its understood line (if it opens with one) and the rest. */
-export function splitAnswerOpening(text: string): { pairs: UnderstoodPair[] | null; rest: string } {
-  const split = splitUnderstoodLine(text);
+/**
+ * The answer's text split into its understood line (if it opens with one) and the rest. While the
+ * text is still streaming (`complete: false`) the line is split off only once it has ended, so a
+ * half-written pair is shown as plain text for a moment rather than as a wrong pair.
+ */
+export function splitAnswerOpening(text: string, complete = true): { pairs: UnderstoodPair[] | null; rest: string } {
+  const split = splitUnderstoodLine(text, { complete });
   return split ? { pairs: split.pairs, rest: split.rest } : { pairs: null, rest: text };
 }
