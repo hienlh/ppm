@@ -65,7 +65,14 @@ describe.skipIf(!hasBrowser)("PPM's browser with a real Chrome", () => {
     setDb(db);
     configService.load();
     configService.set("web_browser", { ...parseWebBrowserSettings({}), enabled: true });
-    page = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("<input id=q autofocus><p id=t>hello</p>", { headers: { "content-type": "text/html" } }) });
+    const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } });
+    page = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => {
+      const path = new URL(req.url).pathname;
+      if (path === "/alert") return html("<script>setTimeout(() => alert('hi from page'), 50)</script>");
+      if (path === "/file") return new Response("report body", { headers: { "content-type": "application/pdf", "content-disposition": "attachment; filename*=UTF-8''b%C3%A1o%20c%C3%A1o.pdf" } });
+      if (path === "/upload") return html("<input type=file id=f style='position:fixed;inset:0;width:100%;height:100%'>");
+      return html("<input id=q autofocus><p id=t>hello</p>");
+    } });
     fakePpm = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("PPM") });
     registerPpmOwnPort(Number(fakePpm.port));
     await webBrowserHost.ensureStarted();
@@ -102,6 +109,60 @@ describe.skipIf(!hasBrowser)("PPM's browser with a real Chrome", () => {
     await until(() => received.some((m) => m.type === "blocked" && m.reason === "own-port"));
     await viewerHub.onMessage(viewer, { type: "navigate", url: "file:///C:/Windows/win.ini" });
     await until(() => received.some((m) => m.type === "blocked" && m.reason === "scheme"));
+  }, 20_000);
+
+  it("shows a page's alert with its origin, and closes it when answered", async () => {
+    received.length = 0;
+    await viewerHub.onMessage(viewer, { type: "navigate", url: `http://localhost:${page!.port}/alert` });
+    await until(() => received.some((m) => m.type === "dialog"));
+    const d = received.find((m) => m.type === "dialog") as Extract<WebBrowserServerMessage, { type: "dialog" }>;
+    expect(d).toMatchObject({ kind: "alert", message: "hi from page", origin: `http://localhost:${page!.port}` });
+    await viewerHub.onMessage(viewer, { type: "dialog.answer", id: d.id, accept: true });
+    await until(() => received.some((m) => m.type === "dialog.closed" && m.id === d.id));
+  }, 20_000);
+
+  it("copies the selection from an isolated world", async () => {
+    await viewerHub.onMessage(viewer, { type: "navigate", url: `http://localhost:${page!.port}/` });
+    await until(async () => (await pageValue("!!document.getElementById('q')")) === true);
+    await pageValue("(() => { const q = document.getElementById('q'); q.value = 'Xin chào Hà Nội'; q.focus(); q.setSelectionRange(9, 15); })()");
+    received.length = 0;
+    await viewerHub.onMessage(viewer, { type: "clipboard.copyRequest" });
+    await until(() => received.some((m) => m.type === "clipboard.copy"));
+    expect(received.find((m) => m.type === "clipboard.copy")).toEqual({ type: "clipboard.copy", text: "Hà Nội" });
+  }, 20_000);
+
+  it("keeps downloads on the host and hands them out by a one-use ticket", async () => {
+    const { mintDownloadTicket, spendDownloadTicket } = await import("../../src/services/web-browser/download-manager.ts");
+    received.length = 0;
+    await viewerHub.onMessage(viewer, { type: "navigate", url: `http://localhost:${page!.port}/file` });
+    await until(() => received.some((m) => m.type === "download" && m.state === "done"));
+    const d = received.find((m) => m.type === "download" && m.state === "done") as Extract<WebBrowserServerMessage, { type: "download" }>;
+    expect(d.name).toBe("báo cáo.pdf");
+    const ticket = mintDownloadTicket(d.id)!;
+    const file = spendDownloadTicket(ticket)!;
+    expect(await Bun.file(file.path).text()).toBe("report body");
+    expect(spendDownloadTicket(ticket)).toBeNull();
+  }, 20_000);
+
+  it("hands a file the viewer picked to the page's file input", async () => {
+    const { saveUpload } = await import("../../src/services/web-browser/upload-store.ts");
+    const id = await saveUpload(new Response("hello").body!, "ghi chú.txt");
+    received.length = 0;
+    await viewerHub.onMessage(viewer, { type: "navigate", url: `http://localhost:${page!.port}/upload` });
+    await until(async () => (await pageValue("!!document.getElementById('f')")) === true);
+    await viewerHub.onMessage(viewer, { type: "pointer", xFrac: 0.5, yFrac: 0.5, button: "left", down: true });
+    await viewerHub.onMessage(viewer, { type: "pointer", xFrac: 0.5, yFrac: 0.5, button: "left", down: false });
+    await until(() => received.some((m) => m.type === "fileChooser"));
+    const c = received.find((m) => m.type === "fileChooser") as Extract<WebBrowserServerMessage, { type: "fileChooser" }>;
+    await viewerHub.onMessage(viewer, { type: "file.choose", chooserId: c.chooserId, uploadIds: [id] });
+    await until(async () => (await pageValue("document.getElementById('f').files[0]?.name")) === "ghi chú.txt");
+  }, 20_000);
+
+  it("opens a popup as a new tab and shows it", async () => {
+    const before = webBrowserHost.activeTabId;
+    const tab = webBrowserHost.tabs!.get(before!)!;
+    await webBrowserHost.cdp!.send("Runtime.evaluate", { expression: `window.open('http://localhost:${page!.port}/')`, userGesture: true }, tab.sessionId);
+    await until(() => webBrowserHost.activeTabId !== before && webBrowserHost.tabs!.count === 2);
   }, 20_000);
 
   it("stops Chrome and leaves no process behind", async () => {

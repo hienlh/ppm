@@ -10,6 +10,8 @@ import { webBrowserHost, WebBrowserUnavailableError } from "../../services/web-b
 import { viewerHub } from "../../services/web-browser/viewer-hub.ts";
 import { isWebBrowserAllowedByEnv } from "../../services/web-browser/web-browser-flag.ts";
 import { configService } from "../../services/config.service.ts";
+import { attachmentHeader, listDownloads, mintDownloadTicket, spendDownloadTicket, DOWNLOAD_TICKET_PREFIX } from "../../services/web-browser/download-manager.ts";
+import { MAX_UPLOAD_BYTES, saveUpload } from "../../services/web-browser/upload-store.ts";
 import { parseWebBrowserSettings } from "../../shared/web-browser-settings.ts";
 import { settleWebBrowserIntro } from "../../services/web-browser/web-browser-intro.ts";
 
@@ -63,6 +65,56 @@ webBrowserRoutes.put("/settings", async (c) => {
   if (next.enabled === false && webBrowserHost.state !== "stopped") await webBrowserHost.stop();
   settleWebBrowserIntro();
   return c.json(ok(next));
+});
+
+webBrowserRoutes.get("/downloads", (c) => {
+  const rejected = refuse(c);
+  if (rejected) return rejected;
+  return c.json(ok(listDownloads()));
+});
+
+/** A one-use link for a finished download (a link cannot carry the Authorization header). */
+webBrowserRoutes.post("/downloads/:id/ticket", (c) => {
+  const rejected = refuse(c);
+  if (rejected) return rejected;
+  const ticket = mintDownloadTicket(c.req.param("id"));
+  if (!ticket) return c.json(err("no such download"), 404);
+  return c.json(ok({ url: `${DOWNLOAD_TICKET_PREFIX}${ticket}` }));
+});
+
+/**
+ * The ticket in the path was issued once to an authenticated request (the auth middleware lets
+ * a live one through) and is spent here. Never rendered: octet-stream, nosniff, CSP sandbox.
+ */
+webBrowserRoutes.get("/download/:ticket", (c) => {
+  const file = spendDownloadTicket(c.req.param("ticket"));
+  if (!file) return c.json(err("this download link has expired"), 410);
+  return new Response(Bun.file(file.path), {
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Content-Disposition": attachmentHeader(file.name),
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "sandbox",
+      "Cache-Control": "no-store",
+    },
+  });
+});
+
+/** A file the viewer picked for a page's file input; the raw body is the file, its name in a header. */
+webBrowserRoutes.post("/uploads", async (c) => {
+  const rejected = refuse(c);
+  if (rejected) return rejected;
+  const length = Number(c.req.header("content-length") ?? "0");
+  if (length > MAX_UPLOAD_BYTES) return c.json(err(`files over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB are not accepted`), 413);
+  const body = c.req.raw.body;
+  if (!body) return c.json(err("empty upload"), 400);
+  let name = "file";
+  try { name = decodeURIComponent(c.req.header("x-file-name") ?? "file"); } catch {}
+  try {
+    return c.json(ok({ id: await saveUpload(body, name) }));
+  } catch (error) {
+    return c.json(err((error as Error)?.message ?? String(error)), 413);
+  }
 });
 
 webBrowserRoutes.post("/session", (c) => {

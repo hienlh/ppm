@@ -12,6 +12,7 @@ import { applyViewport, DEFAULT_VIEWPORT } from "./page-viewport.ts";
 import { resolveAddress } from "./address-bar.ts";
 import { webBrowserHost, type WebBrowserHost } from "./browser-host.ts";
 import { createLogger } from "../logger.ts";
+import { installPageFeatures } from "./page-features.ts";
 
 const log = createLogger("web-browser");
 
@@ -33,6 +34,7 @@ export class ViewerHub {
   private pacer: ScreencastPacer | null = null;
   private input: InputBridge | null = null;
   private readonly extra = new Map<string, ExtraHandler>();
+  private streamedTabId: string | null = null;
 
   constructor(readonly host: WebBrowserHost) {
     host.on("state", (state, message) => {
@@ -40,7 +42,11 @@ export class ViewerHub {
       this.broadcast(this.status(message));
       if (state === "running") void this.restream();
     });
-    host.on("tabs", () => this.broadcast(this.tabsMessage()));
+    host.on("tabs", () => {
+      this.broadcast(this.tabsMessage());
+      // The tab on screen was closed: show the one the host fell back to.
+      if (this.controller && host.activeTabId !== this.streamedTabId) void this.restream();
+    });
     host.on("blocked", (b: { url: string; reason: never }) => this.broadcast({ type: "blocked", url: b.url, reason: b.reason }));
     host.addPageSetup(async (sessionId) => {
       const cdp = host.cdp;
@@ -107,6 +113,7 @@ export class ViewerHub {
   }
 
   private dropStream(): void {
+    this.streamedTabId = null;
     this.pacer?.dispose();
     this.pacer = null;
     this.input = null;
@@ -121,6 +128,7 @@ export class ViewerHub {
       this.pacer = new ScreencastPacer(cdp, { sendBinary: (b) => this.controller?.sendBinary(b) }, () => this.host.settings());
       this.input = new InputBridge(cdp);
     }
+    this.streamedTabId = tab.id;
     await applyViewport(cdp, tab.sessionId, this.viewport);
     await this.pacer.start(tab.sessionId, this.viewport);
   }
@@ -188,3 +196,4 @@ export class ViewerHub {
 }
 
 export const viewerHub = new ViewerHub(webBrowserHost);
+installPageFeatures(viewerHub);
