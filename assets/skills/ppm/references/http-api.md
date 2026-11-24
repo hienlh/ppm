@@ -758,6 +758,9 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `GET    /api/speech/status`
 - `POST   /api/speech/install`
 - `POST   /api/speech/uninstall`
+- `POST   /api/speech/gpu`
+- `POST   /api/speech/test`
+- `POST   /api/speech/gpu/check`
 - `POST   /api/speech/transcribe`
 
 ## /api/system
@@ -899,4 +902,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.31 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.32 -->
