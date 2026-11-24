@@ -4,6 +4,16 @@ import type { ApprovalSummary } from "../../../shared/assistant-approval";
 import { useAssistantDisplayName } from "@/stores/assistant-name-store";
 import type { CardRememberOffer } from "../../../shared/remembered-approvals";
 import { RememberApprovalControl } from "./remember-approval-control";
+import { TEXT_BUTTON } from "@/lib/control-size";
+import { cn } from "@/lib/utils";
+
+/**
+ * An answer button on an approval card (Allow, Deny, and the session tools' answers), at the app's
+ * button standard (docs/design-guidelines.md rule 3): 28px tall, 26px on a phone, 11.5px text,
+ * fully rounded. No taller size for touch.
+ */
+export const APPROVAL_BUTTON =
+  `inline-flex shrink-0 items-center justify-center whitespace-nowrap font-medium transition-colors disabled:opacity-50 ${TEXT_BUTTON}`;
 
 /**
  * The card a chat shows while a tool waits on the user's approval. A provider's card shows the
@@ -155,13 +165,13 @@ export function ApprovalCard({
       <div className="flex gap-2">
         <button
           onClick={() => onRespond(approval.requestId, true)}
-          className="min-h-11 md:min-h-0 px-4 py-1.5 rounded bg-success text-white text-xs font-medium hover:bg-success/80 transition-colors"
+          className={cn(APPROVAL_BUTTON, "bg-success text-white hover:bg-success/80")}
         >
           Allow
         </button>
         <button
           onClick={() => onRespond(approval.requestId, false)}
-          className="min-h-11 md:min-h-0 px-4 py-1.5 rounded bg-error text-white text-xs font-medium hover:bg-error/80 transition-colors"
+          className={cn(APPROVAL_BUTTON, "bg-error text-white hover:bg-error/80")}
         >
           Deny
         </button>
