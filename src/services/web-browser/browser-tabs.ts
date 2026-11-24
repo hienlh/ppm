@@ -62,6 +62,12 @@ export class BrowserTabs extends EventEmitter {
     const { targetId } = await this.cdp.send<{ targetId: string }>("Target.createTarget", { url: "about:blank" });
     if (opts.ai) this.aiTargets.add(targetId);
     await this.waitFor(targetId);
+    // The page usually attaches before createTarget answers, i.e. before it was known as the AI's.
+    const created = this.tabs.get(targetId);
+    if (opts.ai && created && !created.ai) {
+      created.ai = true;
+      this.emit("changed");
+    }
     if (url && url !== "about:blank") await this.navigate(targetId, url);
     return targetId;
   }

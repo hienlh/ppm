@@ -14,6 +14,7 @@ import { webBrowserHost, type WebBrowserHost } from "./browser-host.ts";
 import { createLogger } from "../logger.ts";
 import { installPageFeatures } from "./page-features.ts";
 import { installAudioRelay } from "./audio/audio-relay.ts";
+import { aiControlLock } from "./ai-control/ai-control-lock.ts";
 
 const log = createLogger("web-browser");
 
@@ -86,6 +87,7 @@ export class ViewerHub {
     const s = this.host.settings();
     viewer.send({ type: "hello", tabs: this.host.tabs?.list() ?? [], activeTabId: this.host.activeTabId, limits: { maxTabs: s.maxTabs, idleStopMinutes: s.idleStopMinutes, fpsCap: s.fpsCap, audio: s.audio } });
     viewer.send(this.status());
+    viewer.send({ type: "ai", ...pick(aiControlLock.state()) });
     this.takeControl(viewer.id);
   }
 
@@ -141,7 +143,11 @@ export class ViewerHub {
     if (!isController) return; // a viewer that lost control may still send a stray event
     const tabs = this.host.tabs;
     const active = this.host.activeTabId ? tabs?.get(this.host.activeTabId) : undefined;
+    if (msg.type === "ai.release") return aiControlLock.takeBack();
+    if (msg.type === "ai.return") return aiControlLock.giveBack();
     if (INPUT_TYPES.has(msg.type)) {
+      // The person's own input while an AI acts takes the browser back from it.
+      if (aiControlLock.state().active && msg.type !== "releaseAll") aiControlLock.takeBack();
       this.host.touchInput();
       if (active && this.input) await this.input.send(msg, this.viewport, active.sessionId);
       return;
@@ -196,6 +202,9 @@ export class ViewerHub {
   }
 }
 
+const pick = (s: ReturnType<typeof aiControlLock.state>) => ({ active: s.active, sessionTitle: s.sessionTitle, heldByUser: s.heldByUser });
+
 export const viewerHub = new ViewerHub(webBrowserHost);
+aiControlLock.on("change", (s) => viewerHub.broadcast({ type: "ai", ...pick(s) }));
 installPageFeatures(viewerHub);
 installAudioRelay(viewerHub);

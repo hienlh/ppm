@@ -53,6 +53,7 @@ function heading(input: SessionCollabApprovalInput): string {
       : input.action === "enable" ? "The AI wants to turn on a schedule" : "The AI wants to pause a schedule";
   }
   if (input.kind === "message") return `The Assistant wants to message a chat in ${input.projectName}`;
+  if (input.kind === "browser") return "The AI wants to use PPM's web browser";
   return "The AI wants to message a session with more rights";
 }
 
@@ -158,6 +159,17 @@ function CollabApprovalBody({ input }: { input: SessionCollabApprovalInput }) {
         </div>
         <RunsIn mode={input.permissionMode} />
         <WholeText label="The whole message" text={input.message} />
+      </>
+    );
+  }
+  if (input.kind === "browser") {
+    return (
+      <>
+        {input.url && <p className="text-xs text-text-primary break-all">First page: <span className="font-medium">{input.url}</span></p>}
+        <p className="text-xs text-text-primary">
+          It opens pages, reads them, clicks and types on its own tab. You watch it in the Browser window and can take it back at any time.
+        </p>
+        <p className="text-xs text-text-subtle">Sites that browser is signed in to are signed in for the AI too. Allow for this chat lasts until PPM restarts.</p>
       </>
     );
   }

@@ -99,6 +99,17 @@ export function collabDecidingParts(input: SessionCollabApprovalInput): CollabDe
       label: "Task",
     };
   }
+  if (input.kind === "browser") {
+    return {
+      title: "Let this chat drive PPM's web browser",
+      facts: [
+        ...(input.url ? [{ label: "First page", value: input.url }] : []),
+        { label: "What it can do", value: "Open pages, read them, click and type, on its own tab of PPM's browser" },
+        { label: "Logins", value: "Sites the browser is signed in to are signed in for the AI too" },
+      ],
+      text: "",
+    };
+  }
   if (input.kind === "escalation") {
     return {
       title: "Message a session that runs with more rights",

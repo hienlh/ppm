@@ -85,12 +85,13 @@ describe.skipIf(!hasBrowser)("PPM's browser with a real Chrome", () => {
     setDb(db);
     configService.load();
     configService.set("web_browser", { ...parseWebBrowserSettings({}), enabled: true });
-    const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } });
+    const html = (body: string) => new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
     page = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => {
       const path = new URL(req.url).pathname;
       if (path === "/tone") return html("<script>const c = new AudioContext(); const o = c.createOscillator(); o.frequency.value = 440; o.connect(c.destination); o.start();</script>");
       if (path === "/media") return html("<audio id=a src='/tone.wav' autoplay loop></audio>");
       if (path === "/tone.wav") return new Response(toneWav(), { headers: { "content-type": "audio/wav" } });
+      if (path === "/form") return html("<h1>Tìm</h1><input id=s aria-label='Từ khoá'><button onclick=\"document.getElementById('r').textContent='Đã tìm: '+document.getElementById('s').value\">Tìm kiếm</button><p id=r></p>");
       if (path === "/alert") return html("<script>setTimeout(() => alert('hi from page'), 50)</script>");
       if (path === "/file") return new Response("report body", { headers: { "content-type": "application/pdf", "content-disposition": "attachment; filename*=UTF-8''b%C3%A1o%20c%C3%A1o.pdf" } });
       if (path === "/upload") return html("<input type=file id=f style='position:fixed;inset:0;width:100%;height:100%'>");
@@ -201,6 +202,32 @@ describe.skipIf(!hasBrowser)("PPM's browser with a real Chrome", () => {
     await viewerHub.onMessage(viewer, { type: "navigate", url: `http://localhost:${page!.port}/media` });
     await until(() => soundFrames > 3 && soundPeak > 1000);
   }, 20_000);
+
+  it("lets an allowed AI chat open, read, type and click, and stops it once the person takes over", async () => {
+    const { callBrowserTool } = await import("../../src/services/tab-tools-mcp/browser-tools.ts");
+    const { aiControlLock } = await import("../../src/services/web-browser/ai-control/ai-control-lock.ts");
+    aiControlLock.grant("chat-ai");
+    const text = (r: any) => r.content?.[0]?.text as string;
+    const opened = await callBrowserTool("chat-ai", "Research", "browser_open", { url: `http://localhost:${page!.port}/form` });
+    expect(opened.isError).toBeUndefined();
+    expect(received.some((m) => m.type === "ai" && m.active && m.sessionTitle === "Research")).toBe(true);
+    const snap = text(await callBrowserTool("chat-ai", "Research", "browser_snapshot", {}));
+    const box = /textbox "Từ khoá"[^\n]*\[ref=(e\d+)\]/.exec(snap)?.[1];
+    const button = /button "Tìm kiếm"[^\n]*\[ref=(e\d+)\]/.exec(snap)?.[1];
+    expect(box && button).toBeTruthy();
+    await callBrowserTool("chat-ai", "Research", "browser_type", { ref: box, text: "thời tiết Hà Nội" });
+    await callBrowserTool("chat-ai", "Research", "browser_click", { ref: button });
+    expect(text(await callBrowserTool("chat-ai", "Research", "browser_wait", { text: "Đã tìm: thời tiết Hà Nội" }))).toContain("shows");
+    const shot = await callBrowserTool("chat-ai", "Research", "browser_screenshot", {});
+    expect(shot.content[0].type).toBe("image");
+
+    await viewerHub.onMessage(viewer, { type: "ai.release" });
+    const refused = await callBrowserTool("chat-ai", "Research", "browser_snapshot", {});
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toContain("took the browser back");
+    await viewerHub.onMessage(viewer, { type: "ai.return" });
+    expect((await callBrowserTool("chat-ai", "Research", "browser_snapshot", {})).isError).toBeUndefined();
+  }, 40_000);
 
   it("stops Chrome and leaves no process behind", async () => {
     await webBrowserHost.stop();
