@@ -1042,6 +1042,51 @@ message being written.
 
 ---
 
+## Web browser
+
+PPM runs a Chrome of its own on the host and shows it in a floating window (desktop) or a full-screen
+tab (below `md`). Any site works, logins included, because it is a real browser; the viewer only ever
+holds pictures. Off until the user answers the "PPM has new features" question (`web-browser-2026-11`,
+setting `web_browser.enabled`); Settings → Web Browser holds every switch.
+
+- **Host** (`src/services/web-browser/`): `browser-host.ts` starts the egress guard first, then Chrome
+  pointed at it, and counts Chrome as running only once a canary request reached the guard (a machine
+  policy that overrides `--proxy-server` would otherwise send pages straight out). One Chrome per
+  database (`<ppm dir>/web-browser` or `web-browser.<profile>`), never the user's own profile and never
+  the CocCoc profile Playwright MCP drives. CDP goes over `--remote-debugging-pipe` where the runtime can
+  pass fd 3/4, and over a DevTools port on 127.0.0.1 on Windows (Bun 1.3.12 cannot); that port is in the
+  guard's blocked list. Chrome stops after `idleStopMinutes` with no visible viewer and no AI call
+  (`browser-idle.ts`); `chrome.pid.json` lets the next start kill a Chrome a crashed PPM left behind.
+- **Egress guard** (`egress/`): a SOCKS5 proxy in its own process (`ppm __web_egress__`). It resolves
+  names itself and connects to the address it checked, so DNS rebinding cannot reach what it refused.
+  `allowLocalhost` and `allowLan` (both on by default, the user's choice) open this machine and the
+  private ranges; PPM's own ports on every address of the machine, the DevTools port, cloud metadata
+  addresses, multicast and broadcast are always refused. `file:` and other non-http schemes are refused
+  at the address bar (`address-bar.ts`).
+- **Stream** (`viewer-hub.ts`, `screencast-pacer.ts`): `/ws/web-browser` behind PPM auth (required),
+  a one-use nonce, and `allowPublicTunnel` (`tunnel-request-guard.ts`: Cloudflare, Funnel and generic
+  proxy headers are public, Tailscale Serve is the tailnet). Pictures are JPEG in binary frames
+  (`shared/web-browser-binary-frames.ts`); the viewer acks each one after drawing it and Chrome's next
+  frame waits for that (at most two in flight, `fpsCap`), so a slow link slows the stream instead of
+  queueing. The last viewer to connect controls; others see "Use here".
+- **Input** (`input-bridge.ts`, `use-web-browser-input.ts`): pointer and touch as fractions of the
+  picture; typing goes through a hidden textarea so an IME can compose, and arrives as
+  `Input.imeSetComposition` / `Input.insertText` — key codes only for keys with no character.
+  Ctrl/Cmd+V is never forwarded (it would cancel the `paste` event); copy reads the selection in an
+  isolated world.
+- **Pages' requests** (`page-features.ts`): dialogs drawn inside the browser frame with the page's
+  origin (never PPM's own dialog styling), file choosers fed from `POST /api/web-browser/uploads`,
+  popups as tabs, downloads kept in the browser's folder and handed out by one-use ticket as
+  `octet-stream` + `CSP: sandbox` so a downloaded page never renders on PPM's origin.
+- **Sound** (`audio/`): Chrome runs `--mute-audio`; a script injected before every page taps `<audio>`
+  / `<video>` with `captureStream()` and Web Audio by connecting into a `MediaStreamDestination`, and
+  sends 24 kHz mono PCM out through a per-run CDP binding. The viewer schedules `AudioBufferSourceNode`s,
+  which works on plain-HTTP origins where `AudioDecoder` does not.
+- **AI control** (`ai-control/`, `tab-tools-mcp/browser-tools.ts`): nine `browser_*` tools on
+  `/api/tab-tools-mcp`, not a CDP endpoint: no cookie or storage reads, no arbitrary script, the guard
+  still applies. A chat's first call shows a session-tools card of kind `browser` (once / this chat /
+  deny); the window shows which chat acts and "Take back", and the person's own input takes it back too.
+
 ## OS File Explorer Window
 
 A floating, OS-skinned window (Windows 11 / macOS Finder chrome, Linux → macOS skin) that browses

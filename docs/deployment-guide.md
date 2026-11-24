@@ -15,6 +15,14 @@ If FFmpeg is missing, click **Install ffmpeg** in Remote Desktop. PPM installs t
 errors, and checks for FFmpeg again without restarting. Closing the panel does not cancel
 the installation. Windows App Installer (WinGet) and internet access are required.
 
+### Web Browser
+
+Settings → Web Browser runs a Chrome or Microsoft Edge that is already installed on the host (Windows
+always has Edge); nothing is downloaded. Each open page costs roughly 100–500 MB of RAM on the host,
+so the browser keeps at most `maxTabs` tabs and stops itself after `idleStopMinutes` unused. Its data
+lives in `<ppm dir>/web-browser` (`web-browser.dev` for the dev database); "Clear browsing data"
+deletes it. `WEB_BROWSER_ENABLED=0` turns the feature off for the whole host.
+
 ### Required Software
 - **Bun** v1.3.6+ (https://bun.sh) — **only** for the `bunx`/`bun add -g`/from-source paths. The
   released binary bundles its own runtime and needs nothing installed.
@@ -448,6 +456,8 @@ Only these are read by PPM:
 | `PPM_TERMINAL` | `ppm cloud` | Set to `1` to force terminal-mode output |
 | `PPM_INSTALL_DIR` | `scripts/install.sh` / `install.ps1` | Install location (default `~/.ppm/bin`) |
 | `PPM_DEV_API` | `vite.config.ts` | Dev-server proxy target (default `http://localhost:8081`) |
+| `WEB_BROWSER_ENABLED` | `web-browser-flag.ts` | `0` removes PPM's web browser on this host |
+| `PPM_WEB_BROWSER_CDP` | `chrome-launch-args.ts` | `pipe` or `port`: force how PPM talks to its Chrome |
 
 There is **no** `PPM_PORT`, `PPM_HOST`, `PPM_DB_PATH` or `PPM_DEFAULT_PROVIDER` — all of those are
 config keys, set with `ppm config set`.

@@ -354,6 +354,14 @@ HTTP/1.1 200 OK
 3. Server sends: `{ type: "output", data: "file1 file2\n" }`
 4. Client sends: `{ type: "resize", cols: 80, rows: 24 }`
 
+**Web Browser Flow** (`src/services/web-browser/`, off until the user turns it on, `WEB_BROWSER_ENABLED=0` removes it):
+1. `POST /api/web-browser/session` (auth required, same origin, public links only if allowed) mints a nonce; the
+   client opens `WS /ws/web-browser` and presents it first.
+2. The host starts the SOCKS5 egress guard (`ppm __web_egress__`), then Chrome behind it, and waits for a canary
+   request to reach the guard. Pages are attached before their first script (viewport, file chooser, sound tap).
+3. Chrome's screencast frames go to the controlling viewer as binary JPEG frames, paced by the viewer's acks;
+   input comes back as messages the server turns into `Input.*`. Details: `architecture/workspace-and-ui.md` → Web browser.
+
 **Remote Desktop Flow** (`src/services/remote-desktop/`, on by default, `REMOTE_DESKTOP_ENABLED=0` opts out):
 1. Client reads `GET /api/remote-desktop/capabilities` → `platformSupported`, `videoReady`, `inputReady` and a
    `requirements[]` checklist (ffmpeg, macOS Screen Recording / Accessibility). Each item carries generic
