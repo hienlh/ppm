@@ -29,6 +29,8 @@ const DEDICATED: readonly { pattern: string; where: string }[] = [
   { pattern: "notifications", where: "`ppm notify set` and `ppm notify delay` (or PPM's Settings → Notifications)" },
   { pattern: "clawbot", where: "`ppm ppmbot set` (or PPM's Settings → PPM Assistant → Telegram)" },
   { pattern: "projects", where: "`ppm projects`" },
+  // Approving without a card is the user's to turn on, on a screen: never from a command an AI can run.
+  { pattern: "remembered_approvals", where: "PPM's Settings → Approvals" },
 ];
 
 export const EXPOSURE_CONFIG_KEYS: readonly string[] = [

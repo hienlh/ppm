@@ -58,6 +58,7 @@ export function mirrorCardInput(
       ...(owner.chat ? { chat: owner.chat } : {}),
       ...(owner.design ? { answerInPpm: "design" as const, design: owner.design } : {}),
       ...(card.expiresAt ? { expiresAt: card.expiresAt } : {}),
+      ...(!question && card.remember ? { remember: card.remember } : {}),
       ...extra,
     },
   };

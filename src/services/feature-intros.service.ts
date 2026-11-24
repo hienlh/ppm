@@ -10,6 +10,7 @@ import { getDb } from "./db.service.ts";
 import { createLogger } from "./logger.ts";
 import { getAssistantSettings, writeAssistantPermissionMode, writeAssistantSettingsTools } from "./assistant/assistant-settings.service.ts";
 import { readVoiceSettings, updateVoiceSettings, voiceMessagesEnabled } from "./voice-message/voice-settings.ts";
+import { rememberedApprovals } from "./remembered-approvals/remembered-approvals.service.ts";
 import {
   answerFromSwitches, FEATURE_INTRO_SKIP_WINDOW_MS, FEATURE_INTROS, featureIntroById, MAX_FEATURE_INTRO_SKIPS, switchesForAnswer,
   type FeatureIntro, type FeatureIntroAnswer, type FeatureIntroSetting, type FeatureIntroState, type FeatureIntroStates, type FeatureIntrosView,
@@ -85,6 +86,10 @@ function answerFromSetting(setting: FeatureIntroSetting): FeatureIntroAnswer | n
       const on = getAssistantSettings().settings_tools;
       return on === true ? "on" : on === false ? "off" : null;
     }
+    case "remembered_approvals": {
+      const on = configService.get("remembered_approvals")?.enabled;
+      return on === true ? "on" : on === false ? "off" : null;
+    }
   }
 }
 
@@ -107,6 +112,9 @@ function writeSettingAnswer(setting: FeatureIntroSetting, answer: FeatureIntroAn
       return;
     case "assistant_settings_tools":
       writeAssistantSettingsTools(answer === "on");
+      return;
+    case "remembered_approvals":
+      rememberedApprovals.setEnabled(answer === "on");
       return;
   }
 }

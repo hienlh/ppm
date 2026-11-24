@@ -167,6 +167,11 @@ export interface AssistantCardPayload {
   design?: { slug: string };
   /** An MCP sign-in card (`answerInPpm: "mcp_sign_in"`): the server that needs signing in to. */
   mcpServer?: string;
+  /**
+   * Approval cards: what "approve this kind next time" would remember, and whether the card
+   * suggests it (the user approved the same kind by hand often enough). Worked out by PPM.
+   */
+  remember?: { label: string; suggest: boolean };
   /** Approval cards: the part a person must see before Allow means anything. */
   deciding?: {
     kind: string; title: string; facts: Array<{ label: string; value: string }>; text: string;

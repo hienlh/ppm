@@ -19,13 +19,17 @@ interface ApprovalEventLike {
   requestId: string;
   tool: string;
   input: unknown;
+  remember?: LiveApprovalCard["remember"];
 }
 
 /** The card as listeners see it, when it is a session-tool card; else null. */
 export function collabCardForListeners(ev: ApprovalEventLike): LiveApprovalCard | null {
   if (ev.tool !== SESSION_COLLAB_APPROVAL || !sessionCollabApprovalInput(ev.tool, ev.input)) return null;
   const expiresAt = collabApprovalBroker.expiresAt(ev.requestId);
-  return { requestId: ev.requestId, tool: ev.tool, input: ev.input, isQuestion: false, ...(expiresAt ? { expiresAt } : {}) };
+  return {
+    requestId: ev.requestId, tool: ev.tool, input: ev.input, isQuestion: false,
+    ...(expiresAt ? { expiresAt } : {}), ...(ev.remember ? { remember: ev.remember } : {}),
+  };
 }
 
 /**

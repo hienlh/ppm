@@ -49,8 +49,8 @@ export async function fetchSessionLinks(projectName: string, sessionId: string, 
 }
 
 /** Answers a session-collaboration card. Rejects with the server's message when it refuses. */
-export async function answerCollabApproval(requestId: string, answer: SessionCollabAnswer): Promise<void> {
-  await api.post(`/api/sessions-collab/approvals/${encodeURIComponent(requestId)}`, { answer });
+export async function answerCollabApproval(requestId: string, answer: SessionCollabAnswer, remember = false): Promise<void> {
+  await api.post(`/api/sessions-collab/approvals/${encodeURIComponent(requestId)}`, { answer, ...(remember ? { remember: true } : {}) });
 }
 
 /** Stops every running session this one created (direct children only). */

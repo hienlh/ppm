@@ -24,7 +24,7 @@ export const fetchOpenAssistantCards = (): Promise<{ cards: AssistantCard[] }> =
 
 export const fetchAssistantWaiting = (): Promise<AssistantWaiting> => api.get<AssistantWaiting>("/api/assistant/waiting");
 
-export function answerAssistantCard(id: string, body: { decision?: "allow" | "deny"; answersById?: Record<string, string[]> }) {
+export function answerAssistantCard(id: string, body: { decision?: "allow" | "deny"; answersById?: Record<string, string[]>; remember?: boolean }) {
   return api.post<{ card: AssistantCard; stale?: true }>(`/api/assistant/cards/${encodeURIComponent(id)}/answer`, body);
 }
 

@@ -60,14 +60,16 @@ export function answerCard(id: string, body: unknown, deps: CardActionDeps = rea
   // Not in front of its chat yet: the chat's provider has not even been asked for it.
   if (card.payload.queued) return { ok: false, status: 409, error: "This request waits behind another card of the chat: answer that one first." };
 
-  let answer: { approved: boolean; answersById?: Record<string, string[]> };
+  let answer: { approved: boolean; answersById?: Record<string, string[]>; remember?: boolean };
   if (card.kind === "approval") {
     if (decision === undefined) return { ok: false, status: 400, error: "decision is required" };
     // The same bar as Telegram: Allow only where the whole request is on the card.
     if (decision === "allow" && card.payload.deciding?.complete !== true) {
       return { ok: false, status: 400, error: `This request is not shown in full here; open the ${card.payload.chat ? "chat" : "manager chat"} to answer it.` };
     }
-    answer = { approved: decision === "allow" };
+    // "Allow, and approve this kind next time": only on a card that offers it, and only with Allow.
+    const remember = b.remember === true && decision === "allow" && !!card.payload.remember;
+    answer = { approved: decision === "allow", ...(remember ? { remember: true } : {}) };
   } else if (decision === "deny") {
     answer = { approved: false };
   } else {

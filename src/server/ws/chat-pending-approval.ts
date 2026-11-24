@@ -1,5 +1,6 @@
 import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import type { NormalizedQuestion } from "../../shared/approval-questions.ts";
+import type { CardRememberOffer } from "../../shared/remembered-approvals.ts";
 
 /**
  * The approval card a chat session is waiting on, one at a time.
@@ -34,6 +35,8 @@ export interface PendingApprovalEvent {
   origin?: "endpoint" | "ppm";
   /** A question card's questions in the shape every surface answers by id, whichever provider asked. */
   questions?: NormalizedQuestion[];
+  /** What the card offers to remember, worked out by PPM (never taken from the provider). */
+  remember?: CardRememberOffer;
 }
 
 /** Where a session keeps its cards: the one shown and those queued behind it. */

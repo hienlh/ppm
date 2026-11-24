@@ -18,6 +18,8 @@ import { approvalDrawsAsCard } from "@/lib/approval-request";
 import { AsyncQuestionCard } from "./async-question-card";
 import { ASYNC_QUESTION_TOOL, type ChatQuestion } from "../../../shared/chat-questions";
 import { SessionRecoveredNotice, type SessionRecoveredEvent } from "./session-recovered-notice";
+import { AutoApprovedNotice } from "./auto-approved-notice";
+import type { AutoApprovedEvent } from "../../../shared/remembered-approvals";
 
 /**
  * Renders events in order — consecutive text events merged into one bubble,
@@ -28,7 +30,7 @@ type EventGroup =
   | { kind: "text"; content: string }
   | { kind: "thinking"; content: string }
   | { kind: "tool"; tool: ChatEvent; result?: ChatEvent; completed?: boolean }
-  | { kind: "notice"; event: SessionRecoveredEvent };
+  | { kind: "notice"; event: SessionRecoveredEvent | AutoApprovedEvent };
 
 export function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput, voiceAnswer }: {
   /** This answer replies to a voice message sent as heard: its opening "Hiểu là" line is drawn as one. */
@@ -64,7 +66,7 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
       groups.push({ kind: "text", content: `\n\n> ↻ ${reason} — retrying with **${label}**...\n\n` });
       continue;
     }
-    if (event.type === "session_recovered") {
+    if (event.type === "session_recovered" || event.type === "auto_approved") {
       if (textBuffer) { groups.push({ kind: "text", content: textBuffer }); textBuffer = ""; }
       groups.push({ kind: "notice", event });
       continue;
@@ -186,7 +188,11 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
             </div>
           );
         }
-        if (group.kind === "notice") return <SessionRecoveredNotice key={`notice-${i}`} event={group.event} />;
+        if (group.kind === "notice") {
+          return group.event.type === "auto_approved"
+            ? <AutoApprovedNotice key={`notice-${i}`} event={group.event} />
+            : <SessionRecoveredNotice key={`notice-${i}`} event={group.event} />;
+        }
         if (group.tool.type === "tool_use" && group.tool.tool === ASYNC_QUESTION_TOOL && !group.tool.parentToolUseId) {
           const input = group.tool.input as { questions: ChatQuestion[] };
           return <AsyncQuestionCard key={group.tool.toolUseId} itemId={group.tool.toolUseId!} questions={input.questions} />;

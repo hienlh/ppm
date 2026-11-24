@@ -13,7 +13,8 @@ import type { AssistantCardPayload } from "../../../src/shared/assistant-cards.t
 
 const cards = createAssistantCards({ now: () => 1, projects: () => [{ name: "api", path: "/p/api" }], announce: () => {} });
 let answered = 0;
-const control = { answerApproval: () => { answered++; return "answered"; } } as unknown as ChatControl;
+let lastAnswer: unknown = null;
+const control = { answerApproval: (_s: string, _r: string, a: unknown) => { answered++; lastAnswer = a; return "answered"; } } as unknown as ChatControl;
 const deps = { cards, control: () => control, now: () => 1 };
 const approval = (payload: AssistantCardPayload) => cards.create({
   kind: "approval", projectName: "api", projectPath: "/p/api", sessionId: "chat-1", title: "Open a chat",
@@ -40,5 +41,18 @@ describe("cards answered only in their chat", () => {
     const mcp = answerCard(approval({ answerInPpm: "mcp_sign_in", mcpServer: "vanta" }).id, { decision: "allow" }, deps);
     expect(mcp).toMatchObject({ ok: false, status: 400 });
     expect(answered).toBe(0);
+  });
+});
+
+describe("Allow & remember from the Assistant's card", () => {
+  it("passes remember on only where the card offers it, and only with Allow", () => {
+    answerCard(approval({ remember: { label: "Run `ls`", suggest: false } }).id, { decision: "allow", remember: true }, deps);
+    expect(lastAnswer).toEqual({ approved: true, remember: true });
+    getDb().run("DELETE FROM assistant_cards");
+    answerCard(approval({}).id, { decision: "allow", remember: true }, deps);
+    expect(lastAnswer).toEqual({ approved: true });
+    getDb().run("DELETE FROM assistant_cards");
+    answerCard(approval({ remember: { label: "Run `ls`", suggest: false } }).id, { decision: "deny", remember: true }, deps);
+    expect(lastAnswer).toEqual({ approved: false });
   });
 });

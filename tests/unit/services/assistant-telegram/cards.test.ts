@@ -80,6 +80,23 @@ describe("approval cards on Telegram", () => {
     }
   });
 
+  it("offers Allow & remember where the card has something to remember, and says what", async () => {
+    const t = setup();
+    const { message, requestId } = await t.show({ tool: "Bash", input: { command: "git status" }, remember: { label: "Run `git status`", suggest: true } });
+    expect(t.buttons(message.message_id).map((b) => b.text)).toEqual(["Allow", "Deny", "Allow & remember"]);
+    expect(message.text).toContain("Run `git status`");
+    expect(message.text).toContain("You have allowed this 3 times");
+    answered.length = 0;
+    expect(t.press(message.message_id, "Allow & remember")).toContain("approve this kind by itself");
+    expect(answered).toEqual([{ sessionId: "s", requestId, answer: { approved: true, remember: true } }]);
+  });
+
+  it("offers no Allow & remember where it offers no Allow", async () => {
+    const t = setup();
+    const { message } = await t.show({ tool: "Write", input: { file_path: "/repo/a.txt", content: "x".repeat(4000) }, remember: { label: "Edit files at the project's top level", suggest: false } });
+    expect(t.buttons(message.message_id).map((b) => b.text)).toEqual(["Deny"]);
+  });
+
   it("offers no Allow on a write too long to show in full", async () => {
     const t = setup();
     const { message } = await t.show({ tool: "Write", input: { file_path: "/repo/a.txt", content: "x".repeat(4000) } });

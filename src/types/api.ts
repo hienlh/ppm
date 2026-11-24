@@ -40,7 +40,7 @@ export type ChatWsClientMessage =
   | { type: "set_model"; model: string }
   | { type: "set_effort"; effort: string }
   | { type: "set_thinking"; enabled: boolean }
-  | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown }
+  | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown; remember?: boolean }
   | { type: "kill_background_shell"; shellId: string }
   | { type: "ready" }
   /** Replay an in-progress turn after a downstream WebSocket content gap. */

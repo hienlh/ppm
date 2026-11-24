@@ -10,6 +10,7 @@ import { collabWaits } from "../../services/session-collab/collab-waits.ts";
 import { childrenOf, linkedSessions } from "../../services/session-collab/session-links.service.ts";
 import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
 import { ppmApprovals } from "../ws/chat-ppm-approvals.ts";
+import { recordCollabCardAnswer } from "../ws/chat.ts";
 import { collabLiveState } from "../ws/chat.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -24,8 +25,14 @@ export const sessionCollabRoutes = new Hono();
 
 sessionCollabRoutes.post("/approvals/:requestId", async (c) => {
   const body = await c.req.json<unknown>().catch(() => null);
-  const answered = collabApprovalBroker.answer(c.req.param("requestId"), body);
+  const requestId = c.req.param("requestId");
+  const card = collabApprovalBroker.waitingCard(requestId);
+  const answered = collabApprovalBroker.answer(requestId, body);
   if (!answered.ok) return c.json(err(answered.error), answered.status);
+  // The user pressed in PPM's chat: an approval counts towards "remember this?", and
+  // `remember: true` makes the rule (`remembered-approvals/`).
+  const remember = !!body && typeof body === "object" && (body as { remember?: unknown }).remember === true;
+  if (card) recordCollabCardAnswer(card.sessionId, card.event.input, answered.answer !== "deny", remember);
   return c.json(ok({ answer: answered.answer }));
 });
 

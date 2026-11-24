@@ -13,6 +13,7 @@ import { answerAssistantCard } from "@/lib/assistant-cards-api";
 import { escapeHiddenCharacters } from "../../../../shared/reveal-hidden-characters";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardButton, CardShell } from "./card-shell";
+import { RememberApprovalControl } from "@/components/chat/remember-approval-control";
 import { QuestionCard } from "@/components/chat/question-card";
 import { questionsFromWire } from "../../../../shared/approval-questions";
 import { openCardManagerChat, useCardAction } from "./use-card-action";
@@ -143,6 +144,13 @@ export function ApprovalMirrorCard({ card, onCard }: Props) {
         </pre>
       )}
       {!complete && !queued && <p className="text-xs text-warning">{d?.incompleteReason ?? `Open the ${card.payload.chat ? "chat" : "manager chat"} to see all of it before allowing.`}</p>}
+      {complete && !queued && card.status === "open" && card.payload.remember && (
+        <RememberApprovalControl
+          offer={card.payload.remember}
+          disabled={busy}
+          onRemember={() => void run(() => answerAssistantCard(card.id, { decision: "allow", remember: true }))}
+        />
+      )}
       <QueuedNote card={card} />
       <WaitingSince card={card} />
       <Deadline card={card} />

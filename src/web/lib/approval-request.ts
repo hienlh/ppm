@@ -1,5 +1,6 @@
 import type { ApprovalSummary } from "../../shared/assistant-approval";
 import { normalizeClaudeQuestions, questionsFromWire, type NormalizedQuestion } from "../../shared/approval-questions";
+import type { CardRememberOffer } from "../../shared/remembered-approvals";
 
 /**
  * The approval card a chat shows, read from the server's `approval_request` and from
@@ -16,6 +17,14 @@ export interface ApprovalRequest {
   summary?: ApprovalSummary;
   /** Set on a question card: its questions, the same shape whichever provider asked. */
   questions?: NormalizedQuestion[];
+  /** What "Allow & remember" would remember, worked out by the server; absent when it offers nothing. */
+  remember?: CardRememberOffer;
+}
+
+function rememberFromWire(raw: unknown): CardRememberOffer | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  return typeof r.label === "string" && r.label ? { label: r.label, suggest: r.suggest === true } : undefined;
 }
 
 function summaryFromWire(raw: unknown): ApprovalSummary | undefined {
@@ -40,10 +49,12 @@ export function approvalFromWire(raw: unknown): ApprovalRequest | null {
   if (typeof r.requestId !== "string" || !r.requestId) return null;
   const summary = summaryFromWire(r.summary);
   const questions = questionsFromWire(r.questions);
+  const remember = rememberFromWire(r.remember);
   return {
     requestId: r.requestId, tool: typeof r.tool === "string" ? r.tool : "Tool", input: r.input,
     ...(summary ? { summary } : {}),
     ...(questions ? { questions } : {}),
+    ...(remember ? { remember } : {}),
   };
 }
 

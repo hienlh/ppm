@@ -16,7 +16,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 80;
+export const CURRENT_SCHEMA_VERSION = 81;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1696,6 +1696,39 @@ export function runMigrations(database: Database): void {
       }
     }
     database.exec(`PRAGMA user_version = 80;`);
+  }
+
+  if (current < 81) {
+    // Remembered approvals: a kind of request the user chose to have approved without a card,
+    // per project (`remembered-approvals/`). Only a person's press creates a rule. The tallies
+    // count the user's own approvals of each pattern, so the card can suggest remembering one
+    // after the third; nothing is remembered from a tally alone.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS approval_rules (
+        id TEXT PRIMARY KEY,
+        project_key TEXT NOT NULL,
+        project_name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        pattern TEXT NOT NULL,
+        label TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        created_via TEXT NOT NULL,
+        last_used_at INTEGER,
+        use_count INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (project_key, kind, pattern)
+      )
+    `);
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS approval_pattern_tallies (
+        project_key TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        pattern TEXT NOT NULL,
+        approvals INTEGER NOT NULL DEFAULT 0,
+        last_at INTEGER NOT NULL,
+        PRIMARY KEY (project_key, kind, pattern)
+      )
+    `);
+    database.exec(`PRAGMA user_version = 81;`);
   }
 }
 

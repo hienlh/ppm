@@ -208,7 +208,7 @@ interface UseChatReturn {
    */
   currentTurnIdRef: { readonly current: string | null };
   /** `answersById` answers a question card by question id; the server converts it for the provider. */
-  respondToApproval: (requestId: string, approved: boolean, answersById?: AnswersById) => void;
+  respondToApproval: (requestId: string, approved: boolean, answersById?: AnswersById, remember?: boolean) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
   refetchMessages: () => void;
@@ -673,6 +673,7 @@ export function useChat(
         break;
       }
 
+      case "auto_approved":
       case "session_recovered": {
         // One line at the head of the answer: the turn goes on in a new Claude session.
         streamingEventsRef.current.push(ev as ChatEvent);
@@ -1809,13 +1810,15 @@ export function useChat(
   );
 
   const respondToApproval = useCallback(
-    (requestId: string, approved: boolean, answersById?: AnswersById) => {
+    (requestId: string, approved: boolean, answersById?: AnswersById, remember?: boolean) => {
       send(
         JSON.stringify({
           type: "approval_response",
           requestId,
           approved,
           ...(answersById ? { answersById } : {}),
+          // "Allow & remember": the server works out what is remembered from the card itself.
+          ...(remember && approved ? { remember: true } : {}),
         }),
       );
 
