@@ -7,11 +7,19 @@
  */
 import { Hono } from "hono";
 import { err, ok } from "../../types/api.ts";
+import { resolve } from "node:path";
 import {
   getWhisperStatus,
+  installedModel,
   startWhisperInstall,
   uninstallWhisper,
 } from "../../services/speech-to-text/whisper-install.service.ts";
+import {
+  probeWhisperBackend,
+  setGpuPreference,
+  whisperGpuStatus,
+} from "../../services/speech-to-text/whisper-gpu-state.ts";
+import { findWhisperBinary, whisperModelDir } from "../../services/speech-to-text/whisper-paths.ts";
 import { transcribeWav } from "../../services/speech-to-text/whisper-transcribe.service.ts";
 import { broadcastGlobalEvent } from "../ws/global.ts";
 import { defaultVoiceRouteDeps, registerVoiceMessageRoutes, type VoiceRouteDeps } from "./speech-voice-message.ts";
@@ -21,28 +29,71 @@ const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** Install status plus the GPU half; with Whisper ready and never probed, this starts the probe. */
+async function fullWhisperStatus() {
+  const status = getWhisperStatus();
+  const model = installedModel();
+  const modelPath = status.ready && model ? resolve(whisperModelDir(), model.file) : null;
+  return { ...status, gpu: await whisperGpuStatus({ modelPath }) };
+}
+
 /** The routes with their voice-message steps swappable, for tests. */
 export function createSpeechRoutes(voiceDeps: VoiceRouteDeps = defaultVoiceRouteDeps(broadcastGlobalEvent)): Hono {
   const speechRoutes = new Hono();
 
-  speechRoutes.get("/status", (c) => c.json(ok(getWhisperStatus())));
+  speechRoutes.get("/status", async (c) => c.json(ok(await fullWhisperStatus())));
 
+  /** `build` picks the whisper.cpp build: `cuda` only where this host has a card that can load it. */
   speechRoutes.post("/install", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { model?: string };
+    const body = (await c.req.json().catch(() => ({}))) as { model?: string; build?: unknown };
+    if (body.build !== undefined && body.build !== "cpu" && body.build !== "cuda") {
+      return c.json(err("build must be cpu or cuda"), 400);
+    }
+    // Asked only when the CUDA build would be downloaded: switching models on a CUDA build already
+    // in place must not depend on `nvidia-smi` answering right now (a driver update, a timeout).
+    if (body.build === "cuda") {
+      const gpu = await whisperGpuStatus();
+      if (gpu.installedBuild !== "cuda" && !gpu.cudaBuild) {
+        return c.json(err("No NVIDIA GPU with CUDA 12.4 or newer was found on this host"), 409);
+      }
+    }
     try {
-      return c.json(ok(startWhisperInstall(body.model)));
+      return c.json(ok(startWhisperInstall(body.model, { build: body.build })));
     } catch (e) {
       return c.json(err(message(e)), 409);
     }
   });
 
-  speechRoutes.post("/uninstall", (c) => {
+  speechRoutes.post("/uninstall", async (c) => {
     try {
       uninstallWhisper();
-      return c.json(ok(getWhisperStatus()));
+      return c.json(ok(await fullWhisperStatus()));
     } catch (e) {
       return c.json(err(message(e)), 409);
     }
+  });
+
+  /** The "Use GPU" switch in Settings → Voice. Off passes `-ng`, so the GPU stays free for other work. */
+  speechRoutes.post("/gpu", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { useGpu?: unknown };
+    if (typeof body.useGpu !== "boolean") return c.json(err("useGpu must be true or false"), 400);
+    setGpuPreference(body.useGpu);
+    return c.json(ok(await fullWhisperStatus()));
+  });
+
+  /**
+   * Ask the installed whisper-cli again which backend it runs on (after a driver update, say).
+   * The check runs in the background — loading a model can take longer than a request may stay
+   * silent — and the answer says `probing: true`, which the pane polls until it is not.
+   */
+  speechRoutes.post("/gpu/check", async (c) => {
+    const status = getWhisperStatus();
+    if (status.install && !status.install.done) return c.json(err("An install is running"), 409);
+    const binary = findWhisperBinary();
+    const model = installedModel();
+    if (!binary || !model) return c.json(err("Whisper is not installed on this host"), 409);
+    void probeWhisperBackend(binary, resolve(whisperModelDir(), model.file)).catch(() => {});
+    return c.json(ok(await fullWhisperStatus()));
   });
 
   /**

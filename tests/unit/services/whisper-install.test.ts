@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, mkdtempSync, existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, readdirSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
@@ -12,12 +12,14 @@ import {
   modelUrl,
   vadModelUrl,
   whisperAssetFor,
+  whisperGpuAssetFor,
 } from "../../../src/services/speech-to-text/whisper-catalog.ts";
 import { downloadVerified } from "../../../src/services/speech-to-text/whisper-download.ts";
 import { findBundledBinary, whisperBinDir } from "../../../src/services/speech-to-text/whisper-paths.ts";
 import {
   _resetWhisperInstallState,
   getWhisperStatus,
+  resolveInstallBuild,
   startWhisperInstall,
 } from "../../../src/services/speech-to-text/whisper-install.service.ts";
 
@@ -195,10 +197,83 @@ describe("startWhisperInstall", () => {
     // than about any hash at all: passing an empty or wrong one still mismatches, and would
     // otherwise be indistinguishable from the correct wiring.
     expect(job.error ?? "").toContain(whisperAssetFor("linux", "x64")!.sha256);
-    // The bin directory is made before the download, so what matters is that nothing
-    // landed in it — and that no half-written `.part` survived to be adopted by a retry.
-    expect(readdirSync(whisperBinDir())).toEqual([]);
+    // The bin directory is (re)made only after a verified download, so what matters is that
+    // nothing landed in it — and that no half-written `.part` survived to be adopted by a retry.
+    expect(existsSync(whisperBinDir()) ? readdirSync(whisperBinDir()) : []).toEqual([]);
     expect(readdirSync(resolve(home, "whisper", "tmp"))).toEqual([]);
     expect(existsSync(resolve(home, "whisper", "models", modelById("base-q5_1")!.file))).toBe(false);
+  });
+});
+
+describe("the CUDA build", () => {
+  it("is published for Windows x64 only, pinned like every other download", () => {
+    const asset = whisperGpuAssetFor("win32", "x64")!;
+    expect(asset.kind).toBe("cuda");
+    expect(asset.url).toContain(`/${WHISPER_BUILD}/`);
+    expect(asset.url).toEndWith(asset.file);
+    // 12.4, not 11.8: the 11.8 archive ships no cuBLAS and silently runs on the CPU.
+    expect(asset.file).toContain("cublas-12.4");
+    expect(asset.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(asset.bytes).toBeGreaterThan(whisperAssetFor("win32", "x64")!.bytes);
+    for (const [platform, arch] of [["win32", "arm64"], ["linux", "x64"], ["darwin", "arm64"]] as const) {
+      expect(whisperGpuAssetFor(platform, arch), `${platform}/${arch}`).toBeNull();
+    }
+  });
+
+  it("keeps the build already installed unless another is asked for, and never replaces the host's own", () => {
+    expect(resolveInstallBuild(undefined, null)).toBe("cpu");
+    expect(resolveInstallBuild(undefined, "cuda")).toBe("cuda");
+    expect(resolveInstallBuild("cpu", "cuda")).toBe("cpu");
+    expect(resolveInstallBuild("cuda", "cpu")).toBe("cuda");
+    expect(resolveInstallBuild("cuda", "system")).toBe("system");
+  });
+
+  it("refuses a CUDA build where none is published, before starting anything", () => {
+    expect(() => startWhisperInstall("base-q5_1", { platform: "linux", arch: "x64", build: "cuda" })).toThrow(/no cuda build/);
+    expect(getWhisperStatus("linux", "x64").install).toBeNull();
+  });
+
+  it("switching models with the build already in place downloads nothing it already has", async () => {
+    // A CPU build and the base + VAD models already on disk at their pinned sizes: asking for the
+    // same build must not fetch anything, so the job goes straight to running the binary.
+    const platform = process.platform;
+    const dir = resolve(whisperBinDir(), "Release");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(resolve(dir, platform === "win32" ? "whisper-cli.exe" : "whisper-cli"), "not a program");
+    const models = resolve(home, "whisper", "models");
+    mkdirSync(models, { recursive: true });
+    const base = modelById("base-q5_1")!;
+    truncateSync(openAndClose(resolve(models, base.file)), base.bytes);
+    truncateSync(openAndClose(resolve(models, VAD_MODEL.file)), VAD_MODEL.bytes);
+
+    let fetched = 0;
+    const fetchFn = (async () => { fetched++; return new Response("x"); }) as unknown as typeof fetch;
+    startWhisperInstall("base-q5_1", { platform, arch: process.arch, fetchFn, build: "cpu" });
+    for (let i = 0; i < 300 && !getWhisperStatus(platform, process.arch).install?.done; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    const job = getWhisperStatus(platform, process.arch).install!;
+    expect(fetched).toBe(0);
+    expect(job.phase).toBe("verify");
+    expect(job.error ?? "").toMatch(/whisper-cli/);
+  });
+});
+
+function openAndClose(path: string): string {
+  writeFileSync(path, "");
+  return path;
+}
+
+describe("uninstallWhisper", () => {
+  it("refuses while whisper-cli runs, instead of deleting files under it", async () => {
+    const { withWhisperLock } = await import("../../../src/services/speech-to-text/whisper-run-lock.ts");
+    const { uninstallWhisper } = await import("../../../src/services/speech-to-text/whisper-install.service.ts");
+    let release!: () => void;
+    const held = withWhisperLock(() => new Promise<void>((r) => { release = r; }));
+    await Promise.resolve();
+    expect(() => uninstallWhisper()).toThrow(/running/);
+    release();
+    await held;
+    expect(() => uninstallWhisper()).not.toThrow();
   });
 });

@@ -21,8 +21,7 @@ export const cliName = (platform: NodeJS.Platform = process.platform) =>
  * on Linux, `Release/` on Windows — and those names carry the build tag, so the
  * binary is located by looking one level down rather than assumed.
  */
-export function findBundledBinary(platform: NodeJS.Platform = process.platform): string | null {
-  const root = whisperBinDir();
+export function findBundledBinary(platform: NodeJS.Platform = process.platform, root: string = whisperBinDir()): string | null {
   if (!existsSync(root)) return null;
   const name = cliName(platform);
   if (existsSync(resolve(root, name))) return resolve(root, name);

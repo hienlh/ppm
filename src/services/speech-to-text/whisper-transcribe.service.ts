@@ -14,8 +14,14 @@ import { mkdirSync, rmSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
 import { isInventedLine } from "./whisper-hallucinations.ts";
+import type { WhisperBackend } from "./whisper-gpu-detect.ts";
+import { gpuPreference, installedBuild, probeFor, recordGpuFailure } from "./whisper-gpu-state.ts";
 import { installedModel, vadModelPath } from "./whisper-install.service.ts";
 import { findWhisperBinary, whisperModelDir, whisperTmpDir } from "./whisper-paths.ts";
+import { withWhisperLock } from "./whisper-run-lock.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("whisper");
 
 const TIMEOUT_MS = 180_000;
 
@@ -69,7 +75,8 @@ const MAX_PROMPT_CHARS = 1_000;
  * starts from the list again.
  */
 export function whisperArgs(
-  binary: string, wavPath: string, modelPath: string, language: string, prompt?: string, opts: { carryPrompt?: boolean } = {},
+  binary: string, wavPath: string, modelPath: string, language: string, prompt?: string,
+  opts: { carryPrompt?: boolean; noGpu?: boolean } = {},
 ): string[] {
   const hint = prompt?.replace(/\s+/g, " ").trim().slice(0, MAX_PROMPT_CHARS) ?? "";
   return [
@@ -85,6 +92,8 @@ export function whisperArgs(
     "--vad-model", vadModelPath(),
     ...(hint ? ["--prompt", hint] : []),
     ...(hint && opts.carryPrompt ? ["--carry-initial-prompt"] : []),
+    // `-ng` is in every whisper-cli, CPU builds included, so it is safe whichever build runs.
+    ...(opts.noGpu ? ["-ng"] : []),
   ];
 }
 
@@ -120,8 +129,6 @@ export function supportsCarryPrompt(binary: string): Promise<boolean> {
   return known;
 }
 
-let queue: Promise<unknown> = Promise.resolve();
-
 export interface TranscribeResult {
   text: string;
   /** Wall time of the whisper-cli run, for the UI's "took Ns" and for tuning. */
@@ -130,10 +137,7 @@ export interface TranscribeResult {
 
 /** Throws when Whisper is not installed, the run fails, or it outruns the timeout. */
 export async function transcribeWav(wav: Uint8Array, language = "vi", prompt?: string): Promise<TranscribeResult> {
-  const run = queue.then(() => runOnce(wav, language, prompt));
-  // Keep the chain alive after a failure, and never leak the rejection through it.
-  queue = run.catch(() => {});
-  return run;
+  return withWhisperLock(() => runOnce(wav, language, prompt));
 }
 
 async function runOnce(wav: Uint8Array, language: string, prompt: string | undefined): Promise<TranscribeResult> {
@@ -147,23 +151,53 @@ async function runOnce(wav: Uint8Array, language: string, prompt: string | undef
 
   // Asked before the clock starts: the first message after a start pays one `--help` run for it.
   const carryPrompt = !!prompt?.trim() && (await supportsCarryPrompt(binary.path));
+  const useGpu = gpuPreference();
   const started = Date.now();
   try {
-    const cmd = whisperArgs(binary.path, wavPath, resolve(whisperModelDir(), model.file), language, prompt, { carryPrompt });
-    const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe", stdin: "ignore", windowsHide: true });
-    const timer = setTimeout(() => proc.kill(), TIMEOUT_MS);
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    clearTimeout(timer);
-    if (code !== 0) {
-      const detail = stderr.trim().split("\n").slice(-1)[0] ?? `exit ${code}`;
-      throw new Error(`whisper-cli failed: ${detail}`);
+    const cmd = (noGpu: boolean) =>
+      whisperArgs(binary.path, wavPath, resolve(whisperModelDir(), model.file), language, prompt, { carryPrompt, noGpu });
+    let run = await runWhisper(cmd(!useGpu));
+    // PPM's CPU build needs no probe to know it has no GPU to lose.
+    const backend = probeFor(binary)?.backend ?? (installedBuild(binary) === "cpu" ? "none" : null);
+    if (run.code !== 0 && shouldRetryOnCpu({ useGpu, timedOut: run.timedOut, backend })) {
+      // A GPU that fails mid-run (out of memory while a game holds it, a driver reset) takes this
+      // message down with it. The same binary without its GPU still works, so the message is not
+      // lost; the failure is kept for Settings to show.
+      const detail = lastLine(run.stderr, run.code);
+      log.warn(`whisper-cli failed with the GPU on (${detail}); running it again on the CPU`);
+      run = await runWhisper(cmd(true));
+      // Only a CPU run that works shows the GPU was what failed; a bad WAV fails both ways and
+      // must not be reported as a GPU failure.
+      if (run.code === 0) recordGpuFailure(detail);
     }
-    return { text: parseWhisperText(stdout), ms: Date.now() - started };
+    if (run.code !== 0) throw new Error(`whisper-cli failed: ${lastLine(run.stderr, run.code)}`);
+    return { text: parseWhisperText(run.stdout), ms: Date.now() - started };
   } finally {
     rmSync(wavPath, { force: true });
   }
+}
+
+/**
+ * A failed run is tried again on the CPU only when the GPU may be what failed: the GPU was on,
+ * the run did not simply run out of time (a second three-minute run would only double the
+ * wait), and the binary is not known to run on the CPU already.
+ */
+export function shouldRetryOnCpu(run: { useGpu: boolean; timedOut: boolean; backend: WhisperBackend | null }): boolean {
+  return run.useGpu && !run.timedOut && run.backend !== "none";
+}
+
+const lastLine = (stderr: string, code: number | null) =>
+  stderr.trim().split("\n").at(-1)?.trim() || `exit ${code}`;
+
+async function runWhisper(cmd: string[]): Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }> {
+  const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe", stdin: "ignore", windowsHide: true });
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; proc.kill(); }, TIMEOUT_MS);
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  clearTimeout(timer);
+  return { stdout, stderr, code, timedOut };
 }

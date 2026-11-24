@@ -17,40 +17,25 @@ import { cn } from "@/lib/utils";
 import { useSettingsStore, type VoiceEngine } from "@/stores/settings-store";
 import { RunInTerminalButton } from "./run-in-terminal-button";
 import { VoiceMessageSettings } from "./voice-message-settings";
-
-interface StatusModel {
-  id: string;
-  label: string;
-  note: string;
-  bytes: number;
-}
-
-interface InstallJob {
-  modelId: string;
-  phase: "binary" | "model" | "vad" | "verify";
-  receivedBytes: number;
-  totalBytes: number;
-  done: boolean;
-  error: string | null;
-}
-
-interface SpeechStatus {
-  installable: boolean;
-  installHint: string | null;
-  binary: { path: string; source: "bundled" | "system" } | null;
-  version: string;
-  model: StatusModel | null;
-  ready: boolean;
-  models: StatusModel[];
-  install: InstallJob | null;
-}
+import { WhisperBuildChoice, WhisperGpuPanel } from "./whisper-gpu-settings";
+import type { InstallJob, SpeechStatus, WhisperBuild } from "./whisper-status-types";
 
 const PHASE_LABEL: Record<InstallJob["phase"], string> = {
   binary: "Downloading whisper.cpp",
   model: "Downloading the model",
   vad: "Downloading the voice detector",
   verify: "Checking it runs here",
+  gpu: "Checking the GPU",
 };
+
+/** The build the install button would put in place: the one shown as chosen, else the installed one. */
+function chosenBuild(status: SpeechStatus, picked: WhisperBuild | null): WhisperBuild | null {
+  const gpu = status.gpu;
+  if (!gpu || gpu.installedBuild === "system") return null;
+  if (picked) return picked;
+  if (gpu.installedBuild) return gpu.installedBuild;
+  return gpu.cudaBuild ? "cuda" : "cpu";
+}
 
 const mb = (bytes: number) => `${Math.round(bytes / 1e6)} MB`;
 
@@ -62,6 +47,7 @@ export function VoiceSettingsSection() {
   // With voice messages on, the mic records messages and the dictation engine choice does nothing.
   const [voiceMessagesOn, setVoiceMessagesOn] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [pickedBuild, setPickedBuild] = useState<WhisperBuild | null>(null);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -80,16 +66,17 @@ export function VoiceSettingsSection() {
     void load();
   }, [load]);
 
-  // Poll only while an install is running — 600 MB takes a while and the phase
+  // Poll only while an install or a GPU check is running — 600 MB takes a while and the phase
   // and byte count are the only sign that anything is happening.
   const installing = !!status?.install && !status.install.done;
+  const probing = !!status?.gpu?.probing;
   useEffect(() => {
-    if (!installing) return;
+    if (!installing && !probing) return;
     pollRef.current = setTimeout(() => void load(), 700);
     return () => {
       if (pollRef.current) clearTimeout(pollRef.current);
     };
-  }, [installing, status, load]);
+  }, [installing, probing, status, load]);
 
   // Homebrew runs in a terminal the pane cannot watch, so once its command has been handed over
   // the status is re-read until whisper-cli turns up — for ten minutes at most.
@@ -107,11 +94,13 @@ export function VoiceSettingsSection() {
     if (status && !status.ready && voiceEngine === "whisper") setVoiceEngine("browser");
   }, [status, voiceEngine, setVoiceEngine]);
 
+  const build = status ? chosenBuild(status, pickedBuild) : null;
   const install = async () => {
     if (!selectedModel) return;
     setBusy(true);
     try {
-      await api.post("/api/speech/install", { model: selectedModel });
+      await api.post("/api/speech/install", { model: selectedModel, ...(build ? { build } : {}) });
+      setPickedBuild(null);
       await load();
     } catch (e) {
       toast.error("Could not start the install", { description: e instanceof Error ? e.message : String(e) });
@@ -135,6 +124,19 @@ export function VoiceSettingsSection() {
 
   const job = status?.install ?? null;
   const percent = job && job.totalBytes > 0 ? Math.round((job.receivedBytes / job.totalBytes) * 100) : null;
+  const installedBuild = status?.gpu?.installedBuild ?? null;
+  // Only a bundled build can be swapped; a host's own whisper-cli stays what it is.
+  const buildChanges = !!build && (installedBuild === "cpu" || installedBuild === "cuda") && build !== installedBuild;
+  const modelChanges = !!status?.model && status.model.id !== selectedModel;
+  const buildName = build === "cuda" ? "GPU build" : "CPU build";
+  // Off `ready`, not `model`: a model on disk with no binary beside it still needs the button.
+  const installLabel = !status?.ready
+    ? "Install"
+    : modelChanges
+      ? `Switch to ${status.models.find((m) => m.id === selectedModel)?.label}${buildChanges ? ` (${buildName})` : ""}`
+      : buildChanges
+        ? `Switch to the ${buildName}`
+        : "Installed";
   const insecure = typeof window !== "undefined" && !window.isSecureContext;
 
   return (
@@ -188,6 +190,8 @@ export function VoiceSettingsSection() {
           </p>
         </div>
 
+        {status && <WhisperGpuPanel status={status} onStatus={setStatus} />}
+
         {status && !status.installable && (status.installHint ? (
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">
@@ -214,7 +218,8 @@ export function VoiceSettingsSection() {
               <Loader2 className="size-3.5 animate-spin" />
               <span>
                 {PHASE_LABEL[job.phase]}
-                {percent === null ? "…" : ` — ${percent}%`}
+                {job.phase === "binary" && job.build === "cuda" ? " (GPU build)" : ""}
+                {percent === null || job.phase === "gpu" ? "…" : ` — ${percent}%`}
               </span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
@@ -254,18 +259,23 @@ export function VoiceSettingsSection() {
               })}
             </div>
 
+            {status.gpu && build && (
+              <WhisperBuildChoice
+                gpu={status.gpu}
+                cpuBytes={status.cpuBuildBytes ?? null}
+                value={build}
+                onChange={setPickedBuild}
+              />
+            )}
+
             <div className="flex flex-col sm:flex-row gap-2">
               <Button
                 onClick={install}
-                disabled={busy || installing || !selectedModel || status.model?.id === selectedModel}
+                disabled={busy || installing || !selectedModel || (status.ready && !modelChanges && !buildChanges)}
                 className="flex-1 gap-2 cursor-pointer"
               >
                 <Download className="size-4" />
-                {status.model
-                  ? status.model.id === selectedModel
-                    ? "Installed"
-                    : `Switch to ${status.models.find((m) => m.id === selectedModel)?.label}`
-                  : "Install"}
+                {installLabel}
               </Button>
               {(status.model || status.binary?.source === "bundled") && (
                 <Button

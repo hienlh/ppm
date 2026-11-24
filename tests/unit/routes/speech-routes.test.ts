@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
 import { _resetWhisperInstallState } from "../../../src/services/speech-to-text/whisper-install.service.ts";
 import { speechRoutes } from "../../../src/server/routes/speech.ts";
+import { _setNvidiaDetector } from "../../../src/services/speech-to-text/whisper-gpu-detect.ts";
 
 let home: string;
 const prevHome = process.env.PPM_HOME;
@@ -16,9 +17,11 @@ beforeEach(() => {
   process.env.PPM_HOME = home;
   _resetPpmDir();
   _resetWhisperInstallState();
+  _setNvidiaDetector(async () => null);
 });
 
 afterEach(() => {
+  _setNvidiaDetector(null);
   rmSync(home, { recursive: true, force: true });
   if (prevHome === undefined) delete process.env.PPM_HOME;
   else process.env.PPM_HOME = prevHome;
@@ -77,5 +80,55 @@ describe("POST /speech/uninstall", () => {
     const res = await post("/speech/uninstall");
     expect(res.status).toBe(200);
     expect(((await res.json()) as any).data.ready).toBe(false);
+  });
+});
+
+describe("Whisper's GPU", () => {
+  const json = (body: unknown): RequestInit => ({ headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+  it("includes the GPU half in the status", async () => {
+    const res = await app().request("/speech/status");
+    const data = ((await res.json()) as any).data;
+    expect(data.gpu.useGpu).toBe(true);
+    expect(data.gpu.installedBuild).toBeNull();
+    expect(data.gpu.backend).toBeNull();
+  });
+
+  it("refuses a build that is neither cpu nor cuda", async () => {
+    const res = await post("/speech/install", json({ model: "base-q5_1", build: "metal" }));
+    expect(res.status).toBe(400);
+  });
+
+  it("refuses the CUDA build on a host without a card that can load it", async () => {
+    _setNvidiaDetector(async () => null);
+    const res = await post("/speech/install", json({ model: "base-q5_1", build: "cuda" }));
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as any).error).toContain("NVIDIA");
+  });
+
+  it("stores the Use GPU switch and answers the new status", async () => {
+    expect((await post("/speech/gpu", json({ useGpu: "no" }))).status).toBe(400);
+    const res = await post("/speech/gpu", json({ useGpu: false }));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).data.gpu.useGpu).toBe(false);
+  });
+
+  it("answers 409 to a GPU check with nothing installed", async () => {
+    expect((await post("/speech/gpu/check")).status).toBe(409);
+  });
+});
+
+describe("Whisper's GPU, with the CUDA build already installed", () => {
+  it("does not ask for a card that answers to switch models on the build already in place", async () => {
+    _setNvidiaDetector(async () => null);
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const dir = join(home, "whisper", "bin", "Release");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli"), "");
+    writeFileSync(join(dir, "ggml-cuda.dll"), "");
+    const res = await post("/speech/install", { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "not-a-model", build: "cuda" }) });
+    // Past the GPU gate: what refuses it now is the unknown model, not the missing card.
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as any).error).toContain("unknown model");
   });
 });

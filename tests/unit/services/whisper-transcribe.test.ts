@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import {
   parseWhisperText,
+  shouldRetryOnCpu,
   supportsCarryPrompt,
   threadCount,
   whisperArgs,
@@ -106,5 +107,29 @@ describe("whisperArgs", () => {
 describe("supportsCarryPrompt", () => {
   it("answers false for a binary that cannot be run, instead of failing the transcription", async () => {
     expect(await supportsCarryPrompt("/nonexistent/whisper-cli")).toBe(false);
+  });
+});
+
+describe("the GPU switch in the arguments", () => {
+  it("passes -ng only when the GPU is turned off", () => {
+    const on = whisperArgs("whisper-cli", "a.wav", "m.bin", "vi");
+    const off = whisperArgs("whisper-cli", "a.wav", "m.bin", "vi", undefined, { noGpu: true });
+    expect(on).not.toContain("-ng");
+    expect(off).toContain("-ng");
+  });
+});
+
+describe("shouldRetryOnCpu", () => {
+  it("runs a failed message again on the CPU when the GPU may be what failed", () => {
+    expect(shouldRetryOnCpu({ useGpu: true, timedOut: false, backend: "cuda" })).toBe(true);
+    expect(shouldRetryOnCpu({ useGpu: true, timedOut: false, backend: "metal" })).toBe(true);
+    // Never checked yet: the GPU may still be in use, so the retry is worth one more run.
+    expect(shouldRetryOnCpu({ useGpu: true, timedOut: false, backend: null })).toBe(true);
+  });
+
+  it("does not run it again when the CPU was in use already or the run simply ran out of time", () => {
+    expect(shouldRetryOnCpu({ useGpu: false, timedOut: false, backend: "cuda" })).toBe(false);
+    expect(shouldRetryOnCpu({ useGpu: true, timedOut: false, backend: "none" })).toBe(false);
+    expect(shouldRetryOnCpu({ useGpu: true, timedOut: true, backend: "cuda" })).toBe(false);
   });
 });
