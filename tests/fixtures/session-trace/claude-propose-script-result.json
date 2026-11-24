@@ -1,0 +1,19 @@
+{
+ "_note": "Shape of a real session-trace tool_use/tool_result pair (Claude, session_schedule_propose_script). Values redacted except what the owner backfill reads.",
+ "tool_use": {
+  "type": "tool_use",
+  "tool": "mcp__ppm-sessions__session_schedule_propose_script",
+  "toolUseId": "toolu_fixture01",
+  "input": {
+   "file": "<redacted>"
+  }
+ },
+ "tool_result": {
+  "type": "tool_result",
+  "output": "[{\"type\":\"text\",\"text\":\"{\\n \\\"created\\\": true,\\n \\\"schedule\\\": {\\n  \\\"id\\\": 116,\\n  \\\"name\\\": \\\"prod-issue-watch\\\",\\n  \\\"kind\\\": \\\"script\\\",\\n  \\\"mode\\\": \\\"tick\\\",\\n  \\\"cron\\\": \\\"<redacted>\\\",\\n  \\\"timeZone\\\": \\\"<redacted>\\\",\\n  \\\"folder\\\": \\\"<redacted>\\\",\\n  \\\"enabled\\\": \\\"<redacted>\\\",\\n  \\\"nextFire\\\": \\\"<redacted>\\\"\\n },\\n \\\"note\\\": \\\"The user allowed it. It runs at its next fire; its log is in Settings \\\\u2192 Schedules. Pause it with session_schedule_set_enabled, never by deleting and creating it again.\\\"\\n}\"}]",
+  "isError": false,
+  "toolUseId": "toolu_fixture01"
+ },
+ "result_delay_ms": 1925,
+ "real_output_prefix": "[{\"type\":\"text\",\"text\":\"{\\n \\\"created\\\":"
+}

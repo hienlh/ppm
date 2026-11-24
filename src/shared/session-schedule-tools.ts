@@ -10,9 +10,14 @@ export const SESSION_SCHEDULE_DELETE_TOOL = "session_schedule_delete";
 export const SESSION_SCHEDULE_SET_ENABLED_TOOL = "session_schedule_set_enabled";
 /** Propose a script schedule in the chat's project; created only once the user allows the card. */
 export const SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL = "session_schedule_propose_script";
+/**
+ * Make this chat the owner of a script or prompt schedule of its project that has none, so the
+ * chat's footer chip lists it. Never takes a schedule another chat owns.
+ */
+export const SESSION_SCHEDULE_CLAIM_TOOL = "session_schedule_claim";
 export const SESSION_SCHEDULE_TOOLS = [
   SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_LIST_TOOL, SESSION_SCHEDULE_DELETE_TOOL,
-  SESSION_SCHEDULE_SET_ENABLED_TOOL, SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL,
+  SESSION_SCHEDULE_SET_ENABLED_TOOL, SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL, SESSION_SCHEDULE_CLAIM_TOOL,
 ] as const;
 export type SessionScheduleTool = (typeof SESSION_SCHEDULE_TOOLS)[number];
 

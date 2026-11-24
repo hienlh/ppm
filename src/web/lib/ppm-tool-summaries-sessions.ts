@@ -127,6 +127,11 @@ function schedule(ctx: PpmToolContext): PpmToolSummary | null {
       const stale = answer?.done === false ? str(answer.outcome) : undefined;
       return { label: args.enabled === false ? "Pause schedule" : "Turn on schedule", detail: id ? `#${id}` : undefined, badge: stale && oneLine(stale.replace(/_/g, " "), 20) };
     }
+    case "session_schedule_claim": {
+      const id = posInt(args.id);
+      if (answer?.claimed === true) return { label: "Claimed schedule", detail: named({ id: posInt(answer.id) ?? id, name: str(answer.name) }) };
+      return { label: "Claim schedule", detail: id ? `#${id}` : undefined };
+    }
     case "session_schedule_propose_script": {
       const s = scheduleOf(answer?.schedule);
       if (answer?.created === true) return { label: "Created script schedule", detail: named(s) };
