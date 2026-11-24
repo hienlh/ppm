@@ -8,6 +8,7 @@
  * two when the word also appears in the project's own text), and ordinary Vietnamese is learned
  * only as a two-word phrase that goes to the clean-up, never to Whisper.
  */
+import type { LearnedSource } from "../../shared/voice-message.ts";
 import { termOf } from "./voice-auto-vocabulary.ts";
 import { MAX_COMPARED_CHARS } from "./voice-word-change.ts";
 
@@ -129,8 +130,12 @@ export function fixesToShow(raw: string, cleaned: string): Array<{ from: string;
   return replacements(raw, cleaned).slice(0, CLEANUP_LEARN_LIMITS.shownFixes).map(({ from, to }) => ({ from, to }));
 }
 
-/** Whether a replacement seen `hits` times is learned: terms already in the project's text sooner. */
-export function readyToLearn(r: Replacement, hits: number, known: ReadonlySet<string>): boolean {
+/**
+ * Whether a replacement seen `hits` times is learned: terms already in the project's text sooner,
+ * except what the chat's AI read, which is its own guess and always needs the full count.
+ */
+export function readyToLearn(r: Replacement, hits: number, known: ReadonlySet<string>, source: LearnedSource = "cleanup"): boolean {
+  if (source === "chat") return hits >= CLEANUP_LEARN_LIMITS.hitsToLearn;
   if (r.kind === "term" && known.has(r.to.toLowerCase())) return hits >= CLEANUP_LEARN_LIMITS.hitsToLearnKnown;
   return hits >= CLEANUP_LEARN_LIMITS.hitsToLearn;
 }

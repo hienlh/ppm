@@ -38,9 +38,10 @@ export function learnedDates(l: LearnedWord, now: Date = new Date()): { text: st
   return { text: used, title: `${learned}, last ${used}` };
 }
 
-/** What the source badge says: "clean-up · 3×", "your edit". */
+/** What the source badge says: "clean-up · 3×", "chat · 3×", "your edit". */
 export function learnedSourceLabel(l: LearnedWord): string {
   if (l.source === "cleanup") return `clean-up · ${l.hits ?? 1}×`;
+  if (l.source === "chat") return `chat · ${l.hits ?? 1}×`;
   return "your edit";
 }
 
@@ -97,12 +98,12 @@ export function VoiceLearnedWordsList({ learned, blocked, busy, onUndo, onRestor
           </ul>
         )
       ) : shown.length === 0 ? (
-        <Empty>{tab === "week" ? "Nothing learned this week." : "Nothing learned yet. Words appear here once the clean-up has fixed them a few times, or when you correct a transcript."}</Empty>
+        <Empty>{tab === "week" ? "Nothing learned this week." : "Nothing learned yet. Words appear here once the clean-up or the chat's AI has read them the same way a few times, or when you correct a transcript."}</Empty>
       ) : (
         <ul>
           {shown.map((l) => (
             <Row key={`learned-${l.word}`} word={l.word} heard={l.from} badge={learnedSourceLabel(l)}
-              badgeTone={l.source === "cleanup" ? "cleanup" : "edit"} when={learnedDates(l, now)} phrase={l.kind === "phrase"}>
+              badgeTone={l.source === "cleanup" ? "cleanup" : l.source === "chat" ? "chat" : "edit"} when={learnedDates(l, now)} phrase={l.kind === "phrase"}>
               <Button variant="outline" size="sm" disabled={busy} onClick={() => onUndo([l.word])} className="h-11 gap-1.5 md:h-[30px]"
                 aria-label={`Undo learned word ${l.word}`}>
                 <Undo2 className="size-3.5" />Undo
@@ -133,7 +134,7 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 function Row({ word, heard, badge, badgeTone, when, dim, phrase, children }: {
-  word: string; heard: string; badge: string; badgeTone?: "cleanup" | "edit"; when: { text: string; title: string }; dim?: boolean; phrase?: boolean;
+  word: string; heard: string; badge: string; badgeTone?: "cleanup" | "chat" | "edit"; when: { text: string; title: string }; dim?: boolean; phrase?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -149,7 +150,8 @@ function Row({ word, heard, badge, badgeTone, when, dim, phrase, children }: {
       <span className="col-span-2 row-start-3 flex items-center gap-2 md:col-span-1 md:row-start-auto">
         <span className={cn(
           "whitespace-nowrap rounded-full border px-2 py-0.5 text-[10.5px]",
-          badgeTone === "cleanup" ? "border-accent-2/40 text-accent-2" : badgeTone === "edit" ? "border-warning/40 text-warning" : "border-border text-text-3",
+          badgeTone === "cleanup" ? "border-accent-2/40 text-accent-2" : badgeTone === "chat" ? "border-info/40 text-info"
+            : badgeTone === "edit" ? "border-warning/40 text-warning" : "border-border text-text-3",
         )}>{badge}</span>
         <span className="text-xs text-text-3 md:hidden" title={when.title || undefined}>{when.text}</span>
       </span>

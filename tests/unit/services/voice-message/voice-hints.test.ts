@@ -141,7 +141,8 @@ describe("voiceHintsForMessage", () => {
     const on = deps({}, ["Mission Center"]);
     expect((await voiceHintsForMessage(message("mở mission cen ter"), "ppm", "composer", on.d))?.close).toEqual(["Mission Center"]);
     const off = deps({ self_learning: false }, ["Mission Center"]);
-    expect(await voiceHintsForMessage(message("mở mission cen ter"), "ppm", "composer", off.d)).toBeNull();
+    // Nothing to list, yet the block still rides: it asks the reader for the understood line.
+    expect(await voiceHintsForMessage(message("mở mission cen ter"), "ppm", "composer", off.d)).toEqual({ version: 1, misheard: [], close: [] });
     expect(off.calls.auto).toBe(0);
   });
 

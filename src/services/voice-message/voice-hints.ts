@@ -18,7 +18,7 @@ import { isHintWord, validateVoiceHints, VOICE_HINTS_LIMITS, type VoiceHintPair,
 import { splitVoiceMessage, type LearnedWord, type VoiceMessageConfig, type VoiceSurface } from "../../shared/voice-message.ts";
 import { createLogger } from "../logger.ts";
 import type { RankedTerm } from "./voice-auto-vocabulary.ts";
-import { isFaded, wordUsedIn } from "./voice-learned-fade.ts";
+import { isFaded, selfTaught, wordUsedIn } from "./voice-learned-fade.ts";
 import { MAX_COMPARED_CHARS } from "./voice-word-change.ts";
 import { composeVoiceWords } from "./voice-vocabulary.ts";
 import { projectWordsOf, readVoiceSettings, selfLearningOn, transcriptFixFor } from "./voice-settings.ts";
@@ -97,8 +97,8 @@ export interface VoiceHintsInput {
 export function voiceHintsFor(input: VoiceHintsInput): VoiceHints | null {
   const { config, project, transcript, nowMs } = input;
   const selfLearning = selfLearningOn(config);
-  // The same corrections the clean-up was given: the clean-up's own lessons only with self-learning on.
-  const usable = (l: LearnedWord) => !isFaded(l, nowMs) && (selfLearning || l.source !== "cleanup");
+  // The same corrections the clean-up was given: what PPM taught itself only with self-learning on.
+  const usable = (l: LearnedWord) => !isFaded(l, nowMs) && (selfLearning || !selfTaught(l));
   const learned = [...projectWordsOf(config, project).learned.filter(usable)].sort(byUse);
   // The Assistant is spoken to about every project, so it reads every project's corrections.
   const others = selfLearning && project === ASSISTANT_PROJECT_NAME
@@ -145,7 +145,8 @@ export interface MessageVoiceHintsDeps {
 }
 
 /**
- * The hints to attach to a message the user sent from `surface`, or null: when the message has no
+ * The hints to attach to a message the user sent from `surface` — empty lists when nothing looks
+ * misheard, since the block also asks for the understood line — or null: when the message has no
  * voice part, voice messages are off, or that surface tidies with Haiku instead. Never throws —
  * a message is sent without hints rather than not sent.
  */
@@ -160,7 +161,7 @@ export async function voiceHintsForMessage(
     const wantsAuto = selfLearningOn(config) && config.learn_auto_vocabulary;
     const load = deps.autoVocabulary ?? (async (p: string) => (await import("./voice-auto-vocabulary-sources.ts")).autoVocabulary(p));
     const auto = wantsAuto ? await load(project).catch((): RankedTerm[] => []) : [];
-    return voiceHintsFor({ config, project, transcript, auto, nowMs: (deps.now ?? Date.now)() });
+    return voiceHintsFor({ config, project, transcript, auto, nowMs: (deps.now ?? Date.now)() }) ?? { version: 1, misheard: [], close: [] };
   } catch (e) {
     log.warn(`voice hints left out: ${(e as Error).message}`);
     return null;

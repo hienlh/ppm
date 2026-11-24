@@ -32,7 +32,7 @@ export function VoiceSelfLearningSettings({ view, busy, projectSelect, save }: {
       <Group title="Self-learning">
         <SwitchRow
           label="Learn your words by itself"
-          note="Without anyone editing a transcript, PPM picks up names and task codes for Whisper and learns a word once the clean-up has fixed it the same way a few times. Learned words work at once; undo any of them below."
+          note="Without anyone editing a transcript, PPM picks up names and task codes for Whisper and learns a word once the clean-up or the chat's AI has read it the same way a few times. Learned words work at once; undo any of them below."
           checked={on}
           disabled={busy}
           onChange={(selfLearning) => save({ selfLearning })}
@@ -54,6 +54,13 @@ export function VoiceSelfLearningSettings({ view, busy, projectSelect, save }: {
               checked={view.learnFromCleanup && haikuInUse}
               disabled={busy || !haikuInUse}
               onChange={(learnFromCleanup) => save({ learnFromCleanup })}
+            />
+            <SwitchRow
+              label="Learn from how the AI read your words"
+              note={'A voice message sent as heard asks the AI to open its answer with "Hiểu là: heard → meant" when it read a word differently. The same reading in three messages is learned, and one nobody says for 30 days leaves the list by itself. No extra AI call.'}
+              checked={view.learnFromChat}
+              disabled={busy}
+              onChange={(learnFromChat) => save({ learnFromChat })}
             />
             <SwitchRow
               label="Weekly summary"

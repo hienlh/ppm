@@ -16,7 +16,7 @@ import {
   decodeScheduleRun, encodeScheduleRun, SCHEDULE_RUN_BLOCK_END, SCHEDULE_RUN_BLOCK_END_AFTER, SCHEDULE_RUN_BLOCK_START,
   type ScheduleRunPlacement, type ScheduleRunReference,
 } from "./chat-schedule-run";
-import { decodeVoiceHints, encodeVoiceHints, VOICE_HINTS_BLOCK_END, VOICE_HINTS_BLOCK_START, type VoiceHints } from "./chat-voice-hints";
+import { decodeVoiceHints, encodeVoiceHints, VOICE_HINTS_BLOCK_END, VOICE_HINTS_BLOCK_STARTS, type VoiceHints } from "./chat-voice-hints";
 
 /**
  * The structured blocks PPM appends to a user message, in their fixed order: the text the person
@@ -65,7 +65,7 @@ const SENTINELS: ReadonlyArray<readonly [string, string]> = [
   REPLY_BLOCK_START, REPLY_BLOCK_END, TURN_REFS_BLOCK_START, TURN_REFS_LEGACY_BLOCK_START, TURN_REFS_BLOCK_END,
   FROM_SESSION_BLOCK_START, FROM_SESSION_BLOCK_END, PROVENANCE_BLOCK_START, PROVENANCE_BLOCK_END,
   USER_WORDS_BLOCK_START, USER_WORDS_BLOCK_END, TASK_REFS_BLOCK_START, TASK_REFS_BLOCK_END, SCHEDULE_RUN_BLOCK_START, SCHEDULE_RUN_BLOCK_END, SCHEDULE_RUN_BLOCK_END_AFTER,
-  VOICE_HINTS_BLOCK_START, VOICE_HINTS_BLOCK_END,
+  ...VOICE_HINTS_BLOCK_STARTS, VOICE_HINTS_BLOCK_END,
 ].map((s) => [s, s.replace("<", `<${ZERO_WIDTH_SPACE}`)] as const);
 
 /**

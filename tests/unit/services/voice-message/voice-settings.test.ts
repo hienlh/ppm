@@ -9,7 +9,7 @@ import {
 const AT = "2026-11-20T10:00:00.000Z";
 /** A row with nothing chosen: every switch at its default, self-learning not chosen. */
 const DEFAULTS = {
-  review_before_send: true, transcript_fix: { composer: "hints", telegram: "hints" }, learn_auto_vocabulary: true, learn_from_cleanup: true,
+  review_before_send: true, transcript_fix: { composer: "hints", telegram: "hints" }, learn_auto_vocabulary: true, learn_from_cleanup: true, learn_from_chat: true,
   weekly_summary: true, vietnamese_fixes: true, words: [], projects: {},
 };
 

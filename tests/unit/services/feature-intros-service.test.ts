@@ -217,6 +217,7 @@ describe("Voice messages", () => {
       // Self-learning's parts take their defaults; self-learning itself stays unchosen.
       learn_auto_vocabulary: true,
       learn_from_cleanup: true,
+      learn_from_chat: true,
       weekly_summary: true,
       vietnamese_fixes: true,
       words: ["Hono"],

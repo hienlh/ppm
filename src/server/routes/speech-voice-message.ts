@@ -63,6 +63,7 @@ async function settingsView(project: string | undefined, whisperReady: boolean) 
     selfLearning: config.self_learning === true,
     learnAutoVocabulary: config.learn_auto_vocabulary,
     learnFromCleanup: config.learn_from_cleanup,
+    learnFromChat: config.learn_from_chat,
     weeklySummary: config.weekly_summary,
     vietnameseFixes: config.vietnamese_fixes,
     words: config.words,
@@ -83,7 +84,7 @@ function parsePatch(body: unknown): VoiceSettingsPatch | string {
   const patch: VoiceSettingsPatch = {};
   for (const key of [
     "enabled", "reviewBeforeSend", "cleanupEnabled", "selfLearning", "learnAutoVocabulary", "learnFromCleanup",
-    "weeklySummary", "vietnameseFixes",
+    "learnFromChat", "weeklySummary", "vietnameseFixes",
   ] as const) {
     const value = b[key];
     if (value === undefined) continue;

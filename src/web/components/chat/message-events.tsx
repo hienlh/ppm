@@ -12,6 +12,7 @@ import type { SessionPhase } from "../../../types/api";
 import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
 import { MarkdownContent } from "./message-markdown";
+import { splitAnswerOpening, VoiceUnderstoodLine } from "./voice-understood-line";
 import { CHAT_MESSAGE_TEXT } from "@/lib/chat-message-text";
 import { approvalDrawsAsCard } from "@/lib/approval-request";
 import { AsyncQuestionCard } from "./async-question-card";
@@ -164,6 +165,9 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
     }
   }
 
+  // The answer's first text may open with "Hiểu là: …" (how it read a voice message): drawn as a line of its own.
+  const firstText = groups.findIndex((g) => g.kind === "text");
+
   return (
     <>
       {groups.map((group, i) => {
@@ -172,9 +176,11 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
         }
         if (group.kind === "text") {
           const isLast = isStreaming && i === groups.length - 1;
+          const opening = i === firstText ? splitAnswerOpening(group.content) : { pairs: null, rest: group.content };
           return (
             <div key={`text-${i}`} className={`${CHAT_MESSAGE_TEXT} text-text-primary select-text`}>
-              <StreamingText content={group.content} animate={isLast} projectName={projectName} />
+              {opening.pairs && <VoiceUnderstoodLine pairs={opening.pairs} />}
+              {(opening.rest || isLast) && <StreamingText content={opening.rest} animate={isLast} projectName={projectName} />}
             </div>
           );
         }

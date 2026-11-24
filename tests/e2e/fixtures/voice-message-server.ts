@@ -108,6 +108,8 @@ export const CLEANED_TEXT = "OK, giờ em sửa cái hô nô middleware cho Bun.
 export const LEARN_PAIRS = [{ from: "hô nô", to: "Hono" }];
 
 const turns: Array<{ sessionId: string; message: string; images: number; at: string }> = [];
+/** What the scripted provider answers; a test sets it to answer with a "Hiểu là" line. */
+let nextReply = "Noted.";
 const haikuCalls: Array<{ kind: "cleanup" | "learn" | "unknown"; ok: boolean; at: string }> = [];
 let cleanupMode: "ok" | "throw" = "ok";
 
@@ -121,7 +123,7 @@ class VoiceTestProvider extends MockProvider {
 
   override async *sendMessage(sessionId: string, message: string, opts?: SendOpts): AsyncIterable<ChatEvent> {
     turns.push({ sessionId, message, images: opts?.images?.length ?? 0, at: new Date().toISOString() });
-    const reply = "Noted.";
+    const reply = nextReply;
     const history = this.history.get(sessionId) ?? [];
     history.push({ id: crypto.randomUUID(), role: "user", content: message, timestamp: new Date().toISOString() });
     history.push({ id: crypto.randomUUID(), role: "assistant", content: reply, timestamp: new Date().toISOString() });
@@ -167,6 +169,10 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 async function testRoute(req: Request, path: string): Promise<Response> {
   const body = req.method === "POST" ? await req.json().catch(() => ({})) as Record<string, unknown> : {};
   if (path === "/turns") return json({ turns });
+  if (path === "/reply" && req.method === "POST") {
+    nextReply = typeof body.text === "string" && body.text ? body.text : "Noted.";
+    return json({ reply: nextReply });
+  }
   if (path === "/haiku-calls") return json({ calls: haikuCalls });
   if (path === "/haiku" && req.method === "POST") {
     cleanupMode = body.mode === "throw" ? "throw" : "ok";
@@ -233,6 +239,9 @@ const server = Bun.serve<SocketData>({
 // What `src/server/index.ts` records once it listens: the Assistant's and tab tools' URLs are built from it.
 setServerListenAddress(server.port ?? port, "127.0.0.1");
 // The same hub startup the server runs; the Telegram bridge starts only when this install has a bot.
+// As src/server/index.ts does: the chat's "Hiểu là" line is counted toward learned words.
+const { startVoiceChatLearning } = await import("../../../src/services/voice-message/voice-chat-learning");
+startVoiceChatLearning();
 const { startAssistantHub } = await import("../../../src/services/assistant-hub/assistant-hub-startup");
 await startAssistantHub(telegram ? { bridge: telegram.bridge } : {});
 function shutdown() {

@@ -10,6 +10,10 @@
  * never decodes; the decoder rebuilds the whole block from its JSON line and keeps it as text
  * unless the two match byte for byte. It is never part of the user's own words: the bubble, a
  * forwarded card reply and the provenance opening all read the decoded body without it.
+ *
+ * It rides on every voice message sent as heard, even with nothing to list, because it also asks
+ * the reader to open its answer with "Hiểu là: heard → meant" when it read a word differently
+ * (`voice-understood.ts`): the chat shows that line, and the learning hook counts it.
  */
 
 export interface VoiceHintPair { heard: string; meant: string }
@@ -29,7 +33,22 @@ export const VOICE_HINTS_BLOCK_START = "\n\n<ppm-voice-hints-v1>\n"
   + "recogniser's own text, not corrected. \"misheard\" lists words this user's speech was recognised as before "
   + "(heard) when they meant another (meant); \"close\" lists the project's own words that sound like a word in "
   + "the transcript. Read the transcript with these in mind. Where a word matters for an action (a task code, a "
+  + "file, a person, a command) and you are still unsure what was said, ask before acting. When you read any word "
+  + "of the transcript as a different word than written, make the very first line of your answer exactly "
+  + "\"Hiểu là: <as written> → <as you read it>\", several pairs separated by \"; \", then answer as usual; "
+  + "leave the line out when you read every word as written.\n";
+/**
+ * The header the first build of this block wrote (before it asked for the understood line). Still
+ * decoded, so a message stored by that build reads back as a block and not as text in the bubble.
+ */
+export const VOICE_HINTS_BLOCK_START_V1_PLAIN = "\n\n<ppm-voice-hints-v1>\n"
+  + "PPM attached this to the voice message above; the user did not write it. The transcript is the speech "
+  + "recogniser's own text, not corrected. \"misheard\" lists words this user's speech was recognised as before "
+  + "(heard) when they meant another (meant); \"close\" lists the project's own words that sound like a word in "
+  + "the transcript. Read the transcript with these in mind. Where a word matters for an action (a task code, a "
   + "file, a person, a command) and you are still unsure what was said, ask before acting.\n";
+/** Every header a decoder accepts, newest first; every door breaks all of them. */
+export const VOICE_HINTS_BLOCK_STARTS = [VOICE_HINTS_BLOCK_START, VOICE_HINTS_BLOCK_START_V1_PLAIN] as const;
 export const VOICE_HINTS_BLOCK_END = "\n</ppm-voice-hints-v1>";
 const DATA_PREFIX = "Hints (JSON): ";
 
@@ -40,7 +59,7 @@ const JSON_UNSAFE = new RegExp(`[<>&${String.fromCharCode(0x2028, 0x2029)}]`, "g
 export const isHintWord = (v: unknown): v is string =>
   typeof v === "string" && v.trim() === v && v !== "" && Array.from(v).length <= VOICE_HINTS_LIMITS.chars && !LINE_BREAKS.test(v);
 
-/** A hints value checked field by field, or null. Empty hints (nothing to say) are null too. */
+/** A hints value checked field by field, or null. Both lists may be empty: the block still asks for the understood line. */
 export function validateVoiceHints(value: unknown): VoiceHints | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
@@ -55,13 +74,12 @@ export function validateVoiceHints(value: unknown): VoiceHints | null {
     misheard.push({ heard: pair.heard, meant: pair.meant });
   }
   if (!v.close.every(isHintWord)) return null;
-  if (!misheard.length && !v.close.length) return null;
   return { version: 1, misheard, close: [...(v.close as string[])] };
 }
 
-function block(hints: VoiceHints): string {
+function block(hints: VoiceHints, start: string = VOICE_HINTS_BLOCK_START): string {
   const json = JSON.stringify(hints).replace(JSON_UNSAFE, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
-  return `${VOICE_HINTS_BLOCK_START}${DATA_PREFIX}${json}${VOICE_HINTS_BLOCK_END}`;
+  return `${start}${DATA_PREFIX}${json}${VOICE_HINTS_BLOCK_END}`;
 }
 
 /** `content` followed by the hints block; unchanged when there are none. Throws on invalid hints. */
@@ -75,9 +93,15 @@ export function encodeVoiceHints(content: string, hints?: VoiceHints | null): st
 /** Splits a trailing hints block off `content`; one that does not rebuild exactly stays text. */
 export function decodeVoiceHints(content: string): { content: string; voiceHints: VoiceHints | null } {
   if (!content.endsWith(VOICE_HINTS_BLOCK_END)) return { content, voiceHints: null };
-  const at = content.lastIndexOf(VOICE_HINTS_BLOCK_START);
+  // The block is the last one in the text: the header found nearest the end is its own.
+  let at = -1;
+  let start: string = VOICE_HINTS_BLOCK_START;
+  for (const candidate of VOICE_HINTS_BLOCK_STARTS) {
+    const found = content.lastIndexOf(candidate);
+    if (found > at) { at = found; start = candidate; }
+  }
   if (at < 0) return { content, voiceHints: null };
-  const inner = content.slice(at + VOICE_HINTS_BLOCK_START.length, content.length - VOICE_HINTS_BLOCK_END.length);
+  const inner = content.slice(at + start.length, content.length - VOICE_HINTS_BLOCK_END.length);
   if (!inner.startsWith(DATA_PREFIX)) return { content, voiceHints: null };
   let hints: VoiceHints | null;
   try {
@@ -85,6 +109,6 @@ export function decodeVoiceHints(content: string): { content: string; voiceHints
   } catch {
     return { content, voiceHints: null };
   }
-  if (!hints || block(hints) !== content.slice(at)) return { content, voiceHints: null };
+  if (!hints || block(hints, start) !== content.slice(at)) return { content, voiceHints: null };
   return { content: content.slice(0, at), voiceHints: hints };
 }

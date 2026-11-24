@@ -4,7 +4,7 @@
  * words (the `blocked` list) are skipped by the clean-up's learning; an edit by the user is an
  * explicit correction and lifts the block.
  */
-import type { LearnedWord, VoiceCandidate, VoiceMessageConfig } from "../../shared/voice-message.ts";
+import type { LearnedSource, LearnedWord, VoiceCandidate, VoiceMessageConfig } from "../../shared/voice-message.ts";
 import { isFaded, isStaleCandidate, wordUsedIn } from "./voice-learned-fade.ts";
 import { readyToLearn, type Replacement } from "./voice-learn-from-cleanup.ts";
 import {
@@ -51,13 +51,15 @@ const pairKey = (from: string, to: string) => `${from.toLowerCase()}\u0000${to.t
  * replacement whose word is already learned only bumps that word's count; one whose word the user
  * undid, or typed into a list themself, is not counted. `known` is the project's own text (its
  * picked-up words and its typed words), which lets a term be learned after two messages instead
- * of three. Answers with the words learned by this message.
+ * of three — for the clean-up's corrections, not the chat's (`readyToLearn`). `source` is what a
+ * newly learned word is marked as. Answers with the words learned by this message.
  */
 export function recordCleanupReplacements(
   project: string,
   found: readonly Replacement[],
   known: ReadonlySet<string>,
   now = new Date(),
+  source: Extract<LearnedSource, "cleanup" | "chat"> = "cleanup",
 ): LearnedWord[] {
   if (!validProject(project) || found.length === 0) return [];
   const config: VoiceMessageConfig = readVoiceSettings();
@@ -83,8 +85,8 @@ export function recordCleanupReplacements(
       continue;
     }
     const hits = (candidates.get(key)?.hits ?? 0) + 1;
-    if (readyToLearn(r, hits, known)) {
-      const entry: LearnedWord = { word: r.to, from: r.from, at, source: "cleanup", hits, kind: r.kind };
+    if (readyToLearn(r, hits, known, source)) {
+      const entry: LearnedWord = { word: r.to, from: r.from, at, source, hits, kind: r.kind };
       learned.push(entry);
       learnedAt.set(word, learned.length - 1);
       candidates.delete(key);

@@ -1,12 +1,13 @@
 /**
- * Words the clean-up taught fade when they stop being said: one not used for {@link VOICE_FADE_DAYS}
+ * Words PPM taught itself fade when they stop being said: one not used for {@link VOICE_FADE_DAYS}
  * days leaves the list by itself, so a wrong correction learned once does not stay until somebody
  * undoes it. A word counts as used when it appears in a voice message's transcript (as Whisper
- * heard it, or as the clean-up wrote it) or when the clean-up fixes it again.
+ * heard it, or as the clean-up wrote it), when the clean-up fixes it again, or when the chat's AI
+ * reads it that way again.
  *
- * Only `source: "cleanup"` fades. Words the user typed into a list never do, and neither do words
- * learned from the user's own edits: those are corrections somebody made on purpose. Pure, with
- * the time passed in, so the rules are tested without waiting thirty days.
+ * Only `source: "cleanup"` and `source: "chat"` fade. Words the user typed into a list never do,
+ * and neither do words learned from the user's own edits: those are corrections somebody made on
+ * purpose. Pure, with the time passed in, so the rules are tested without waiting thirty days.
  */
 import type { LearnedWord, VoiceCandidate } from "../../shared/voice-message.ts";
 
@@ -18,9 +19,14 @@ export function learnedLastUsed(l: LearnedWord): string {
   return l.lastUsedAt ?? l.at;
 }
 
-/** Whether a learned word has faded: taught by the clean-up and unused for longer than the window. */
+/** Whether PPM taught itself the word (the clean-up's or the chat's corrections), not the user. */
+export function selfTaught(l: Pick<LearnedWord, "source">): boolean {
+  return l.source === "cleanup" || l.source === "chat";
+}
+
+/** Whether a learned word has faded: self-taught and unused for longer than the window. */
 export function isFaded(l: LearnedWord, nowMs: number): boolean {
-  if (l.source !== "cleanup") return false;
+  if (!selfTaught(l)) return false;
   const last = Date.parse(learnedLastUsed(l));
   return Number.isFinite(last) && nowMs - last > FADE_MS;
 }

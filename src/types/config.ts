@@ -311,7 +311,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   log_level: DEFAULT_LOG_LEVEL,
   feature_intros: {},
   voice_message: {
-    review_before_send: true, transcript_fix: { ...DEFAULT_TRANSCRIPT_FIX }, learn_auto_vocabulary: true, learn_from_cleanup: true,
+    review_before_send: true, transcript_fix: { ...DEFAULT_TRANSCRIPT_FIX }, learn_auto_vocabulary: true, learn_from_cleanup: true, learn_from_chat: true,
     weekly_summary: true, vietnamese_fixes: true, words: [], projects: {},
   },
 };

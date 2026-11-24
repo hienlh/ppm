@@ -72,7 +72,7 @@ export function cleanLearnedList(raw: unknown): LearnedWord[] {
     const at = isoOrNull(item.at);
     if (!word || !from || !at) continue;
     const entry: LearnedWord = { word, from, at };
-    if (item.source === "edit" || item.source === "cleanup") entry.source = item.source;
+    if (item.source === "edit" || item.source === "cleanup" || item.source === "chat") entry.source = item.source;
     const hits = hitsOf(item.hits);
     if (hits) entry.hits = hits;
     if (item.kind === "term" || item.kind === "phrase") entry.kind = item.kind;
@@ -114,7 +114,7 @@ export function cleanBlockedList(raw: unknown): BlockedWord[] {
     const at = isoOrNull(item.at);
     if (!word || !from || !at) continue;
     const entry: BlockedWord = { word, from, at };
-    if (item.source === "edit" || item.source === "cleanup") entry.source = item.source;
+    if (item.source === "edit" || item.source === "cleanup" || item.source === "chat") entry.source = item.source;
     const hits = hitsOf(item.hits);
     if (hits) entry.hits = hits;
     if (item.kind === "term" || item.kind === "phrase") entry.kind = item.kind;
@@ -168,6 +168,7 @@ export function normalizeVoiceConfig(raw: unknown): VoiceMessageConfig {
     transcript_fix: cleanTranscriptFix(value.transcript_fix),
     learn_auto_vocabulary: value.learn_auto_vocabulary !== false,
     learn_from_cleanup: value.learn_from_cleanup !== false,
+    learn_from_chat: value.learn_from_chat !== false,
     weekly_summary: value.weekly_summary !== false,
     vietnamese_fixes: value.vietnamese_fixes !== false,
     words: cleanWordList(value.words, VOICE_LIMITS.globalWords),
@@ -233,6 +234,7 @@ export interface VoiceSettingsPatch {
   selfLearning?: boolean;
   learnAutoVocabulary?: boolean;
   learnFromCleanup?: boolean;
+  learnFromChat?: boolean;
   weeklySummary?: boolean;
   vietnameseFixes?: boolean;
   words?: string[];
@@ -248,7 +250,7 @@ export interface VoiceSettingsPatch {
 const SWITCHES = [
   ["enabled", "enabled"], ["reviewBeforeSend", "review_before_send"],
   ["selfLearning", "self_learning"], ["learnAutoVocabulary", "learn_auto_vocabulary"],
-  ["learnFromCleanup", "learn_from_cleanup"], ["weeklySummary", "weekly_summary"], ["vietnameseFixes", "vietnamese_fixes"],
+  ["learnFromCleanup", "learn_from_cleanup"], ["learnFromChat", "learn_from_chat"], ["weeklySummary", "weekly_summary"], ["vietnameseFixes", "vietnamese_fixes"],
 ] as const satisfies ReadonlyArray<readonly [keyof VoiceSettingsPatch, keyof VoiceMessageConfig]>;
 
 export function updateVoiceSettings(patch: VoiceSettingsPatch, now = new Date()): VoiceMessageConfig {

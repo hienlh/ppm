@@ -10,14 +10,14 @@ import {
 
 const HINTS_END = "\n</ppm-voice-hints-v1>";
 
-async function recordVoice(page, seconds = 3) {
+export async function recordVoice(page, seconds = 3) {
   await micButton(page).click();
   await page.locator("[data-voice-recording]").waitFor({ state: "visible", timeout: 10000 });
   await page.waitForTimeout(seconds * 1000);
 }
 
 /** Opens Settings → Voice Input, the way a person does on that device. */
-async function openVoiceSettings(page, phone) {
+export async function openVoiceSettings(page, phone) {
   if (phone) await page.mouse.click(24, 822);
   await page.getByRole("button", { name: "Settings", exact: true }).filter({ visible: true }).first().click();
   await page.getByRole("button", { name: /^Voice Input/ }).first().click();

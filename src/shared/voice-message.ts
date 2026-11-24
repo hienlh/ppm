@@ -16,10 +16,11 @@
 export const VOICE_MAX_SECONDS = 120;
 
 /**
- * Where a learned word came from: the user editing a transcript, or the clean-up fixing the same
- * misheard word in several messages (self-learning).
+ * Where a learned word came from: the user editing a transcript, the clean-up fixing the same
+ * misheard word in several messages, or the chat's own AI reading it the same way in several
+ * messages ("Hiểu là: heard → meant", see `voice-understood.ts`). The last two are self-learning.
  */
-export type LearnedSource = "edit" | "cleanup";
+export type LearnedSource = "edit" | "cleanup" | "chat";
 
 /**
  * A correction learned for a project: `from` was heard, `word` was meant. A `term` (a name, an
@@ -92,6 +93,8 @@ export interface VoiceMessageConfig {
   learn_auto_vocabulary: boolean;
   /** Learn a word once the clean-up fixed it the same way in several messages. */
   learn_from_cleanup: boolean;
+  /** Learn a word once the chat's AI read it the same way in several voice messages sent as heard. */
+  learn_from_chat: boolean;
   /** List the week's learned words in Monday's morning digest. */
   weekly_summary: boolean;
   /** The clean-up also fixes misheard Vietnamese words by context. Independent of self-learning. */

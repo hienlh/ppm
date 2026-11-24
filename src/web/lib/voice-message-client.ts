@@ -19,6 +19,8 @@ export interface VoiceSettingsView {
   selfLearning: boolean;
   learnAutoVocabulary: boolean;
   learnFromCleanup: boolean;
+  /** Learn a word once the chat's AI read it the same way in three voice messages. */
+  learnFromChat: boolean;
   weeklySummary: boolean;
   /** The clean-up also fixes misheard Vietnamese words. */
   vietnameseFixes: boolean;
@@ -40,6 +42,7 @@ export interface VoiceSettingsPatch {
   selfLearning?: boolean;
   learnAutoVocabulary?: boolean;
   learnFromCleanup?: boolean;
+  learnFromChat?: boolean;
   weeklySummary?: boolean;
   vietnameseFixes?: boolean;
   words?: string[];
@@ -108,6 +111,7 @@ export function parseVoiceSettings(raw: unknown): VoiceSettingsView {
     selfLearning: v.selfLearning === true,
     learnAutoVocabulary: v.learnAutoVocabulary !== false,
     learnFromCleanup: v.learnFromCleanup !== false,
+    learnFromChat: v.learnFromChat !== false,
     weeklySummary: v.weeklySummary !== false,
     vietnameseFixes: v.vietnameseFixes !== false,
     words: strings(v.words),

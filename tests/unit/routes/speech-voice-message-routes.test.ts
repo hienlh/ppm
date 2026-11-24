@@ -67,7 +67,7 @@ describe("/voice-settings", () => {
     const res = await app().request("/speech/voice-settings?project=demo");
     expect((await json(res)).data).toEqual({
       enabled: false, reviewBeforeSend: true, transcriptFix: { composer: "hints", telegram: "hints" }, cleanupEnabled: false,
-      selfLearning: false, learnAutoVocabulary: true, learnFromCleanup: true, weeklySummary: true, vietnameseFixes: true,
+      selfLearning: false, learnAutoVocabulary: true, learnFromCleanup: true, learnFromChat: true, weeklySummary: true, vietnameseFixes: true,
       words: [], projectWords: [], projectLearned: [], projectBlocked: [],
       whisperPrompt: [], whisperPromptMaxChars: 600, whisperReady: false,
     });

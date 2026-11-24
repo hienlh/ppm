@@ -11,7 +11,7 @@
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import { whisperPromptWords, type LearnedWord, type VoiceMessageConfig } from "../../shared/voice-message.ts";
 import type { RankedTerm } from "./voice-auto-vocabulary.ts";
-import { isFaded } from "./voice-learned-fade.ts";
+import { isFaded, selfTaught } from "./voice-learned-fade.ts";
 import { projectWordsOf } from "./voice-settings.ts";
 
 /** Task codes at most in Whisper's prompt: each is cheap to say and costly in characters. */
@@ -50,8 +50,8 @@ export function composeVoiceWords(
   // A faded word is left out even before the next message prunes it from the row.
   const own = { ...projectWordsOf(config, project) };
   own.learned = own.learned.filter((l) => !isFaded(l, nowMs));
-  // Off, the words the clean-up taught pause; words learned from the user's own edits keep working.
-  const learned = [...own.learned].filter((l) => opts.selfLearning || l.source !== "cleanup").sort(byUse);
+  // Off, the words PPM taught itself pause; words learned from the user's own edits keep working.
+  const learned = [...own.learned].filter((l) => opts.selfLearning || !selfTaught(l)).sort(byUse);
   const learnedTerms = learned.filter((l) => l.kind !== "phrase").map((l) => l.word);
   // The Assistant is spoken to about every project, so it also knows what each of them learned.
   const others = opts.selfLearning && project === ASSISTANT_PROJECT_NAME

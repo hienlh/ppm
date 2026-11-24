@@ -16,6 +16,7 @@ import { isRealPromptMessage } from "../../../shared/user-prompt-kind";
 import { TurnChangeRollup } from "./turn-change-rollup";
 import { TurnCostWarning } from "./turn-cost-warning";
 import { MarkdownContent } from "./message-markdown";
+import { splitAnswerOpening, VoiceUnderstoodLine } from "./voice-understood-line";
 import { CHAT_MESSAGE_TEXT } from "@/lib/chat-message-text";
 import { UserBubble } from "./message-user-bubble";
 import { InterleavedEvents } from "./message-events";
@@ -119,9 +120,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming,
       {message.events && message.events.length > 0
         ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} bashPartialOutput={bashPartialOutput} />
         : message.content && (
-            <div className={`${CHAT_MESSAGE_TEXT} text-text-primary select-text`}>
-              <MarkdownContent content={message.content} projectName={projectName} />
-            </div>
+            <AnswerText content={message.content} projectName={projectName} />
           )}
       {/* Cost notice sits above the action bar so it reads as part of the finished turn */}
       {!isStreaming && isLastAssistantInTurn && message.usage && (
@@ -141,3 +140,14 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming,
     </div>
   );
 });
+
+/** An answer given as one text: its "Hiểu là" opening (if any) as a line of its own, then the rest. */
+function AnswerText({ content, projectName }: { content: string; projectName?: string }) {
+  const opening = splitAnswerOpening(content);
+  return (
+    <div className={`${CHAT_MESSAGE_TEXT} text-text-primary select-text`}>
+      {opening.pairs && <VoiceUnderstoodLine pairs={opening.pairs} />}
+      {opening.rest && <MarkdownContent content={opening.rest} projectName={projectName} />}
+    </div>
+  );
+}

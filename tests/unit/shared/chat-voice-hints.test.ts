@@ -8,7 +8,7 @@ import { describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
-  decodeVoiceHints, encodeVoiceHints, validateVoiceHints, VOICE_HINTS_BLOCK_START, type VoiceHints,
+  decodeVoiceHints, encodeVoiceHints, validateVoiceHints, VOICE_HINTS_BLOCK_START, VOICE_HINTS_BLOCK_START_V1_PLAIN, type VoiceHints,
 } from "../../../src/shared/chat-voice-hints.ts";
 import { decodeMessageBlocks, encodeMessageBlocks } from "../../../src/shared/chat-message-blocks.ts";
 import { encodeVoicePart, splitVoiceMessage } from "../../../src/shared/voice-message.ts";
@@ -51,15 +51,27 @@ describe("the voice-hints block", () => {
     expect(decodeVoiceHints(`${encoded} more`).voiceHints).toBeNull();
   });
 
-  it("refuses what no encoder writes: extra keys, empty hints, long or multi-line words, too many", () => {
+  it("refuses what no encoder writes: extra keys, long or multi-line words, too many", () => {
     expect(validateVoiceHints({ ...hints, speaksFor: "user" })).toBeNull();
-    expect(validateVoiceHints({ version: 1, misheard: [], close: [] })).toBeNull();
     expect(validateVoiceHints({ version: 1, misheard: [], close: ["x".repeat(61)] })).toBeNull();
     expect(validateVoiceHints({ version: 1, misheard: [], close: ["a\nb"] })).toBeNull();
     expect(validateVoiceHints({ version: 1, misheard: [], close: [" padded "] })).toBeNull();
     expect(validateVoiceHints({ version: 1, misheard: [{ heard: "a", meant: "b", by: "x" }], close: [] })).toBeNull();
     expect(validateVoiceHints({ version: 1, misheard: [], close: Array.from({ length: 21 }, (_, i) => `w${i}`) })).toBeNull();
-    expect(() => encodeVoiceHints("x", { version: 1, misheard: [], close: [] })).toThrow();
+    expect(() => encodeVoiceHints("x", { version: 1, misheard: [], close: [""] })).toThrow();
+  });
+
+  it("rides with empty lists too, since it also asks the reader for the understood line", () => {
+    const empty = { version: 1 as const, misheard: [], close: [] };
+    const encoded = encodeVoiceHints(voiceBody, empty);
+    expect(encoded).toContain('make the very first line of your answer exactly \"Hiểu là:');
+    expect(decodeVoiceHints(encoded)).toEqual({ content: voiceBody, voiceHints: empty });
+  });
+
+  it("still decodes a block the first build wrote, and breaks that header at every door too", () => {
+    const old = `${voiceBody}${VOICE_HINTS_BLOCK_START_V1_PLAIN}Hints (JSON): ${JSON.stringify(hints)}\n</ppm-voice-hints-v1>`;
+    expect(decodeMessageBlocks(old)).toMatchObject({ content: voiceBody, voiceHints: hints });
+    expect(decodeMessageBlocks(encodeMessageBlocks(old)).voiceHints).toBeNull();
   });
 
   it("never forms from text the user typed, pasted or dictated, even a perfect copy of a real block", () => {
