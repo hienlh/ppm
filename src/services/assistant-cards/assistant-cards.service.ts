@@ -17,7 +17,7 @@ import {
   type AssistantCardsPage, type AssistantCardStatus, type AssistantWaiting, type CardFollowUp,
 } from "../../shared/assistant-cards.ts";
 import {
-  casCardStatus, getCardRow, insertCardRow, listCardRows, listOpenCardRows, setAnsweredCardAnswer, setCardFollowUp, setCardWake,
+  casCardStatus, getCardRow, insertCardRow, listCardRows, listOpenCardRows, patchOpenCardPayload, setAnsweredCardAnswer, setCardFollowUp, setCardWake,
   type CardRow, type CardWake,
 } from "./assistant-cards-db.ts";
 import { cardOkOffered } from "./card-ok-rule.ts";
@@ -38,7 +38,12 @@ export interface NewCard {
   wake?: boolean;
 }
 
-export type CardChange = "created" | "changed";
+/**
+ * `shown`: a queued approval or question card reached the front of its chat and can be answered
+ * now (Telegram sends it then). `overdue`: an approval or question card has stood unanswered past
+ * `APPROVAL_OVERDUE_MS` (Telegram rings once more).
+ */
+export type CardChange = "created" | "changed" | "shown" | "overdue";
 export type CardListener = (card: AssistantCard, change: CardChange) => void;
 
 export interface CardsEnv {
@@ -78,6 +83,7 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
       title: row.title, body: row.body, payload, status: row.status, answer: row.answer ? answer : null,
       ...(row.followUp ? { followUp: row.followUp } : {}),
       provenance: reportProvenanceLine(row.kind, projectName, payload.subagent === true, payload.detected === true, payload.byAssistant === true),
+      outbound: row.outbound,
       createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
     // Judged on the card as shown (its project and provenance lines count towards what must fit).
@@ -171,6 +177,15 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
       const row = getCardRow(id);
       if (row) env.announce(toCard(row), waiting(), false);
       return true;
+    },
+    /**
+     * Updates what an open card says about its request (queued, overdue) and tells every PPM tab
+     * and card listener with `change`; false when the card no longer waits.
+     */
+    patchPayload(id: string, patch: Partial<AssistantCardPayload>, change: Extract<CardChange, "changed" | "shown" | "overdue">): AssistantCard | null {
+      if (!patchOpenCardPayload(id, patch, env.now())) return null;
+      const row = getCardRow(id);
+      return row ? tell(row, change, false) : null;
     },
     /** Adds to the answer of a card still answered (how its words were delivered); false otherwise. */
     amendAnswer(id: string, patch: Partial<AssistantCardAnswer>): boolean {

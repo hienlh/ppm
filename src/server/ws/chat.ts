@@ -37,7 +37,7 @@ import {
   type BackgroundTaskState,
 } from "./chat-background-tasks.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
-import { needsAuthServerNames } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
+import { connectedServerNames, needsAuthServerNames, serversThatLostSignIn } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
 import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
 import { refreshEffortStatus, sessionEffortStatus } from "./chat-effort-status.ts";
 import type { EffortStatus } from "../../shared/effort-status.ts";
@@ -87,6 +87,8 @@ import { isAssistantSession } from "../../services/assistant/assistant-session.t
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import { splitVoiceMessage } from "../../shared/voice-message.ts";
 import { collabCardForListeners, settleCollabApprovalFromServer } from "./chat-collab-approval-relay.ts";
+import { createApprovalOverdueTimers } from "./chat-approval-overdue.ts";
+import { APPROVAL_OVERDUE_MS } from "../../shared/assistant-limits.ts";
 import { assistantProviderDefaults, onAssistantSettingsSaved, startupPermissionsChanged } from "../../services/assistant/assistant-settings.service.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
 import type { ReplyReference } from "../../shared/chat-reply.ts";
@@ -378,6 +380,8 @@ export interface SessionEntry extends BackgroundTaskState {
   compactStatus?: "compacting" | null;
   /** MCP servers the subprocess reported as `needs-auth` at init — drives the chat's sign-in bar */
   mcpNeedsAuth?: string[];
+  /** MCP servers connected at the last init: one that needs a sign-in at the next has lost it mid-session. */
+  mcpConnected?: string[];
   /** What the subprocess said at the last turn's start about the effort it sends — see chat-effort-status.ts */
   effortStatus?: EffortStatus;
   /** toolUseIds of Bash/Agent calls launched with run_in_background — their spy outlives the tool_result */
@@ -1131,6 +1135,30 @@ function liveApprovalCard(ev: PendingApprovalEvent): LiveApprovalCard {
   };
 }
 
+/** Where a chat's cards belong, as card listeners name it. */
+function cardPlace(entry: SessionEntry): { projectName: string; providerId: string; projectPath?: string } {
+  return { projectName: entry.projectName ?? "", providerId: entry.providerId, ...(entry.projectPath ? { projectPath: entry.projectPath } : {}) };
+}
+
+/**
+ * Cards left unanswered on a chat's screen for {@link APPROVAL_OVERDUE_MS}: the chat has been
+ * stopped on them all that time, so listeners hear it once (the Assistant's card says since when,
+ * Telegram rings again). A schedule's turn counts as `scheduled`: nobody is at that chat.
+ */
+const overdueCards = createApprovalOverdueTimers({
+  delayMs: APPROVAL_OVERDUE_MS,
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  now: () => Date.now(),
+  fire: (sessionId, requestId, shownAt) => {
+    const entry = activeSessions.get(sessionId);
+    if (!entry || entry.pendingApprovalEvent?.requestId !== requestId) return;
+    const scheduled = getSessionTurnOwnerForVault(sessionId) === "schedule";
+    log.info(`session=${sessionId} card ${requestId} unanswered for ${Math.round((Date.now() - shownAt) / 1000)}s${scheduled ? " (scheduled turn)" : ""}`);
+    chatLifecycle.emit("approval_overdue", { sessionId, requestId, shownAt, scheduled, ...cardPlace(entry) });
+  },
+});
+
 /** Who is answering a card right now (see answerApprovalCore); undefined when nobody is. */
 let resolvingBy: ChatMessageOrigin | undefined;
 /**
@@ -1162,19 +1190,19 @@ const approvals: PendingApprovals = createPendingApprovals({
       // that the chat waits; Telegram gets a notice with no buttons from `db-attention-events.ts`.
       broadcast(sessionId, ev);
       const relayed = collabCardForListeners(ev);
-      if (relayed) chatLifecycle.emit("approval_shown", { sessionId, card: relayed, projectName: entry.projectName ?? "", providerId: entry.providerId });
+      if (relayed) chatLifecycle.emit("approval_shown", { sessionId, card: relayed, ...cardPlace(entry) });
       else {
         // Only that the chat waits, never what it asks: the Assistant names it and links to the chat.
         const kind = ev.tool === VAULT_CARD_APPROVAL ? "vault" : ev.tool === DB_EXECUTE_APPROVAL ? "db_execute" : null;
-        if (kind) chatLifecycle.emit("ppm_only_card_shown", { sessionId, requestId: ev.requestId, kind, projectName: entry.projectName ?? "", providerId: entry.providerId });
+        if (kind) chatLifecycle.emit("ppm_only_card_shown", { sessionId, requestId: ev.requestId, kind, ...cardPlace(entry) });
       }
+      overdueCards.arm(sessionId, ev.requestId);
       announceApprovalRequest(sessionId, entry, ev, () => activeSessions.get(sessionId)?.pendingApprovalEvent?.requestId === ev.requestId);
       return;
     }
     bufferAndBroadcast(sessionId, ev);
-    chatLifecycle.emit("approval_shown", {
-      sessionId, card: liveApprovalCard(ev), projectName: entry.projectName ?? "", providerId: entry.providerId,
-    });
+    chatLifecycle.emit("approval_shown", { sessionId, card: liveApprovalCard(ev), ...cardPlace(entry) });
+    overdueCards.arm(sessionId, ev.requestId);
     announceApprovalRequest(sessionId, entry, ev, () => activeSessions.get(sessionId)?.pendingApprovalEvent?.requestId === ev.requestId);
     // An endpoint card answers within its own window, counted from now: time spent queued
     // behind another card the user had not answered is not time the user had to answer this one.
@@ -1191,11 +1219,16 @@ const approvals: PendingApprovals = createPendingApprovals({
   },
   endEndpoint: (requestId, reason) => { assistantApprovalBroker.withdraw(requestId, reason.message); },
   denyPpm: (sessionId, reason) => { ppmApprovals.cancelSession(sessionId, reason.message); },
+  queued: (sessionId, ev) => {
+    const entry = activeSessions.get(sessionId);
+    if (entry) chatLifecycle.emit("approval_queued", { sessionId, card: liveApprovalCard(ev), ...cardPlace(entry) });
+  },
   idle: (sessionId, slot) => {
     const waiting = ppmApprovals.pendingEvent(sessionId);
     if (waiting) approvals.offer(sessionId, slot, ppmApprovalEvent(waiting));
   },
   ended: (sessionId, ev, reason, how) => {
+    overdueCards.cancel(ev.requestId);
     // Every card's end is told, PPM's own included: a listener that named one (the Assistant's
     // "Waiting on you") takes it away. A `db_execute` or vault card's end says only whether it was approved.
     chatLifecycle.emit("approval_resolved", {
@@ -1249,7 +1282,13 @@ function announcePpmApproval(sessionId: string, event: { type: string; requestId
   // An extension's turn with nobody watching: the broker settles it as unanswerable rather than
   // holding a card for an hour that no device shows.
   if (unattendedExtensionTurn(entry)) return false;
-  approvals.offer(sessionId, entry, ppmApprovalEvent(event));
+  const offered = approvals.offer(sessionId, entry, ppmApprovalEvent(event));
+  // Held in its broker behind another card: the chat waits on it all the same, so a session
+  // tool's card is told now as queued (a `db_execute` or vault card says nothing until shown).
+  if (offered === "waiting") {
+    const relayed = collabCardForListeners(ppmApprovalEvent(event));
+    if (relayed) chatLifecycle.emit("approval_queued", { sessionId, card: relayed, ...cardPlace(entry) });
+  }
   armExtensionApprovalDeadline(sessionId, entry, event.requestId);
   return true;
 }
@@ -1786,6 +1825,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           if (Array.isArray(ev.mcpServers)) {
             entry.mcpNeedsAuth = needsAuthServerNames(ev.mcpServers);
             broadcast(sessionId, mcpStatusEvent(entry.mcpNeedsAuth));
+            const lost = serversThatLostSignIn(entry.mcpConnected, entry.mcpNeedsAuth);
+            entry.mcpConnected = connectedServerNames(ev.mcpServers);
+            if (lost.length) chatLifecycle.emit("mcp_sign_in_needed", { sessionId, servers: lost, ...cardPlace(entry) });
           }
           // Not awaited: the turn goes on while the CLI answers.
           void refreshEffortStatus({
@@ -2827,6 +2869,8 @@ function liveChatState(entry: SessionEntry): LiveChatState {
     // could answer it. The chat still counts as waiting on the user.
     ...(entry.pendingApprovalEvent && entry.pendingApprovalEvent.tool !== VAULT_CARD_APPROVAL
       ? { card: liveApprovalCard(entry.pendingApprovalEvent) } : {}),
+    ...(entry.pendingApprovalEvent && approvalHeldAt.has(entry.pendingApprovalEvent)
+      ? { cardShownAt: approvalHeldAt.get(entry.pendingApprovalEvent)! } : {}),
     queuedCards: entry.approvalQueue?.length ?? 0,
     ...(entry.turnOrigin ? { turnOrigin: entry.turnOrigin } : {}),
     ...(entry.turnBindings?.length ? { turnId: entry.turnBindings[entry.turnBindings.length - 1]!.turnId } : {}),

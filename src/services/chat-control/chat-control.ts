@@ -143,6 +143,8 @@ export interface LiveChatState {
   projectName: string;
   providerId: string;
   card?: LiveApprovalCard;
+  /** When `card` came on the chat's screen (ms since the epoch): the chat has waited on it since. */
+  cardShownAt?: number;
   /** Cards waiting behind the shown one. */
   queuedCards: number;
   /**

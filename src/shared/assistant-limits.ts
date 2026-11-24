@@ -72,3 +72,10 @@ export const NOTEBOOK_CAP_CHARS = 4000;
 export const NOTE_MAX_CHARS = 300;
 /** Room in the notebook only the user may fill: the Assistant's writes stop this far short of the cap. */
 export const NOTEBOOK_USER_RESERVE_CHARS = 1000;
+
+/**
+ * How long a card may stand unanswered on a chat's screen before the chat counts as stopped on it:
+ * its Assistant card then says since when, and Telegram is told once more, with a sound, whether or
+ * not the user is at PPM. A chat waiting on a card does nothing else until it is answered.
+ */
+export const APPROVAL_OVERDUE_MS = 3 * 60_000;

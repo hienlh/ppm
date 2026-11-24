@@ -71,6 +71,11 @@ export interface PendingApprovalOps {
   endEndpoint(requestId: string, reason: ApprovalEndReason): void;
   /** Settles the session's PPM approvals as not allowed; their brokers report each one back. */
   denyPpm?(sessionId: string, reason: ApprovalEndReason): void;
+  /**
+   * A provider or endpoint card went into the queue behind the card shown: it cannot be answered
+   * yet, but the chat waits on it too, so a listener may say so. `show` follows once it is in front.
+   */
+  queued?(sessionId: string, event: PendingApprovalEvent): void;
   /** The slot is empty and nothing is queued: one of PPM's own approvals still waiting may be shown. */
   idle?(sessionId: string, slot: ApprovalSlot): void;
   /**
@@ -107,6 +112,7 @@ export function createPendingApprovals(ops: PendingApprovalOps) {
     }
     if (isPpmApproval(event)) return "waiting";
     (slot.approvalQueue ??= []).push(event);
+    ops.queued?.(sessionId, event);
     return "queued";
   }
 

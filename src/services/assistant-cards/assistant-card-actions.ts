@@ -37,6 +37,14 @@ function openCard(deps: CardActionDeps, id: string): CardActionResult {
   return { ok: true, card };
 }
 
+/** Why a card is answered only in PPM, by why. */
+const ANSWER_IN_PPM_ERRORS: Record<NonNullable<AssistantCard["payload"]["answerInPpm"]>, string> = {
+  db_execute: "Answer this in the chat in PPM: it needs a password typed there.",
+  vault: "Answer this in the chat in PPM: it needs a password typed there.",
+  design: "Answer this in the design in PPM: a Design chat is answered where its canvas is.",
+  mcp_sign_in: "Sign in from the chat in PPM.",
+};
+
 export function answerCard(id: string, body: unknown, deps: CardActionDeps = realDeps): CardActionResult {
   const found = openCard(deps, id);
   if (!found.ok) return found;
@@ -48,7 +56,9 @@ export function answerCard(id: string, body: unknown, deps: CardActionDeps = rea
   const requestId = card.payload.requestId;
   if (!requestId || !card.sessionId) return { ok: false, status: 400, error: "This card mirrors no request" };
   // A password typed into PPM is the only answer: never Allow, and never a Deny from here either.
-  if (card.payload.answerInPpm) return { ok: false, status: 400, error: "Answer this in the chat in PPM: it needs a password typed there." };
+  if (card.payload.answerInPpm) return { ok: false, status: 400, error: ANSWER_IN_PPM_ERRORS[card.payload.answerInPpm] };
+  // Not in front of its chat yet: the chat's provider has not even been asked for it.
+  if (card.payload.queued) return { ok: false, status: 409, error: "This request waits behind another card of the chat: answer that one first." };
 
   let answer: { approved: boolean; answersById?: Record<string, string[]> };
   if (card.kind === "approval") {

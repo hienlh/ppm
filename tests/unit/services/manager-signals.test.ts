@@ -41,7 +41,7 @@ function harness(opts: { answersCardReply?: (sessionId: string) => boolean; ordi
         projects: () => [{ name: "api", path: "/p/api" }],
         isAssistant: () => false,
         isManager: (id) => id === MGR,
-        isDesign: () => false,
+        designSlug: () => null,
         turnOrigin: () => "ws",
         title: (id) => (id === KHO ? "Kho task" : null),
       }),

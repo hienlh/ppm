@@ -35,6 +35,7 @@ import { isAnswerCard, type AnsweredReply } from "../assistant-cards/card-reply-
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { CARD_FOLLOWUP_LOUD_MS } from "../../shared/assistant-limits.ts";
 import { cardForTelegram, taskCardExtras, taskCardRows, type TaskCardExtras } from "./assistant-telegram-task-card-extras.ts";
+import { isLinkOnlyCard, waitingNoticeHtml, type WaitingNoticeKind } from "./assistant-telegram-waiting-notices.ts";
 
 const log = createLogger("assistant-telegram");
 
@@ -187,12 +188,24 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     const record = (messageId: number) => addCardTelegramRef(card.id, { chatId, messageId });
     const detail = this.detail(card);
     if (card.kind === "approval" || card.kind === "question") {
+      // A Design chat's card and an MCP sign-in are told with a link and nothing to press.
+      if (isLinkOnlyCard(card)) {
+        this.sendNotice(chatId, card, url, card.payload.answerInPpm as WaitingNoticeKind, false);
+        return;
+      }
       // A `db_execute` or vault card already has its own notice on Telegram, with no buttons: it
       // takes a password typed into PPM (`assistant-telegram-db-notices.ts`).
       if (card.payload.answerInPpm) return;
       const requestId = card.payload.requestId;
       const live = card.sessionId && requestId ? (this.deps.liveCard ?? realLiveCard)(card.sessionId, requestId) : null;
-      if (!live || this.deps.isShowing(chatId, live.requestId)) return;
+      if (!live) {
+        log.info(`card ${card.id}: not relayed to Telegram, its request is no longer in front of the chat`);
+        return;
+      }
+      if (this.deps.isShowing(chatId, live.requestId)) {
+        log.info(`card ${card.id}: already on Telegram chat ${chatId} through the relay`);
+        return;
+      }
       const chat = card.payload.chat;
       this.deps.relayCard(chatId, {
         targetSessionId: card.sessionId!, targetProject: card.projectName ?? "project",
@@ -281,12 +294,44 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     }, { label: "card pointer", silent: () => !thread.loud && this.silent() }));
   }
 
+  /**
+   * A card sent earlier has stood unanswered past `APPROVAL_OVERDUE_MS`: one message more, with a
+   * sound whether or not the user is at PPM, linking to the chat.
+   */
+  overdue(card: AssistantCard): void {
+    const chats = this.recipients();
+    if (!chats.length) return;
+    void this.linkFor(card).catch(() => null).then((url) => {
+      for (const chatId of chats) this.sendNotice(chatId, card, url, "overdue", true);
+    });
+  }
+
+  /** A message with no buttons about a chat waiting on a card (see `assistant-telegram-waiting-notices.ts`). */
+  private sendNotice(chatId: string, card: AssistantCard, url: string | null, kind: WaitingNoticeKind, loud: boolean): void {
+    const link = url ? placeLink(url) : {};
+    let html = waitingNoticeHtml(card, kind);
+    if (link.inline) html += `\n\n${link.inline}`;
+    this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, {
+      html,
+      ...(link.button ? { markup: { inline_keyboard: [[link.button]] } } : {}),
+      ...(link.button ? { fallbackHtml: `${html}\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}` } : {}),
+    }, {
+      label: `${kind} notice`,
+      silent: () => !loud && this.silent(),
+      // The reminder is not the card: its message is not one to rewrite when the card ends.
+      onSent: (sent) => { if (kind !== "overdue") addCardTelegramRef(card.id, { chatId, messageId: sent.message_id }); },
+    }));
+  }
+
   changed(card: AssistantCard): void {
-    // The relay's own cards end themselves when their request does.
-    if (card.kind === "approval" || card.kind === "question") return;
+    // The relay's own cards end themselves when their request does; a notice is rewritten below.
+    if ((card.kind === "approval" || card.kind === "question") && !isLinkOnlyCard(card)) return;
     // A follow-up message is the manager's answer to a reply, not a copy of the card: left as it is.
     const refs = (getCardRow(card.id)?.telegramRefs ?? []).filter((r) => !r.followUp);
-    const html = `${formatManagerCard(cardForTelegram(card), this.detail(card)).html}\n\n${cardEndLine(card)}`;
+    const body = isLinkOnlyCard(card)
+      ? waitingNoticeHtml(card, card.payload.answerInPpm as WaitingNoticeKind)
+      : formatManagerCard(cardForTelegram(card), this.detail(card)).html;
+    const html = `${body}\n\n${cardEndLine(card)}`;
     for (const ref of refs) {
       this.deps.codes.dropGroup(groupOf(card.id, ref.chatId));
       if (!canSendTo(ref.chatId)) continue;

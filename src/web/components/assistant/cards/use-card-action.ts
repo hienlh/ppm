@@ -5,6 +5,7 @@
  */
 import { useCallback, useState } from "react";
 import { openManagerChat } from "../open-manager-chat";
+import { openDesignTab } from "@/lib/design/open-design-tab";
 import { cardRefusal } from "@/lib/assistant-cards-api";
 import { applyAssistantCard } from "@/stores/assistant-cards-store";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
@@ -46,5 +47,11 @@ export function openCardManagerChat(card: AssistantCard): void {
   if (!card.projectName || !card.sessionId) return;
   // Another chat's card opens that chat, under its own provider and name.
   const chat = card.payload.chat;
+  // A Design chat's card opens its design, on that chat: the card is answered beside the canvas.
+  const design = card.payload.design;
+  if (design) {
+    openDesignTab({ projectName: card.projectName, slug: design.slug, sessionId: card.sessionId, ...(chat ? { providerId: chat.providerId } : {}) });
+    return;
+  }
   void openManagerChat({ projectName: card.projectName, sessionId: card.sessionId, ...(chat ? { chat } : {}) });
 }
