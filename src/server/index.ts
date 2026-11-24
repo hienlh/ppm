@@ -38,6 +38,8 @@ import { extensionWebSocket } from "./ws/extensions.ts";
 import { globalWebSocket } from "./ws/global.ts";
 import { groupChatWebSocket } from "./ws/group-chat.ts";
 import { remoteDesktopWebSocket } from "./ws/remote-desktop.ts";
+import { webBrowserWebSocket } from "./ws/web-browser.ts";
+import { checkWebBrowserAccess } from "../services/web-browser/web-browser-access.ts";
 import { lspWebSocket } from "./ws/lsp.ts";
 import { androidWebSocket } from "./ws/android.ts";
 import { lspManager } from "../services/lsp/lsp-manager.ts";
@@ -327,6 +329,11 @@ app.get("/api/system/event-loop", async (c) => {
 // Remote desktop (video capture + input) — on by default, opt-out via REMOTE_DESKTOP_ENABLED=0, see remote-desktop-flag.ts
 import { remoteDesktopRoutes } from "./routes/remote-desktop.ts";
 app.route("/api/remote-desktop", remoteDesktopRoutes);
+
+// PPM's own web browser (a Chrome on this host streamed into a window) — off until the user
+// turns it on; every route re-checks access itself (`web-browser-access.ts`).
+import { webBrowserRoutes } from "./routes/web-browser.ts";
+app.route("/api/web-browser", webBrowserRoutes);
 
 // Android emulator — OFF by default, opt-in via ANDROID_EMULATOR_ENABLED=1, see android-flag.ts.
 // Unlike remote desktop this spawns multi-gigabyte emulator processes, and most hosts have no
@@ -1242,6 +1249,20 @@ if (process.argv.includes("__serve__")) {
         return upgradeFailed(url);
       }
 
+      if (url.pathname === "/ws/web-browser") {
+        // Explicit branch, like Remote Desktop's: a socket that drives a browser carrying this
+        // host's IP and logins must never fall through to another handler, and must not inherit
+        // "auth disabled = open" from `isWsUpgradeAuthorized`.
+        const refusal = checkWebBrowserAccess(req);
+        if (refusal) {
+          wsLog.warn(`Refused ${url.pathname}: ${refusal.code}`);
+          return new Response(`Forbidden: ${refusal.message}`, { status: refusal.status });
+        }
+        const upgraded = server.upgrade(req, { data: { type: "web-browser" } });
+        if (upgraded) return undefined;
+        return upgradeFailed(url);
+      }
+
       if (url.pathname === "/ws/android") {
         // Same shape and the same reasoning as the remote-desktop branch above: an explicit
         // branch so this can never fall through to the terminal (shell) handler, with the flag
@@ -1314,6 +1335,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "extensions") extensionWebSocket.open(ws);
         else if (t === "global") globalWebSocket.open(ws);
         else if (t === "remote-desktop") remoteDesktopWebSocket.open(ws);
+        else if (t === "web-browser") webBrowserWebSocket.open(ws);
         else if (t === "android") androidWebSocket.open(ws);
         else if (t === "terminal") terminalWebSocket.open(ws);
         else if (t === "lsp") lspWebSocket.open(ws);
@@ -1332,6 +1354,7 @@ if (process.argv.includes("__serve__")) {
           else if (t === "extensions") pending = extensionWebSocket.message(ws, msg);
           else if (t === "global") pending = globalWebSocket.message(ws, msg);
           else if (t === "remote-desktop") pending = remoteDesktopWebSocket.message(ws, msg);
+          else if (t === "web-browser") pending = webBrowserWebSocket.message(ws, msg);
           else if (t === "android") pending = androidWebSocket.message(ws, msg);
           else if (t === "terminal") pending = terminalWebSocket.message(ws, msg);
           else if (t === "lsp") pending = lspWebSocket.message(ws, msg);
@@ -1351,6 +1374,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "extensions") extensionWebSocket.close(ws);
         else if (t === "global") globalWebSocket.close(ws);
         else if (t === "remote-desktop") remoteDesktopWebSocket.close(ws);
+        else if (t === "web-browser") webBrowserWebSocket.close(ws);
         else if (t === "android") androidWebSocket.close(ws);
         else if (t === "terminal") terminalWebSocket.close(ws);
         else if (t === "lsp") lspWebSocket.close(ws);
@@ -1362,6 +1386,13 @@ if (process.argv.includes("__serve__")) {
   // host's fetch) need the port actually bound, which is not the configured one under the
   // supervisor (port 0). Recorded before anything below starts one of them.
   setServerListenAddress(Number(server.port), host);
+  {
+    // Pages in PPM's browser must never reach PPM itself, on any address of this machine.
+    const { registerPpmOwnPort } = await import("../services/web-browser/ppm-own-ports.ts");
+    registerPpmOwnPort(Number(server.port));
+    const { installWebBrowserExitHook } = await import("../services/web-browser/browser-host.ts");
+    installWebBrowserExitHook();
+  }
 
   // Start background account token refresh in daemon child
   import("../services/account.service.ts").then(({ accountService }) => accountService.startAccountMaintenance()).catch((e) => {
