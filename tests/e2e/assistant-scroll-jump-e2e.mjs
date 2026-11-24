@@ -31,6 +31,10 @@ const RUNS = Number(process.env.PPM_SCROLL_RUNS ?? 4);
 const PHONE = process.env.PPM_SCROLL_PHONE === "1";
 const READING = process.env.PPM_SCROLL_READING === "1";
 const SKEW_MS = Number(process.env.PPM_SCROLL_CLOCK_SKEW_MS ?? 0);
+/** PPM_SCROLL_SHOTS=<dir>: the first run's view while reading and after the turn, for before/after pictures. */
+const SHOTS = process.env.PPM_SCROLL_SHOTS ?? "";
+const WIDTH = Number(process.env.PPM_SCROLL_WIDTH ?? 1280);
+const SHOT_PREFIX = PHONE ? "assistant-phone-390" : `assistant-desktop-${WIDTH}`;
 const AT_BOTTOM_PX = 80;
 const SHIFT_TOLERANCE_PX = 30;
 let failures = 0;
@@ -132,7 +136,7 @@ try {
   if (!created.ok) throw new Error(`Could not register the project: ${created.status} ${await created.text()}`);
   const context = PHONE
     ? await harness.browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
-    : await harness.browser.newContext({ viewport: { width: 1280, height: 860 } });
+    : await harness.browser.newContext({ viewport: { width: WIDTH, height: WIDTH >= 1440 ? 900 : 860 } });
   await context.addInitScript(skewClock, SKEW_MS);
   await context.addInitScript(instantInstrumentation, { api: harness.api, blockStorage: false });
   page = await context.newPage();
@@ -190,6 +194,7 @@ try {
         if (await away() && (await sleep(150), await away())) break;
         eaten++;
       }
+      if (SHOTS && run === 1) { await mkdir(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, `${SHOT_PREFIX}-1-reading.png`) }); }
     }
     await waitTurnEnded(page, before);
     await mark(page, "userTurnEnded");
@@ -199,6 +204,7 @@ try {
     const wake = await api(`/__scroll-test/wake?session=${sessionId}`, { method: "POST" });
     await waitTurnEnded(page, before + 1);
     await sleep(2500);
+    if (SHOTS && run === 1) { await mkdir(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, `${SHOT_PREFIX}-2-after-turn.png`) }); }
     const trace = await stopSampling(page);
     const jumps = (await jumpCount(page)) - jumpsBefore;
 

@@ -38,6 +38,15 @@ import { bootProject, closeAllTabs, instantInstrumentation, openChatTab, sleep, 
 const PROJECT = "ppm-scroll";
 const RUNS = Number(process.env.PPM_SCROLL_RUNS ?? 12);
 const VARIANT = process.env.PPM_SCROLL_VARIANT ?? "replay";
+/** PPM_SCROLL_SHOTS=<dir>: the first run's view while reading and after it settled, for before/after pictures. */
+const SHOTS = process.env.PPM_SCROLL_SHOTS ?? "";
+const WIDTH = Number(process.env.PPM_SCROLL_WIDTH ?? 1280);
+const SHOT_PREFIX = `chat-${process.env.PPM_SCROLL_PHONE === "1" ? "phone-390" : `desktop-${WIDTH}`}-${VARIANT}`;
+const shot = async (page, run, name) => {
+  if (!SHOTS || run !== 1) return;
+  await mkdir(SHOTS, { recursive: true });
+  await page.screenshot({ path: join(SHOTS, `${SHOT_PREFIX}-${name}.png`) });
+};
 /** Further from the bottom than this after a turn has settled is the bug: the view moved up. */
 const AT_BOTTOM_PX = 80;
 /** Longer than three frames with the answer gone from under its prompt is visible to a reader. */
@@ -203,6 +212,13 @@ async function readFromTurnStart(page, tabId, prompt) {
   const root = `[data-tab-pool-id="${tabId}"]`;
   const box = await page.locator(`${root} .chat-scroll-fade`).boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  // Always up first: a short answer can leave the prompt near the top while the view still
+  // follows the bottom, and a reader who never scrolled is not reading from the turn's start.
+  const dist = () => page.evaluate((root) => { const el = document.querySelector(`${root} .chat-scroll-fade`); return el.scrollHeight - el.scrollTop - el.clientHeight; }, root);
+  for (let i = 0; i < 6 && (await dist()) < 120; i++) {
+    await page.mouse.wheel(0, -150);
+    await sleep(300);
+  }
   for (let i = 0; i < 40; i++) {
     const off = await page.evaluate(({ root, prompt }) => {
       const el = document.querySelector(`${root} .chat-scroll-fade`);
@@ -210,7 +226,16 @@ async function readFromTurnStart(page, tabId, prompt) {
       return row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null;
     }, { root, prompt });
     if (off === null) throw new Error("the run's prompt is not in the list");
-    if (off >= 0 && off <= 120) return;
+    // Near the top; or lower down when going further would bring the view back to the bottom,
+    // where it would follow again and nobody would be reading from the turn's start.
+    const away = await dist();
+    if (off >= 0 && (off <= 120 || (off <= box.height * 0.6 && away - 100 < 120))) {
+      await sleep(300);
+      if ((await dist()) >= 100) return;
+      await page.mouse.wheel(0, -150);
+      await sleep(300);
+      continue;
+    }
     await page.mouse.wheel(0, off < 0 ? Math.max(-400, off - 40) : 100);
     await sleep(150);
   }
@@ -272,7 +297,7 @@ try {
   // PPM_SCROLL_PHONE=1: a phone (390 x 844, touch, the mobile layout).
   const context = process.env.PPM_SCROLL_PHONE === "1"
     ? await harness.browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
-    : await harness.browser.newContext({ viewport: { width: 1280, height: 860 }, deviceScaleFactor: Number(process.env.PPM_SCROLL_DPR ?? 1) });
+    : await harness.browser.newContext({ viewport: { width: WIDTH, height: WIDTH >= 1440 ? 900 : 860 }, deviceScaleFactor: Number(process.env.PPM_SCROLL_DPR ?? 1) });
   await context.addInitScript(instantInstrumentation, { api: harness.api, blockStorage: false });
   await context.addInitScript(scrollProbe);
   const page = await context.newPage();
@@ -386,6 +411,7 @@ try {
       await until("the turn to pause before its closing paragraph", async () => !!(await serverTurns()).at(-1)?.paused, { timeout: 90000, interval: 20 });
       await readFromTurnStart(page, tabId, `run ${run} deltas=`);
       const headBefore = await headingOffsetOf(page, tabId, /Let me look at the scroll code first/);
+      await shot(page, run, "1-reading");
       refuseChat = true;
       const dropAt = Date.now();
       await dropChatSockets();
@@ -395,6 +421,7 @@ try {
       await until("the chat socket to reconnect", async () => connects > reconnected, { timeout: 30000 });
       await until("the history reload", async () => historyReads(reads, dropAt) > 0, { timeout: 30000 });
       await sleep(2500);
+      await shot(page, run, "2-after-reload");
       const headAfter = await headingOffsetOf(page, tabId, /Let me look at the scroll code first/);
       readingShift = headAfter === null || headBefore === null ? null : Math.round(headAfter - headBefore);
       extra = `refetches=${historyReads(reads, dropAt)} leadBefore=${Math.round(headBefore ?? -1)} leadAfter=${Math.round(headAfter ?? -1)}`;
