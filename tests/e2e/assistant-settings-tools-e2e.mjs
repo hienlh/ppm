@@ -221,20 +221,20 @@ try {
 
   // ST2: Full, two ordinary settings, no card; Undo from the chat card.
   {
-    // A fresh install sends voice as heard (no Haiku): start from Haiku on, so turning it off is a change.
+    // A fresh install sends voice as heard (no Haiku): start from Haiku, so sending Telegram's as heard is a change.
     await fx.api("/api/speech/voice-settings", { method: "PUT", body: JSON.stringify({ cleanupEnabled: true }) });
-    await fx.script("st2", [{ mcp: "settings_set", args: { changes: [{ key: "voice.cleanup_enabled", value: false }, { key: "notifications.delay_seconds", value: 120 }] } }, { text: "ST2 done." }], { match: "ST2" });
-    await send(desk, "ST2 tắt Haiku dọn chữ và cho thông báo chờ 2 phút");
+    await fx.script("st2", [{ mcp: "settings_set", args: { changes: [{ key: "voice.transcript_fix.telegram", value: "hints" }, { key: "notifications.delay_seconds", value: 120 }] } }, { text: "ST2 done." }], { match: "ST2" });
+    await send(desk, "ST2 cho Telegram gửi voice bản thô và cho thông báo chờ 2 phút");
     await desk.page.getByText("ST2 done.").first().waitFor({ timeout: 120000 });
     assert.equal(await desk.page.locator(CARD).count(), 0, "ST2: a card showed in Full mode");
-    assert.equal((await voice()).cleanupEnabled, false);
+    assert.equal((await voice()).transcriptFix.telegram, "hints");
     assert.equal((await notifications()).delay_seconds, 120);
     const card = settingsCard(desk);
     await card.waitFor();
-    assert.match(await card.innerText(), /2 settings changed[\s\S]*Full mode, no card[\s\S]*On[\s\S]*Off/);
+    assert.match(await card.innerText(), /2 settings changed[\s\S]*Full mode, no card[\s\S]*Tidied by Claude Haiku[\s\S]*As heard, with hints/);
     await shot(desk, "chat-card-full", desk.page.locator(BODY).first());
     await card.locator("[data-undo-change]").first().click();
-    await until("ST2 undo", async () => (await voice()).cleanupEnabled === true, 15000);
+    await until("ST2 undo", async () => (await voice()).transcriptFix.telegram === "haiku", 15000);
     await card.getByText("Undone").first().waitFor({ timeout: 10000 });
     pass("ST2", "Full changes two settings with no card; the card's Undo puts one back");
   }

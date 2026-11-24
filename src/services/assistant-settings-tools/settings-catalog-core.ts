@@ -78,12 +78,14 @@ export const CORE_SETTINGS: readonly SettingEntry[] = [
     write: (value) => ({ method: "PUT", path: "/api/speech/voice-settings", body: { reviewBeforeSend: value } }),
   },
   // Kept for older undo rows and for "turn the clean-up off" asked of the Assistant: on means both
-  // surfaces tidy with Haiku, off means both send Whisper's text with hints.
+  // surfaces tidy with Haiku, off means both send Whisper's text with hints. A change is made as
+  // one change per surface, so undoing it gives each surface back its own old choice.
   {
     key: "voice.cleanup_enabled", category: "voice", label: "Voice Input → Haiku clean-up (chat box and Telegram)", tier: "direct",
     value: BOOL,
     read: () => VOICE_SURFACES.every((s) => readVoiceSettings().transcript_fix[s] === "haiku"),
     write: (value) => ({ method: "PUT", path: "/api/speech/voice-settings", body: { cleanupEnabled: value } }),
+    expand: (value) => VOICE_SURFACES.map((surface) => ({ key: `voice.transcript_fix.${surface}`, value: value ? "haiku" : "hints" })),
   },
   ...VOICE_SURFACES.map((surface): SettingEntry => ({
     key: `voice.transcript_fix.${surface}`, category: "voice",
