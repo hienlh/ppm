@@ -149,7 +149,7 @@ try {
   if (fake && fake.exitCode === null) fake.kill();
   await writeFile(join(shotsDir, "results.json"), JSON.stringify({ results, failures }, null, 2));
   for (const f of failures) console.error(`FAILED step ${f.step}: ${f.error.split("\n")[0]}`);
-  console.log(`${results.length} of 12 steps passed, ${failures.length} failed; screenshots in ${shotsDir}; logs in ${logs}`);
+  console.log(`${results.length} of 14 steps passed, ${failures.length} failed; screenshots in ${shotsDir}; logs in ${logs}`);
   if (failures.length) process.exitCode = 1;
   else if (process.env.PPM_MANAGER_LOOP_KEEP !== "1") {
     try { rmSync(sandbox, { recursive: true, force: true }); } catch (e) { console.error(`could not remove ${sandbox}: ${e.message}`); }

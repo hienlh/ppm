@@ -38,7 +38,7 @@ export async function step12(k, s) {
   await chip.waitFor({ timeout: 15000 });
   assert.ok(Number(await chip.getAttribute("data-waiting-count")) >= 1, "the chip counts the child's card");
   await inPpm.scrollIntoViewIfNeeded();
-  await inPpm.getByRole("button", { name: "Allow" }).waitFor({ timeout: 10000 });
+  await inPpm.getByRole("button", { name: "Allow", exact: true }).waitFor({ timeout: 10000 });
   await k.shot("16-child-card-waiting-1440");
 
   await k.page.setViewportSize({ width: 390, height: 844 });
@@ -47,7 +47,7 @@ export async function step12(k, s) {
   await onPhone.waitFor({ timeout: 20000 });
   await onPhone.scrollIntoViewIfNeeded();
   await k.shot("17-child-card-waiting-390");
-  await onPhone.getByRole("button", { name: "Allow" }).click();
+  await onPhone.getByRole("button", { name: "Allow", exact: true }).click();
   await k.page.setViewportSize({ width: 1440, height: 900 });
 
   const [ran] = await k.answered("s12-child", 1);

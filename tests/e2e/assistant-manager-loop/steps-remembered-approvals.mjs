@@ -15,11 +15,10 @@ const QUEUED_TITLE = "Debug the pension import";
 
 const rules = async (k) => (await k.fx.api("/api/approval-rules")).data;
 
-async function openChat(k, title) {
-  await k.page.goto(`${k.web}/project/alpha`);
-  const row = k.page.getByText(title, { exact: true }).first();
-  await row.waitFor({ timeout: 30000 });
-  await row.click();
+/** Opens a chat of project alpha by its id (its name changes once its first message names it). */
+async function openChat(k, sessionId) {
+  await k.page.goto(`${k.web}/project/alpha/chat/claude/${sessionId}`);
+  await k.page.locator('textarea[aria-label="Message"]:visible').first().waitFor({ timeout: 30000 });
 }
 
 /** 13. Queued and overdue cards reach the user; Allow & remember makes a rule that then approves by itself. */
@@ -28,7 +27,9 @@ export async function step13(k, s) {
   s.checksChat = chat;
   // A card left unanswered counts as overdue after 4 s rather than 3 minutes, for this step only.
   await k.fx.post("/__assistant-test/approval-overdue", { ms: 4000 });
-  await k.managerTurn("alpha", chat, "s13-status", [{ builtin: "Bash", input: { command: "git status" } }], "Check the tree", "default");
+  // The turn goes on after the command (as a turn whose own tool call raised a session tool's card
+  // would): PPM's own cards end with the turn that showed them.
+  await k.managerTurn("alpha", chat, "s13-status", [{ builtin: "Bash", input: { command: "git status" } }, { sleep: 20000 }], "Check the tree", "default");
   const front = await until("the command's card", async () =>
     (await k.cards()).find((c) => c.kind === "approval" && c.sessionId === chat && c.status === "open"), 30000);
   assert.deepEqual(front.payload.remember, { label: "Run `git status`", suggest: false }, "the card says what it would remember");
@@ -78,19 +79,21 @@ export async function step13(k, s) {
   await k.fx.post("/__assistant-test/approval-overdue", { ms: null });
   await k.idle(chat);
 
-  // The same kind again: approved by the rule, no card, one line in the chat.
+  // The same kind again, with the chat open: approved by the rule, no card, one line in the chat.
+  // (The line is the turn's own event: a chat opened after the turn ended reads its transcript,
+  // which does not hold it.)
+  await openChat(k, chat);
   const cardsBefore = (await k.cards()).length;
-  await k.managerTurn("alpha", chat, "s13-again", [{ builtin: "Bash", input: { command: "git status --short" } }], "Check the tree again", "default");
+  await k.managerTurn("alpha", chat, "s13-again", [{ builtin: "Bash", input: { command: "git status --short" } }, { sleep: 8000 }], "Check the tree again", "default");
   const [again] = await k.answered("s13-again", 1);
   assert.equal(again.approved, true, "the rule approved it");
   assert.equal((await k.cards()).length, cardsBefore, "no card was made");
-  await k.idle(chat);
-  await openChat(k, "Alpha checks");
   const notice = k.page.locator('[data-testid="auto-approved-notice"]:visible').last();
   await notice.waitFor({ timeout: 30000 });
   assert.match(await notice.innerText(), /Approved by your rule: Run `git status`/);
   await notice.scrollIntoViewIfNeeded();
   await k.shot("20-auto-approved-line-1440");
+  await k.idle(chat);
   k.record("13", "a queued card is mirrored with nothing to press and goes to the phone once in front; an overdue card says since when and rings again; Allow & remember on the mirror makes a rule that approves the next request with one line in the chat");
 }
 
@@ -107,7 +110,7 @@ export async function step14(k, s) {
     await k.idle(chat);
   }
 
-  await openChat(k, "Alpha checks");
+  await openChat(k, chat);
   await k.managerTurn("alpha", chat, "s14-fourth", [{ builtin: "Bash", input: { command: "bun test tests/unit" } }], "Run the unit tests 4", "default");
   const offer = k.page.locator('[data-remember-offer="suggest"]:visible').last();
   await offer.waitFor({ timeout: 30000 });
@@ -132,8 +135,10 @@ export async function step14(k, s) {
   await pane.waitFor({ timeout: 30000 });
   await pane.locator(`[data-rule-id="${made.id}"]`).waitFor({ timeout: 15000 });
   await k.shot("23-settings-approvals-1440");
+  // A phone opens Settings as a tab of its own, not a window: opened again at that width.
   await k.page.setViewportSize({ width: 390, height: 844 });
-  await k.page.waitForTimeout(600);
+  await k.page.goto(`${k.web}/project/alpha?openSettings=approvals`);
+  await k.page.locator(`[data-testid="remembered-approvals-section"]:visible [data-rule-id="${made.id}"]`).waitFor({ timeout: 30000 });
   await k.shot("24-settings-approvals-390");
   await k.page.setViewportSize({ width: 1440, height: 900 });
   await k.page.locator(`[data-rule-id="${made.id}"]:visible`).getByRole("button", { name: /Remove/ }).click();

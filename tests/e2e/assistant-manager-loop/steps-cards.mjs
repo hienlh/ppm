@@ -67,7 +67,7 @@ export async function step5(k, s) {
   const inPpm = k.streamCard("approval", "npm run deploy");
   await inPpm.waitFor({ timeout: 20000 });
   await k.shot("07-approval-card");
-  await inPpm.getByRole("button", { name: "Allow" }).click();
+  await inPpm.getByRole("button", { name: "Allow", exact: true }).click();
   const [bash] = await k.answered("s5-deploy", 1);
   assert.equal(bash.approved, true, "the command was allowed");
   await until("card answered", async () => (await k.cards()).find((c) => c.id === card.id)?.status === "answered");
