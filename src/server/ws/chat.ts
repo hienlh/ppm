@@ -2412,7 +2412,7 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   // stands, so the copy matches the transcript, the echo and a replay byte for byte.
   if (opts.sender && opts.clientMessageId) {
     try {
-      opts.sender.send(JSON.stringify({ type: "message_accepted", clientMessageId: opts.clientMessageId, content: parsed.content }));
+      opts.sender.send(JSON.stringify({ type: "message_accepted", clientMessageId: opts.clientMessageId, content: parsed.content, serverTime: Date.now() }));
     } catch { evictClient(entry, opts.sender); }
   }
 
@@ -3376,6 +3376,7 @@ export const chatWebSocket = {
       // Send state + turnEvents BEFORE joining clients Set (ordering matters)
       ws.send(JSON.stringify({
         type: "session_state",
+        serverTime: Date.now(),
         sessionId,
         phase: existing.phase,
         // The last event number this session broadcast: a client holding the same number has
@@ -3441,6 +3442,7 @@ export const chatWebSocket = {
 
     ws.send(JSON.stringify({
       type: "session_state",
+      serverTime: Date.now(),
       sessionId,
       phase: "idle",
       streamSeq: activeSessions.get(sessionId)?.streamSeq ?? 0,
@@ -3595,6 +3597,7 @@ export const chatWebSocket = {
     if (parsed.type === "ready" || parsed.type === "resync") {
       ws.send(JSON.stringify({
         type: "session_state",
+        serverTime: Date.now(),
         sessionId,
         phase: entry.phase,
         streamSeq: entry.streamSeq,
@@ -3735,6 +3738,7 @@ export const chatWebSocket = {
       log.info(`session=${sessionId} model switched to ${parsed.model}`);
       ws.send(JSON.stringify({
         type: "session_state",
+        serverTime: Date.now(),
         sessionId,
         phase: entry.phase,
         streamSeq: entry.streamSeq,
@@ -3764,6 +3768,7 @@ export const chatWebSocket = {
       log.info(`session=${sessionId} effort switched to ${parsed.effort}`);
       ws.send(JSON.stringify({
         type: "session_state",
+        serverTime: Date.now(),
         sessionId,
         phase: entry.phase,
         streamSeq: entry.streamSeq,
@@ -3787,6 +3792,7 @@ export const chatWebSocket = {
       log.info(`session=${sessionId} thinking ${parsed.enabled ? "on" : "off"}`);
       ws.send(JSON.stringify({
         type: "session_state",
+        serverTime: Date.now(),
         sessionId,
         phase: entry.phase,
         streamSeq: entry.streamSeq,
