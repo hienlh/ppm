@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.26.32] - 2026-11-24
+
+### Added
+
+- **Whisper on the GPU**: Settings → Voice Input offers the NVIDIA CUDA build on Windows (Metal on a Mac), about six times faster, plus a **Try it** box that shows the transcript, the time and whether the GPU ran.
+- **Voice messages can be sent as heard**: the chat box and Telegram each choose between the Haiku clean-up and Whisper's own text (now the default, about 3 s faster), with hints of learned and close project words for the AI.
+- **PPM learns misheard words from how the chat's AI read them**: three separate readings make a learned word, and Settings → Voice gets a Learning tab with **Don't learn** and **Restore**.
+
+### Changed
+
+- **PPM on Windows wants Bun 1.4.4**: older Bun keeps growing in memory, so `ppm start` warns below it and the release binaries are built with it.
+- **The supervisor and server restart themselves at a quiet moment** on Windows when their memory stays over a limit, never while a chat is working.
+- **Upward scroll jumps nobody asked for are logged for now** (numbers only, no message text) to the session trace, to find any that are left.
+
+### Fixed
+
+- **A chat keeps your place when content above it changes**: a card, a folded line or a finished answer no longer moves the text you are reading, and a fling back to the bottom is followed again.
+- **The PPM Assistant dates new messages on the server's clock**, so a browser clock running ahead no longer puts cards above the message just sent.
+- **`ppm start` returns at once on Bun 1.4.4** instead of waiting for as long as PPM runs, and `ppm stop --kill` also stops the edge forwarder.
+- **Undoing the voice clean-up switch** gives the chat box and Telegram each its own setting back, and Telegram voice hints arrive intact.
+
 ## [0.26.31] - 2026-11-23
 
 ### Fixed
