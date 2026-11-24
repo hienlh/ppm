@@ -38,6 +38,7 @@ import { getChatClientId } from "@/lib/chat-client-id";
 import { CHAT_CLIENT_ID_PARAM } from "../../shared/chat-client-id";
 import { commitReplayedTurn, replayReplacedIds, type ReplayedTurn } from "@/lib/replay-active-turn";
 import { idleGreetingNeedsHistory } from "@/lib/idle-greeting-refetch";
+import { noteScrollJumpEvent } from "@/lib/scroll-jump-log";
 import { VAULT_CARD_APPROVAL, VAULT_NOTIFICATION_BODY } from "../../shared/vault";
 
 /** The toast a session-collaboration card raises while its chat is not on screen. */
@@ -1046,6 +1047,8 @@ export function useChat(
     } catch {
       return;
     }
+    // Temporary diagnostic (see `scroll-jump-log.ts`): which socket messages came just before a jump.
+    noteScrollJumpEvent(sessionIdRef.current, (data as { type?: unknown }).type);
 
     // The AI asked, through a tab tool, for a tab on this device. The server is waiting for
     // the answer, so it is never queued behind a replay.

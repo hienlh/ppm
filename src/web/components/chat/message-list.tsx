@@ -35,6 +35,7 @@ import { ChatHistoryWindow, type HistoryWindowHandle, type MergeAnchor } from ".
 import { attrSelector, restoreRow } from "./scroll-row-anchor";
 import { useHistoryWindow } from "@/hooks/use-history-window";
 import { useScrollAnchorPin } from "@/hooks/use-scroll-anchor-pin";
+import { rowKind, watchScrollJumps, type ScrollJumpContext } from "@/lib/scroll-jump-log";
 import { useChatTurnJump } from "@/hooks/use-chat-turn-jump";
 import { canMergeToLive } from "@/lib/history-window-model";
 import { placeTimelineItems } from "@/lib/assistant-timeline-merge";
@@ -552,6 +553,30 @@ export function MessageList({
     return { before: new Map([...before].map(([i, items]) => [i, items.map(draw)] as const)), trailing: trailing.map(draw) };
   }, [extension, filtered, hasMore]);
   const manualPaging = !!timeline?.manualPaging;
+
+  // Temporary diagnostic (see `scroll-jump-log.ts`): records an upward move the reader did not ask for.
+  const jumpContext = useRef<ScrollJumpContext | null>(null);
+  jumpContext.current = {
+    surface: timeline ? "assistant" : "chat",
+    sessionId: sessionId ?? null,
+    phase: phase ?? null,
+    isStreaming,
+    isAtBottom,
+    rows: filtered.length,
+    lastRowKind: rowKind(filtered[filtered.length - 1]?.id),
+    hiddenRows: extension?.hidden?.size ?? 0,
+    timelineItems: extension?.items.length ?? 0,
+    pinned: !!livePin.pinned(),
+    historyWindow: !!windowView,
+  };
+  const jumpWatch = useRef<ReturnType<typeof watchScrollJumps> | null>(null);
+  useEffect(() => {
+    if (!scrollEl) return;
+    const watch = watchScrollJumps(scrollEl, () => jumpContext.current!);
+    jumpWatch.current = watch;
+    return () => { watch.stop(); if (jumpWatch.current === watch) jumpWatch.current = null; };
+  }, [scrollEl]);
+  useLayoutEffect(() => { jumpWatch.current?.commit(); });
 
   // Fetch pre-compact history from the server (prepends older messages).
   // Older pages of this segment first; only once they are all in does the top of the
