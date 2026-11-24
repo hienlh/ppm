@@ -97,9 +97,18 @@ try {
   for (const [tag, device, phone] of [["phone", PHONE, true], ["desktop", DESKTOP, false]]) {
     console.log(`\n${tag}`);
     const { context, page, panel } = await openPanel(device, phone);
-    const buttons = panel.getByRole("button");
-    const heights = await buttons.evaluateAll((els) => els.map((b) => b.getBoundingClientRect().height));
-    if (phone) check("every button in the panel is at least 44 px tall on a phone", heights.every((h) => h >= 44), heights);
+    // docs/design-guidelines.md rule 3: a button with text is 28px tall on a desktop, 26px on a
+    // phone, whatever the device's pointer — there is no 44px minimum and no taller touch variant.
+    const want = phone ? 26 : 28;
+    const sized = async (label, locator) => {
+      const heights = await locator.evaluateAll((els) => els.map((b) => Math.round(b.getBoundingClientRect().height * 10) / 10));
+      check(`${label} ${heights.length === 1 ? "is" : "are"} ${want} px tall`, heights.length > 0 && heights.every((h) => Math.abs(h - want) < 0.6), heights);
+    };
+    await sized("Record a test and Use the sample", panel.getByRole("button"));
+    if (status.gpu?.installedBuild && status.gpu.installedBuild !== "cpu") {
+      const scope = phone ? page : page.locator("[data-window-layer]");
+      await sized("Check again", scope.getByRole("button", { name: "Check again" }));
+    }
 
     await panel.getByRole("button", { name: /Use the sample/ }).click();
     const result = panel.getByTestId("whisper-test-result");
@@ -112,6 +121,7 @@ try {
     await shot(page, panel, phone, "05-test-sample");
 
     if (gpuHost) {
+      await sized("Compare with the CPU", panel.getByRole("button", { name: "Compare with the CPU" }));
       await panel.getByRole("button", { name: "Compare with the CPU" }).click();
       const compare = panel.getByTestId("whisper-test-compare");
       await compare.waitFor({ timeout: 120000 });
@@ -120,9 +130,10 @@ try {
       await shot(page, panel, phone, "06-test-compare");
     }
 
-    if (!phone) {
+    {
       await panel.getByRole("button", { name: "Record a test" }).click();
       await panel.getByRole("button", { name: /^Stop/ }).waitFor({ timeout: 10000 });
+      await sized("Stop", panel.getByRole("button", { name: /^Stop/ }));
       await page.waitForTimeout(3000);
       await panel.getByRole("button", { name: /^Stop/ }).click();
       await until("recorded test answered", async () => {

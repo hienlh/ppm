@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Loader2, RefreshCw } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api-client";
+import { TEXT_BUTTON } from "@/lib/control-size";
 import { cn } from "@/lib/utils";
 import { SwitchRow } from "./settings-rows";
 import type { SpeechStatus, WhisperBuild, WhisperGpuStatus } from "./whisper-status-types";
@@ -66,7 +67,8 @@ function BuildOption({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "flex-1 min-h-11 rounded-lg border px-4 py-3 text-left transition-colors",
+        // A choice card like the model cards beside it, sized by its content (rule 3 does not cover it).
+        "flex-1 rounded-lg border px-4 py-3 text-left transition-colors",
         active ? "border-primary ring-2 ring-primary" : "border-border hover:bg-muted/50",
       )}
     >
@@ -147,10 +149,9 @@ export function WhisperGpuPanel({ status, onStatus }: { status: SpeechStatus; on
       {gpu.installedBuild !== "cpu" && (
         <Button
           variant="outline"
-          size="sm"
           disabled={busy || gpu.probing}
           onClick={() => void call("/api/speech/gpu/check", undefined, "Could not check the GPU")}
-          className="min-h-11 sm:min-h-0 gap-2 cursor-pointer"
+          className={cn(TEXT_BUTTON, "cursor-pointer")}
         >
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
           Check again

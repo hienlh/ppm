@@ -315,7 +315,7 @@ Related: `configService.save()`/`set()` throw when `load()` has not run, because
 When creating or modifying any UI component, you MUST read and follow `docs/design-guidelines.md`, especially the **Mobile-First UI Rules** section. Key rules:
 - Dialogs → bottom sheet on mobile (below `md:` breakpoint)
 - No hover-only interactions — must have touch alternatives
-- No 44px minimum: buttons, chips and toolbar buttons take the heights of the chip row above the chat composer — chips and buttons with text 28px desktop / 26px phone, small icon buttons 24 / 22px (table in `docs/design-guidelines.md` rule 3)
+- No 44px minimum: buttons, chips and toolbar buttons take the heights of the chip row above the chat composer — chips and buttons with text 28px desktop / 26px phone, small icon buttons 24 / 22px (table in `docs/design-guidelines.md` rule 3). Take the classes from `src/web/lib/control-size.ts` (`TEXT_BUTTON` over a `Button` variant, `TEXT_CONTROL_HEIGHT`) rather than writing `min-h-11`, and add no new invisible `::after` press areas
 - Context menus → long-press on mobile, not tap
 - Thumb zone: primary actions in bottom 1/3 of screen for one-handed use
 - Always test both mobile and desktop layouts
