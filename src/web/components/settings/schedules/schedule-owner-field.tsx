@@ -14,6 +14,15 @@ import { useProjectChatOptions } from "./schedule-session-fields";
 /** The Select's value for "no chat owns it" (a Select item cannot have an empty value). */
 export const NO_OWNER = "__none__";
 
+/**
+ * A control with text: 28px on desktop, 26px on a phone (design guidelines, Button Heights; the
+ * chat footer's `FOOTER_CHIP`). `data-[size=default]` restates it because the Select primitive sets
+ * its own height under that selector, which outranks a plain `h-*`.
+ */
+export const OWNER_TRIGGER = "w-full h-7 data-[size=default]:h-7 max-md:h-[26px] max-md:data-[size=default]:h-[26px] px-2.5 max-md:px-[5px] py-0 text-[11.5px]";
+/** Each chat in the list: one compact row, the same height as the field. */
+export const OWNER_OPTION = "h-7 max-md:h-[26px] py-0 text-[11.5px]";
+
 export function ScheduleOwnerField({ scheduleId, projectName, ownerId, ownerTitle, onChanged, compact }: {
   scheduleId: number;
   projectName: string | undefined;
@@ -56,13 +65,13 @@ export function ScheduleOwnerField({ scheduleId, projectName, ownerId, ownerTitl
 
   const select = (
     <Select value={value} onValueChange={(v) => void change(v)} disabled={saving || !projectName}>
-      <SelectTrigger aria-label="Owned by chat" data-schedule-owner={scheduleId} data-owner-place={compact ? "card" : "form"} className="w-full min-h-11 md:min-h-9 text-xs">
+      <SelectTrigger aria-label="Owned by chat" data-schedule-owner={scheduleId} data-owner-place={compact ? "card" : "form"} className={OWNER_TRIGGER}>
         <SelectValue placeholder={chats === null ? "Loading chats…" : "No chat"} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value={NO_OWNER}>No chat</SelectItem>
-        {missing && <SelectItem value={value}>{ownerTitle || "Its current chat"}</SelectItem>}
-        {options.map((c) => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}
+        <SelectItem value={NO_OWNER} className={OWNER_OPTION}>No chat</SelectItem>
+        {missing && <SelectItem value={value} className={OWNER_OPTION}>{ownerTitle || "Its current chat"}</SelectItem>}
+        {options.map((c) => <SelectItem key={c.id} value={c.id} className={OWNER_OPTION}>{c.title}</SelectItem>)}
       </SelectContent>
     </Select>
   );

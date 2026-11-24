@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createHtmlPreviewHarness } from "./fixtures/html-preview-harness.mjs";
-import { bootProject, until } from "./fixtures/new-chat-instant-helpers.mjs";
+import { bootProject, closeAllTabs, until } from "./fixtures/new-chat-instant-helpers.mjs";
 
 const PROJECT = "ppm-owners";
 let failures = 0;
@@ -87,6 +87,8 @@ try {
     const page = await context.newPage();
     page.on("pageerror", (e) => console.log(`[pageerror ${tag}] ${e.message}`));
     await bootProject(page, harness.web, PROJECT);
+    // The layout is synced through the server: the phone run's Schedules tab would come back here.
+    await closeAllTabs(page);
     const detail = await openDetail(page, review).catch(async (e) => {
       await page.screenshot({ path: join(SHOTS, `debug-${tag}-no-detail.png`) });
       throw e;
@@ -96,11 +98,17 @@ try {
     check((await owner.innerText()).includes("QL Review PR"), `${tag}: card shows the owner`);
     await owner.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(SHOTS, `${tag}-card-owner.png`) });
+    // Design guidelines, Button Heights: a control with text is 28px on desktop and 26px on a phone.
+    const want = phone ? 26 : 28;
+    const fieldHeight = (await owner.boundingBox()).height;
+    check(Math.abs(fieldHeight - want) < 0.6, `${tag}: the owner field is ${want}px tall`, `${fieldHeight}px`);
 
     // Move it to the manager, then back, through the card.
     await owner.click();
     const option = page.getByRole("option", { name: "Project manager" });
     await option.waitFor({ state: "visible", timeout: 10000 });
+    const rowHeight = (await option.boundingBox()).height;
+    check(Math.abs(rowHeight - want) < 0.6, `${tag}: each chat in the list is ${want}px tall`, `${rowHeight}px`);
     await page.screenshot({ path: join(SHOTS, `${tag}-card-owner-open.png`) });
     await option.click();
     await until("the owner moved", async () => (await api("/api/schedules")).data.find((s) => s.id === review).created_by_session_id === chats.manager.id, { timeout: 10000 });
@@ -121,6 +129,8 @@ try {
     await picDetail.getByRole("button", { name: "Edit" }).click();
     const formOwner = page.locator(`[data-schedule-owner="${pic}"][data-owner-place="form"]`);
     await formOwner.waitFor({ state: "visible", timeout: 15000 });
+    const formHeight = (await formOwner.boundingBox()).height;
+    check(Math.abs(formHeight - want) < 0.6, `${tag}: the form's owner field is ${want}px tall`, `${formHeight}px`);
     await formOwner.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(SHOTS, `${tag}-form-owner.png`) });
     await formOwner.click();
