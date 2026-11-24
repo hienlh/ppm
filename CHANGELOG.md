@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.26.33] - 2026-11-25
+
+### Added
+
+- **Allow & remember on approval cards** (in the chat, the PPM Assistant and Telegram): a kind of request is then approved in that project without a card; risky requests always ask, Settings → Approvals lists and removes the rules, and the feature stays off until you turn it on.
+- **The PPM Assistant shows every card a chat is waiting on**, including queued ones and Design chats' cards; a card left 3 minutes rings Telegram again, and an MCP server that loses its sign-in mid-session raises a card.
+- **Choose the chat that owns a schedule**: "Owned by chat" in the schedule form and card, `ppm schedule owners [--dry-run]` to link older schedules from the trace, and a chat's AI can claim a project schedule nobody owns.
+
+### Fixed
+
+- **Older schedules are linked to the chat that made them**: migration 82 reads the Claude tool answers migration 80 missed, and a watch that reports to another chat belongs to that chat.
+- **Buttons follow the app's button heights** (28 px, 26 px on a phone): approval and Assistant card buttons, the Approvals pane, the schedule owner field and Voice's Try it buttons.
+
 ## [0.26.32] - 2026-11-24
 
 ### Added
