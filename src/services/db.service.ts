@@ -16,7 +16,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 81;
+export const CURRENT_SCHEMA_VERSION = 82;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1688,12 +1688,7 @@ export function runMigrations(database: Database): void {
     addColumnIfMissing(database, "schedules", "created_by_session_id", "TEXT");
     if (database.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schedules'").get()) {
       database.exec("CREATE INDEX IF NOT EXISTS idx_schedules_created_by ON schedules(created_by_session_id)");
-      // An in-memory database (tests) has no folder and so no trace beside it.
-      const file = database.filename;
-      if (file && file !== ":memory:") {
-        const filled = backfillScheduleCreators(database, join(dirname(file), "session-trace.db"), (m) => log.warn(m));
-        if (filled > 0) log.info(`linked ${filled} schedule(s) to the chat that created them`);
-      }
+      linkScheduleOwnersFromTrace(database);
     }
     database.exec(`PRAGMA user_version = 80;`);
   }
@@ -1730,6 +1725,27 @@ export function runMigrations(database: Database): void {
     `);
     database.exec(`PRAGMA user_version = 81;`);
   }
+
+  if (current < 82) {
+    // Migration 80's read of the trace linked nothing: Claude's tool answers are stored as an MCP
+    // content array, which it did not unwrap. Read again; only rows still without an owner change.
+    if (database.query("SELECT 1 FROM pragma_table_info('schedules') WHERE name = 'created_by_session_id'").get()) {
+      linkScheduleOwnersFromTrace(database);
+    }
+    database.exec(`PRAGMA user_version = 82;`);
+  }
+}
+
+/**
+ * Give the script and prompt schedules with no owner the chat the session trace beside `database`
+ * shows made them (or that they report to), logging each one. An in-memory database (tests) has no
+ * folder and so no trace beside it.
+ */
+function linkScheduleOwnersFromTrace(database: Database): void {
+  const file = database.filename;
+  if (!file || file === ":memory:") return;
+  const filled = backfillScheduleCreators(database, join(dirname(file), "session-trace.db"), (m) => log.warn(m), (m) => log.info(m));
+  if (filled > 0) log.info(`linked ${filled} schedule(s) to the chat that owns them`);
 }
 
 /** Design share links (see migration 57). Idempotent: every statement is `IF NOT EXISTS`. */

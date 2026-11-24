@@ -8,9 +8,12 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CURRENT_SCHEMA_VERSION, openTestDb, runMigrations, setDb } from "../../../src/services/db.service.ts";
+import { readFileSync } from "node:fs";
+import { CURRENT_SCHEMA_VERSION, openTestDb, runMigrations, setDb, setSessionMetadata } from "../../../src/services/db.service.ts";
 import { getSchedule, insertSchedule } from "../../../src/services/scheduler-db.service.ts";
-import { backfillScheduleCreators, bareToolName, createdScheduleOf } from "../../../src/services/schedule-creator-backfill.ts";
+import {
+  backfillScheduleCreators, bareToolName, createdScheduleOf, planScheduleOwners,
+} from "../../../src/services/schedule-creator-backfill.ts";
 
 let dir: string;
 let tracePath: string;
@@ -29,12 +32,21 @@ function traceDb(): Database {
 }
 
 let seq = 0;
+/**
+ * How Claude's MCP answers reach the trace: the content array they came in, as a JSON string —
+ * `[{"type":"text","text":"{...}"}]`. The shape of a real row, byte for byte
+ * (`tests/fixtures/session-trace/claude-propose-script-result.json`).
+ */
+const claudeOutput = (answer: unknown) => JSON.stringify([{ type: "text", text: JSON.stringify(answer, null, 1) }]);
+/** A plain JSON answer, as a provider that hands the text over unwrapped stores it. */
+const plainOutput = (answer: unknown) => JSON.stringify(answer, null, 1);
+
 /** One tool call and its answer, as the trace recorder stores them. */
-function recordCall(t: Database, traceId: string, tool: string, answer: unknown, ts: number): void {
+function recordCall(t: Database, traceId: string, tool: string, answer: unknown, ts: number, output = claudeOutput): void {
   const id = `toolu_${++seq}`;
   const add = t.query("INSERT INTO session_events (trace_id, seq, ts, source, origin, type, payload_json) VALUES (?, ?, ?, 'agent', 'user', ?, ?)");
   add.run(traceId, ++seq, ts, "tool_use", JSON.stringify({ type: "tool_use", tool, input: {}, toolUseId: id }));
-  add.run(traceId, ++seq, ts + 2000, "tool_result", JSON.stringify({ type: "tool_result", output: JSON.stringify(answer, null, 1), toolUseId: id }));
+  add.run(traceId, ++seq, ts + 2000, "tool_result", JSON.stringify({ type: "tool_result", output: output(answer), toolUseId: id }));
 }
 
 function script(name: string): number {
@@ -78,7 +90,7 @@ describe("backfillScheduleCreators", () => {
     const b = script("Watch CI");
     const t = traceDb();
     recordCall(t, "assistant-chat-0001", "mcp__ppm-assistant__schedule_save", { created: true, schedule: { id: a, name: "Digest" } }, createdMs(a));
-    recordCall(t, "codex-chat-0002", "ppm_sessions.session_schedule_propose_script", { created: true, schedule: { id: b, name: "Watch CI" } }, createdMs(b));
+    recordCall(t, "codex-chat-0002", "ppm_sessions.session_schedule_propose_script", { created: true, schedule: { id: b, name: "Watch CI" } }, createdMs(b), plainOutput);
     t.close();
 
     expect(backfillScheduleCreators(db, tracePath)).toBe(2);
@@ -143,6 +155,93 @@ describe("migration 80", () => {
   });
 });
 
+describe("migration 82", () => {
+  it("reads the trace again for a database migration 80 left unlinked, and keeps an owner already set", () => {
+    const file = new Database(join(dir, "ppm.db"));
+    runMigrations(file);
+    setDb(file);
+    const unlinked = script("slack-watch");
+    const owned = insertSchedule({
+      name: "prod-issue-watch", cron_expr: "0 3 * * *", provider_id: "claude", project_path: "/tmp/p", prompt: "",
+      kind: "script", script: "export default async () => {}", created_by_session_id: "chat-set-by-hand",
+    });
+    const t = traceDb();
+    recordCall(t, "3fb25aae-0000-4000-8000-000000000003", "mcp__ppm-sessions__session_schedule_propose_script",
+      { created: true, schedule: { id: unlinked, name: "slack-watch" } }, createdMs(unlinked));
+    recordCall(t, "90412fcb-0000-4000-8000-000000000004", "mcp__ppm-sessions__session_schedule_propose_script",
+      { created: true, schedule: { id: owned, name: "prod-issue-watch" } }, createdMs(owned));
+    t.close();
+    // Where 0.26.31 left every database: at 80, its schedules still without an owner.
+    file.exec("PRAGMA user_version = 80");
+    runMigrations(file);
+    expect(getSchedule(unlinked)!.created_by_session_id).toBe("3fb25aae-0000-4000-8000-000000000003");
+    expect(getSchedule(owned)!.created_by_session_id).toBe("chat-set-by-hand");
+    expect((file.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(CURRENT_SCHEMA_VERSION);
+    setDb(db);
+    file.close();
+  });
+});
+
+describe("the chat a schedule reports to", () => {
+  const CREATOR = "213a63e0-0000-4000-8000-00000000000a";
+  const REPORTS_TO = "eab8e702-0000-4000-8000-00000000000b";
+  const SECOND = "27f37c0c-0000-4000-8000-00000000000c";
+  const ELSEWHERE = "90412fcb-0000-4000-8000-00000000000d";
+
+  /** A script schedule whose inputs name `ids`: the first as a set value, the rest as defaults. */
+  function watch(name: string, ids: string[]): number {
+    const [first, ...rest] = ids;
+    return insertSchedule({
+      name, cron_expr: "*/5 * * * *", provider_id: "claude", project_path: "/tmp/p", prompt: "",
+      kind: "script", script: "export default async () => {}",
+      inputs_json: JSON.stringify([
+        { key: "sessionId", type: "text" },
+        ...rest.map((id, i) => ({ key: `other${i}`, type: "text", default: id })),
+        { key: "days", type: "text", default: "1-5" },
+      ]),
+      input_values_json: JSON.stringify(first ? { sessionId: first } : {}),
+    });
+  }
+
+  beforeEach(() => {
+    for (const id of [CREATOR, REPORTS_TO, SECOND]) setSessionMetadata(id, "p", "/tmp/p");
+    setSessionMetadata(ELSEWHERE, "q", "/tmp/q");
+  });
+
+  function traced(id: number, name: string): void {
+    const t = traceDb();
+    recordCall(t, CREATOR, "mcp__ppm-sessions__session_schedule_propose_script", { created: true, schedule: { id, name } }, createdMs(id));
+    t.close();
+  }
+
+  it("gives a watch made by one chat to the chat of its project it reports to", () => {
+    const id = watch("review-queue-watch", [REPORTS_TO]);
+    traced(id, "review-queue-watch");
+    expect(planScheduleOwners(db, tracePath)).toEqual([
+      { id, name: "review-queue-watch", sessionId: REPORTS_TO, reason: "delivers-to", creator: CREATOR },
+    ]);
+    expect(backfillScheduleCreators(db, tracePath)).toBe(1);
+    expect(getSchedule(id)!.created_by_session_id).toBe(REPORTS_TO);
+  });
+
+  it("keeps the creator when the inputs name two chats, only a chat of another project, or the creator itself", () => {
+    const two = watch("two chats", [REPORTS_TO, SECOND]);
+    const other = watch("other project", [ELSEWHERE]);
+    const self = watch("itself", [CREATOR]);
+    for (const [id, name] of [[two, "two chats"], [other, "other project"], [self, "itself"]] as const) traced(id, name);
+    expect(planScheduleOwners(db, tracePath).map((p) => [p.id, p.sessionId, p.reason])).toEqual([
+      [two, CREATOR, "creator"], [other, CREATOR, "creator"], [self, CREATOR, "creator"],
+    ]);
+  });
+
+  it("lists without writing anything", () => {
+    const id = watch("review-queue-watch", [REPORTS_TO]);
+    traced(id, "review-queue-watch");
+    expect(planScheduleOwners(db, tracePath)).toHaveLength(1);
+    expect(getSchedule(id)!.created_by_session_id).toBeNull();
+  });
+});
+
 describe("parsing", () => {
   it("strips the server prefix from a tool name", () => {
     expect(bareToolName("mcp__ppm-sessions__session_schedule_propose_script")).toBe("session_schedule_propose_script");
@@ -155,5 +254,15 @@ describe("parsing", () => {
     expect(createdScheduleOf(`Result: ${JSON.stringify({ created: true, schedule: { id: 7, name: "y" } })}`)).toEqual({ id: 7, name: "y" });
     expect(createdScheduleOf(JSON.stringify({ created: false }))).toBeNull();
     expect(createdScheduleOf("Not created: refused")).toBeNull();
+  });
+
+  it("reads Claude's answer as the trace really stores it: a JSON string of an MCP content array", () => {
+    // The shape migration 80 read as `{ type, text }` and so linked nothing, taken from a real row.
+    const fixture = JSON.parse(readFileSync(join(import.meta.dir, "../../fixtures/session-trace/claude-propose-script-result.json"), "utf8"));
+    const output = fixture.tool_result.output as string;
+    expect(output.startsWith(fixture.real_output_prefix)).toBe(true);
+    expect(createdScheduleOf(output)).toEqual({ id: 116, name: "prod-issue-watch" });
+    expect(createdScheduleOf(claudeOutput({ done: false, outcome: "timeout" }))).toBeNull();
+    expect(createdScheduleOf(JSON.stringify([{ type: "image", data: "x" }]))).toBeNull();
   });
 });
