@@ -881,6 +881,19 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `POST   /api/vault/cards/:requestId`
 - `GET    /api/vault/cards/:requestId/prefill`
 
+## /api/web-browser
+
+- `GET    /api/web-browser/capabilities`
+- `PUT    /api/web-browser/settings`
+- `GET    /api/web-browser/downloads`
+- `POST   /api/web-browser/downloads/:id/ticket`
+- `GET    /api/web-browser/download/:ticket`
+- `POST   /api/web-browser/uploads`
+- `POST   /api/web-browser/session`
+- `POST   /api/web-browser/start`
+- `POST   /api/web-browser/stop`
+- `POST   /api/web-browser/clear-data`
+
 ## /proxy
 
 - `POST   /proxy/v1/messages`
@@ -908,7 +921,8 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/global`
 - `/ws/extensions`
 - `/ws/remote-desktop`
+- `/ws/web-browser`
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.33 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.34 -->
