@@ -33,6 +33,17 @@ export class WebBrowserUnavailableError extends Error {
 }
 
 /** Events: "state" (state, message?), "tabs" (), "blocked" ({url, reason}), "stopped" (). */
+/**
+ * What the egress guard is told: the user's two switches (localhost, LAN — both on by default,
+ * cards dccf1ef2 and 2b73ffa8) and the ports that stay closed whatever they say: PPM's own and
+ * the DevTools port, which would hand a page the whole browser.
+ */
+export function egressOptionsFor(settings: Pick<WebBrowserSettings, "allowLocalhost" | "allowLan">, ownPorts: number[], devtoolsPort?: number) {
+  const blockedLocalPorts = [...ownPorts];
+  if (devtoolsPort) blockedLocalPorts.push(devtoolsPort);
+  return { allowLocalhost: settings.allowLocalhost, allowLan: settings.allowLan, blockedLocalPorts };
+}
+
 export class WebBrowserHost extends EventEmitter {
   state: WebBrowserState = "stopped";
   chrome: RunningChrome | null = null;
@@ -123,9 +134,7 @@ export class WebBrowserHost extends EventEmitter {
   }
 
   private egressOptions(settings: WebBrowserSettings, devtoolsPort?: number) {
-    const blocked = ppmOwnPorts();
-    if (devtoolsPort) blocked.push(devtoolsPort);
-    return { allowLocalhost: settings.allowLocalhost, allowLan: settings.allowLan, blockedLocalPorts: blocked };
+    return egressOptionsFor(settings, ppmOwnPorts(), devtoolsPort);
   }
 
   /** Settings changed: tell the guard now; tab limits are read on each new tab. */

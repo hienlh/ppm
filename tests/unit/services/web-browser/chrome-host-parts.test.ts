@@ -108,3 +108,18 @@ describe("idle stop", () => {
     expect(idleDeadline({ ...base, visibleViewers: 1, lastInputAt: 0, idleStopMs: 20 * min })).toBe(120 * min);
   });
 });
+
+import { egressOptionsFor } from "../../../../src/services/web-browser/browser-host.ts";
+import { DEFAULT_WEB_BROWSER_SETTINGS, parseWebBrowserSettings } from "../../../../src/shared/web-browser-settings.ts";
+
+describe("egressOptionsFor", () => {
+  test("defaults open localhost and the LAN, and always close PPM's ports and the DevTools port", () => {
+    const o = egressOptionsFor(DEFAULT_WEB_BROWSER_SETTINGS, [3210], 51234);
+    expect(o).toEqual({ allowLocalhost: true, allowLan: true, blockedLocalPorts: [3210, 51234] });
+  });
+
+  test("the user's switches reach the guard as set", () => {
+    const o = egressOptionsFor(parseWebBrowserSettings({ allowLocalhost: false, allowLan: false }), [3210]);
+    expect(o).toEqual({ allowLocalhost: false, allowLan: false, blockedLocalPorts: [3210] });
+  });
+});

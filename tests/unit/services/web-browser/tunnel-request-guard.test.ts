@@ -18,6 +18,14 @@ describe("isPublicTunnelRequest", () => {
     expect(check({ "tailscale-user-login": "me@example.com", "tailscale-user-name": "Me" })).toBe(false);
   });
 
+  it("treats Tailscale Serve (user headers, X-Forwarded-*, a .ts.net host) as the tailnet", () => {
+    const serve = { "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.64.0.7", "x-forwarded-proto": "https" };
+    expect(check(serve, "ppm.tail1234.ts.net")).toBe(false);
+    // The same headers on another host are a public proxy pretending to be Tailscale.
+    expect(check(serve, "abc.ngrok.app")).toBe(true);
+    expect(check({ ...serve, "cf-ray": "x" }, "ppm.tail1234.ts.net")).toBe(true);
+  });
+
   it("treats a funnel request as public even with user headers", () => {
     expect(check({ "tailscale-user-login": "me@example.com", "tailscale-funnel-request": "?1" })).toBe(true);
   });
