@@ -274,7 +274,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
           <FooterUtil icon={MonitorSmartphone} label="Remote Desktop" featureBadge="remote-desktop" onClick={openRemoteDesktop} />
         )}
         {webBrowserAvailable && (
-          <FooterUtil icon={Globe} label="Browser" onClick={openWebBrowser} />
+          <FooterUtil icon={Globe} label="Browser" featureBadge="web-browser" onClick={openWebBrowser} />
         )}
         {androidAvailable && (
           <FooterUtil icon={Smartphone} label="Android" featureBadge="android" onClick={openAndroid} />

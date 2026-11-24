@@ -74,9 +74,12 @@ try {
   const desk = await newPage({ width: 1440, height: 900 }, false);
   const rail = desk.page.getByRole("button", { name: "Browser", exact: true });
   check(await until(() => rail.isVisible()), "desktop: Browser button in the rail");
+  check((await rail.locator('[aria-label="beta"]').count()) === 1, "desktop: the rail's Browser button carries the BETA badge");
   await rail.click();
   const address = desk.page.getByRole("textbox", { name: "Address" });
   check(await until(() => address.isVisible()), "desktop: browser window opens with an address bar");
+  check(await until(async () => (await desk.page.locator('span:text-is("Browser") + span[aria-label="beta"]').count()) > 0),
+    "desktop: the window title carries the BETA badge");
   check(await until(async () => (await desk.page.getByText("Starting the browser on the host…").count()) === 0, 30_000), "desktop: browser started");
   await address.click();
   await address.fill(`${pages}/news`);
@@ -118,8 +121,12 @@ try {
   // ---------------------------------------------------------------- phone 390
   const phone = await newPage({ width: 390, height: 844 }, true);
   await phone.page.getByRole("button", { name: "Open menu", exact: true }).tap();
-  const tile = phone.page.getByRole("button", { name: "Browser", exact: true });
+  // The tile's name takes in its badge (drawn on the icon, before the label), as Remote's and Android's do.
+  const tile = phone.page.getByRole("button", { name: /^(beta )?Browser( beta)?$/ });
   check(await until(() => tile.isVisible()), "phone: Browser tile in the drawer");
+  check((await tile.locator('[aria-label="beta"]').count()) === 1, "phone: the drawer's Browser tile carries the BETA badge");
+  await sleep(400);
+  await phone.page.screenshot({ path: join(SHOTS, "phone-390-drawer.png") });
   await tile.tap();
   const phoneAddress = phone.page.getByRole("textbox", { name: "Address" });
   check(await until(() => phoneAddress.isVisible()), "phone: browser tab opens with the address bar");

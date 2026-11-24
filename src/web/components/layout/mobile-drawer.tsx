@@ -177,7 +177,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
       ? [{ icon: MonitorSmartphone, label: "Remote", badge: "remote-desktop", onClick: () => { onClose(); openRemoteDesktop(); } } satisfies FooterTileDef]
       : []),
     ...(webBrowserAvailable
-      ? [{ icon: Globe, label: "Browser", onClick: () => { onClose(); openWebBrowser(); } } satisfies FooterTileDef]
+      ? [{ icon: Globe, label: "Browser", badge: "web-browser", onClick: () => { onClose(); openWebBrowser(); } } satisfies FooterTileDef]
       : []),
     ...(androidAvailable
       ? [{ icon: Smartphone, label: "Android", badge: "android", onClick: () => { onClose(); openAndroid(); } } satisfies FooterTileDef]

@@ -18,6 +18,8 @@ export const FEATURE_BADGES = {
   designs: "new",
   /** Android emulator — start an AVD and control its screen from the browser. */
   android: "beta",
+  /** PPM's own browser: a Chrome on the host, streamed into a window or a phone tab. */
+  "web-browser": "beta",
 } as const satisfies Record<string, FeatureBadgeKind>;
 
 export type FeatureBadgeId = keyof typeof FEATURE_BADGES;
