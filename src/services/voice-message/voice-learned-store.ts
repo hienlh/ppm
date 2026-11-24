@@ -4,11 +4,12 @@
  * words (the `blocked` list) are skipped by the clean-up's learning; an edit by the user is an
  * explicit correction and lifts the block.
  */
-import type { LearnedWord, VoiceCandidate, VoiceMessageConfig } from "../../shared/voice-message.ts";
+import type { LearnedSource, LearnedWord, VoiceCandidate, VoiceMessageConfig } from "../../shared/voice-message.ts";
+import type { LearnReading } from "../../shared/voice-message.ts";
 import { isFaded, isStaleCandidate, wordUsedIn } from "./voice-learned-fade.ts";
 import { readyToLearn, type Replacement } from "./voice-learn-from-cleanup.ts";
 import {
-  cleanCandidateList, cleanLearnedList, projectWordsOf, readVoiceSettings, VOICE_LIMITS, vocabularyOf, writeVoiceSettings,
+  candidateKey, cleanCandidateList, cleanLearnedList, projectWordsOf, readVoiceSettings, VOICE_LIMITS, vocabularyOf, writeVoiceSettings,
 } from "./voice-settings.ts";
 
 const validProject = (project: string) => !!project.trim() && project.length <= VOICE_LIMITS.projectKeyChars;
@@ -44,20 +45,26 @@ export function appendLearnedWords(project: string, entries: readonly LearnedWor
   return added;
 }
 
-const pairKey = (from: string, to: string) => `${from.toLowerCase()}\u0000${to.toLowerCase()}`;
 
 /**
  * Counts one message's replacements for `project` and learns those seen often enough. A
  * replacement whose word is already learned only bumps that word's count; one whose word the user
  * undid, or typed into a list themself, is not counted. `known` is the project's own text (its
  * picked-up words and its typed words), which lets a term be learned after two messages instead
- * of three. Answers with the words learned by this message.
+ * of three — for the clean-up's corrections, not the chat's (`readyToLearn`). `source` is what a
+ * newly learned word is marked as, and the clean-up and the chat are counted apart. For the chat,
+ * `chatId` names the chat that read it: a chat counts once per pair, since within one
+ * conversation the AI sees and repeats its own earlier reading. Answers with the words learned.
  */
 export function recordCleanupReplacements(
   project: string,
   found: readonly Replacement[],
   known: ReadonlySet<string>,
   now = new Date(),
+  source: Extract<LearnedSource, "cleanup" | "chat"> = "cleanup",
+  chatId?: string,
+  /** Told what became of each replacement. */
+  report?: (item: LearnReading) => void,
 ): LearnedWord[] {
   if (!validProject(project) || found.length === 0) return [];
   const config: VoiceMessageConfig = readVoiceSettings();
@@ -67,30 +74,44 @@ export function recordCleanupReplacements(
   const typed = new Set([...own.words, ...config.words].map((w) => w.toLowerCase()));
   const learned = [...own.learned];
   const learnedAt = new Map(learned.map((l, i) => [l.word.toLowerCase(), i]));
-  const candidates = new Map<string, VoiceCandidate>((own.candidates ?? []).map((c) => [pairKey(c.from, c.to), c]));
+  const candidates = new Map<string, VoiceCandidate>((own.candidates ?? []).map((c) => [candidateKey(c), c]));
+  const chatSource = source === "chat" ? { source: "chat" as const } : {};
   const newlyLearned: LearnedWord[] = [];
   const seenThisMessage = new Set<string>();
 
   for (const r of found) {
     const word = r.to.toLowerCase();
-    const key = pairKey(r.from, r.to);
-    if (seenThisMessage.has(key) || blocked.has(word) || typed.has(word)) continue;
+    const key = candidateKey({ from: r.from, to: r.to, ...chatSource });
+    if (seenThisMessage.has(key)) continue;
     seenThisMessage.add(key);
+    if (blocked.has(word)) { report?.({ from: r.from, to: r.to, status: "skipped", reason: "undone" }); continue; }
+    if (typed.has(word)) { report?.({ from: r.from, to: r.to, status: "skipped", reason: "typed-word" }); continue; }
     const index = learnedAt.get(word);
     if (index !== undefined) {
       const entry = learned[index]!;
-      learned[index] = { ...entry, hits: Math.min((entry.hits ?? 1) + 1, VOICE_LIMITS.maxHits), lastUsedAt: at };
+      const bumped = Math.min((entry.hits ?? 1) + 1, VOICE_LIMITS.maxHits);
+      learned[index] = { ...entry, hits: bumped, lastUsedAt: at };
+      report?.({ from: r.from, to: r.to, status: "learned", hits: bumped });
       continue;
     }
-    const hits = (candidates.get(key)?.hits ?? 0) + 1;
-    if (readyToLearn(r, hits, known)) {
-      const entry: LearnedWord = { word: r.to, from: r.from, at, source: "cleanup", hits, kind: r.kind };
+    const previous = candidates.get(key);
+    // The same chat reading the same pair again is one reading, not another.
+    if (source === "chat" && chatId && previous?.chats?.includes(chatId)) {
+      report?.({ from: r.from, to: r.to, status: "skipped", reason: "same-chat", hits: previous.hits });
+      continue;
+    }
+    const chats = source === "chat" && chatId ? [...(previous?.chats ?? []), chatId].slice(-VOICE_LIMITS.candidateChats) : undefined;
+    const hits = (previous?.hits ?? 0) + 1;
+    if (readyToLearn(r, hits, known, source)) {
+      const entry: LearnedWord = { word: r.to, from: r.from, at, source, hits, kind: r.kind };
       learned.push(entry);
       learnedAt.set(word, learned.length - 1);
       candidates.delete(key);
       newlyLearned.push(entry);
+      report?.({ from: r.from, to: r.to, status: "learned", hits });
     } else {
-      candidates.set(key, { from: r.from, to: r.to, hits, at });
+      candidates.set(key, { from: r.from, to: r.to, hits, at, ...chatSource, ...(chats ? { chats } : {}) });
+      report?.({ from: r.from, to: r.to, status: "learning", hits });
     }
   }
 

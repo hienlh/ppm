@@ -22,7 +22,7 @@ import {
 import { autoVocabulary, clearAutoVocabularyCache } from "../../services/voice-message/voice-auto-vocabulary-sources.ts";
 import { whisperPromptPreview } from "../../services/voice-message/voice-vocabulary.ts";
 import { isFaded } from "../../services/voice-message/voice-learned-fade.ts";
-import { WHISPER_PROMPT_MAX_CHARS } from "../../shared/voice-message.ts";
+import { VOICE_SURFACES, WHISPER_PROMPT_MAX_CHARS, type VoiceSurface } from "../../shared/voice-message.ts";
 
 export interface VoiceRouteDeps {
   broadcast: (event: unknown) => void;
@@ -57,10 +57,13 @@ async function settingsView(project: string | undefined, whisperReady: boolean) 
   return {
     enabled: config.enabled === true,
     reviewBeforeSend: config.review_before_send,
-    cleanupEnabled: config.cleanup_enabled,
+    transcriptFix: config.transcript_fix,
+    /** Both surfaces tidy with Haiku: the older single switch, as the Assistant's settings tools read it. */
+    cleanupEnabled: VOICE_SURFACES.every((s) => config.transcript_fix[s] === "haiku"),
     selfLearning: config.self_learning === true,
     learnAutoVocabulary: config.learn_auto_vocabulary,
     learnFromCleanup: config.learn_from_cleanup,
+    learnFromChat: config.learn_from_chat,
     weeklySummary: config.weekly_summary,
     vietnameseFixes: config.vietnamese_fixes,
     words: config.words,
@@ -68,6 +71,10 @@ async function settingsView(project: string | undefined, whisperReady: boolean) 
     // A faded word is gone from the list even before the next voice message prunes the row.
     projectLearned: own.learned.filter((l) => !isFaded(l, Date.now())),
     projectBlocked: own.blocked ?? [],
+    // "Đang học": the pairs still being counted, newest first, with how many chats have read them.
+    projectLearning: [...(own.candidates ?? [])].sort((a, b) => b.at.localeCompare(a.at)).map((c) => ({
+      from: c.from, to: c.to, hits: c.hits, at: c.at, source: c.source ?? "cleanup", chats: c.chats?.length ?? 0,
+    })),
     whisperPrompt: project ? whisperPromptPreview(config, project, { selfLearning, auto }) : [],
     whisperPromptMaxChars: WHISPER_PROMPT_MAX_CHARS,
     whisperReady,
@@ -81,14 +88,25 @@ function parsePatch(body: unknown): VoiceSettingsPatch | string {
   const patch: VoiceSettingsPatch = {};
   for (const key of [
     "enabled", "reviewBeforeSend", "cleanupEnabled", "selfLearning", "learnAutoVocabulary", "learnFromCleanup",
-    "weeklySummary", "vietnameseFixes",
+    "learnFromChat", "weeklySummary", "vietnameseFixes",
   ] as const) {
     const value = b[key];
     if (value === undefined) continue;
     if (typeof value !== "boolean") return `${key} must be true or false`;
     patch[key] = value;
   }
-  for (const key of ["words", "projectWords", "removeLearned", "restoreBlocked"] as const) {
+  if (b.transcriptFix !== undefined) {
+    const fix = b.transcriptFix;
+    if (!fix || typeof fix !== "object" || Array.isArray(fix)) return "transcriptFix must be an object";
+    const out: NonNullable<VoiceSettingsPatch["transcriptFix"]> = {};
+    for (const [surface, value] of Object.entries(fix)) {
+      if (!VOICE_SURFACES.includes(surface as VoiceSurface)) return `Unknown surface "${surface}"`;
+      if (value !== "haiku" && value !== "hints") return "transcriptFix values must be \"haiku\" or \"hints\"";
+      out[surface as VoiceSurface] = value;
+    }
+    patch.transcriptFix = out;
+  }
+  for (const key of ["words", "projectWords", "removeLearned", "restoreBlocked", "skipLearning"] as const) {
     const value = b[key];
     if (value === undefined) continue;
     if (!isStringList(value)) return `${key} must be a list of at most ${MAX_LIST_ITEMS} strings`;
@@ -98,8 +116,8 @@ function parsePatch(body: unknown): VoiceSettingsPatch | string {
     if (typeof b.project !== "string" || !voiceProjectPath(b.project)) return "Unknown project";
     patch.project = b.project;
   }
-  if ((patch.projectWords || patch.removeLearned || patch.restoreBlocked) && !patch.project) {
-    return "project is required with projectWords, removeLearned or restoreBlocked";
+  if ((patch.projectWords || patch.removeLearned || patch.restoreBlocked || patch.skipLearning) && !patch.project) {
+    return "project is required with projectWords, removeLearned, restoreBlocked or skipLearning";
   }
   return patch;
 }
@@ -142,6 +160,7 @@ export function registerVoiceMessageRoutes(routes: Hono, deps: VoiceRouteDeps): 
       const result = await deps.process({
         audio: new Uint8Array(await audio.arrayBuffer()),
         project,
+        surface: "composer",
         sessionId: text("sessionId", 200),
         providerId: text("providerId", 40),
         typed: text("typed", MAX_TEXT_CHARS),

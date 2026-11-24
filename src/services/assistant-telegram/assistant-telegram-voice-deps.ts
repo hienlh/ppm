@@ -25,7 +25,7 @@ export interface VoiceProcessResult {
   text: string;
   cleaned: boolean;
   cleanupError?: string;
-  /** The Haiku clean-up is turned off: Whisper's text, by choice. */
+  /** Telegram sends Whisper's text with hints instead of a Haiku clean-up: by choice. */
   cleanupSkipped?: true;
   transcribeMs: number;
   cleanupMs: number;
@@ -62,7 +62,7 @@ export const defaultTelegramVoiceDeps: TelegramVoiceDeps = {
   },
   async process(input) {
     const { processVoiceMessage } = await import("../voice-message/voice-message.service.ts");
-    return processVoiceMessage(input);
+    return processVoiceMessage({ ...input, surface: "telegram" });
   },
   async learn(input) {
     const { learnFromEdit } = await import("../voice-message/voice-message.service.ts");

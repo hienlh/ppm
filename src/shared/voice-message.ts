@@ -16,10 +16,11 @@
 export const VOICE_MAX_SECONDS = 120;
 
 /**
- * Where a learned word came from: the user editing a transcript, or the clean-up fixing the same
- * misheard word in several messages (self-learning).
+ * Where a learned word came from: the user editing a transcript, the clean-up fixing the same
+ * misheard word in several messages, or the chat's own AI reading it the same way in several
+ * messages ("Hiểu là: heard → meant", see `voice-understood.ts`). The last two are self-learning.
  */
-export type LearnedSource = "edit" | "cleanup";
+export type LearnedSource = "edit" | "cleanup" | "chat";
 
 /**
  * A correction learned for a project: `from` was heard, `word` was meant. A `term` (a name, an
@@ -40,13 +41,47 @@ export interface LearnedWord {
 }
 
 /** A correction the clean-up made, counted until it is seen often enough to be learned. */
-export interface VoiceCandidate { from: string; to: string; hits: number; at: string }
+export interface VoiceCandidate {
+  from: string; to: string; hits: number; at: string;
+  /**
+   * Counted from the chat's reading rather than the clean-up's fixes; absent: the clean-up. The two
+   * are counted apart, so one source's guess never makes up the other's count.
+   */
+  source?: "chat";
+  /** For the chat's readings: the chats already counted, since one chat repeats its own guess. */
+  chats?: string[];
+}
 
 /**
  * A learned word the user undid: never learned again from the clean-up, until restored. `at` is
  * when it was undone; the rest is the learned entry as it was, so Restore brings it back unchanged.
  */
-export interface BlockedWord { word: string; from: string; at: string; source?: LearnedSource; hits?: number; kind?: "term" | "phrase" }
+export interface BlockedWord {
+  word: string; from: string; at: string; source?: LearnedSource; hits?: number; kind?: "term" | "phrase";
+  /**
+   * Set when the word was still being learned and the user chose "Don't learn": its candidates as
+   * they were, so Restore puts them back to be counted rather than making the word learned.
+   */
+  learning?: VoiceCandidate[];
+}
+
+/** Why a heard → meant pair was not counted toward a learned word. */
+export type LearnSkipReason =
+  | "same-chat" | "not-in-transcript" | "already-spelled" | "case-only" | "plural-only"
+  | "undone" | "typed-word" | "too-long" | "secret";
+
+/** What became of one heard → meant pair a learning source read. */
+export interface LearnReading {
+  from: string;
+  to: string;
+  status: "learning" | "learned" | "skipped";
+  /** Readings counted so far (learning), or the learned word's uses (learned). */
+  hits?: number;
+  reason?: LearnSkipReason;
+}
+
+/** A pair still being counted, as Settings → Voice lists it under "Learning". */
+export interface LearningPair { from: string; to: string; hits: number; at: string; source: "cleanup" | "chat"; chats: number }
 
 export interface VoiceProjectWords {
   words: string[];
@@ -58,6 +93,20 @@ export interface VoiceProjectWords {
 /** One word the clean-up changed: shown on the Telegram card as "Fixed: from → to". */
 export interface VoiceFix { from: string; to: string }
 
+/** Where a voice message was recorded: PPM's chat box, or a voice note sent to the Assistant's bot. */
+export type VoiceSurface = "composer" | "telegram";
+export const VOICE_SURFACES: readonly VoiceSurface[] = ["composer", "telegram"];
+
+/**
+ * What happens to Whisper's text before it is sent. `haiku`: Claude Haiku tidies it first (one call,
+ * about 3 s a message). `hints`: it goes as Whisper heard it, and PPM's server attaches the words
+ * this user's speech was misheard as before, so the AI that reads the message does the guessing.
+ */
+export type VoiceTranscriptFix = "haiku" | "hints";
+
+/** Each surface's choice when nothing is stored for it — the one place the default is decided. */
+export const DEFAULT_TRANSCRIPT_FIX: Readonly<Record<VoiceSurface, VoiceTranscriptFix>> = { composer: "hints", telegram: "hints" };
+
 /** Config key `voice_message`. */
 export interface VoiceMessageConfig {
   /** The feature intro's answer (or the Settings switch); undefined = not chosen = off. */
@@ -65,10 +114,10 @@ export interface VoiceMessageConfig {
   /** Wait for the user to read the transcript before sending. A failed clean-up always waits. */
   review_before_send: boolean;
   /**
-   * Tidy the transcript with Claude Haiku (and learn from edits to it). Off: Whisper's text is used
-   * as it is and Haiku is never called. A row written before the switch existed has none: on.
+   * Per surface: tidy with Haiku, or send Whisper's text with hints. Replaces the single
+   * `cleanup_enabled` switch, which a row written before this is read without (see the settings).
    */
-  cleanup_enabled: boolean;
+  transcript_fix: Record<VoiceSurface, VoiceTranscriptFix>;
   /**
    * Self-learning, as the feature intro or Settings answered; undefined = not chosen = off. With it
    * on, the switches below choose its parts (all default on).
@@ -78,6 +127,8 @@ export interface VoiceMessageConfig {
   learn_auto_vocabulary: boolean;
   /** Learn a word once the clean-up fixed it the same way in several messages. */
   learn_from_cleanup: boolean;
+  /** Learn a word once the chat's AI read it the same way in several voice messages sent as heard. */
+  learn_from_chat: boolean;
   /** List the week's learned words in Monday's morning digest. */
   weekly_summary: boolean;
   /** The clean-up also fixes misheard Vietnamese words by context. Independent of self-learning. */
@@ -183,21 +234,49 @@ export function whisperVocabularyPrompt(words: readonly string[], maxChars = WHI
   return whisperPromptWords(words, maxChars).join(", ");
 }
 
+/**
+ * Whisper's own limit is in tokens, not characters: `--prompt` keeps at most `n_text_ctx / 2` of
+ * them (224 for every model PPM installs), and whisper.cpp builds the prompt by taking the LAST
+ * tokens of what it holds — so a list over the limit loses its first words, which are the ones the
+ * user typed. 200 leaves room for the token whisper.cpp puts in front.
+ */
+export const WHISPER_PROMPT_MAX_TOKENS = 200;
+
+/**
+ * A deliberately high guess of a word's tokens in Whisper's byte-level vocabulary (no tokenizer
+ * ships with PPM): about three ASCII characters a token, two tokens for every other character (a
+ * Vietnamese letter with its marks is two or three UTF-8 bytes), and one for the ", " before it.
+ */
+export function estimateWhisperTokens(word: string): number {
+  let ascii = 0;
+  let other = 0;
+  for (const ch of word) {
+    if (ch.charCodeAt(0) < 128) ascii++;
+    else other++;
+  }
+  return Math.ceil(ascii / 3) + other * 2 + 1;
+}
+
 /** The words {@link whisperVocabularyPrompt} keeps, in order (for showing which ones made it). */
-export function whisperPromptWords(words: readonly string[], maxChars = WHISPER_PROMPT_MAX_CHARS): string[] {
+export function whisperPromptWords(
+  words: readonly string[], maxChars = WHISPER_PROMPT_MAX_CHARS, maxTokens = WHISPER_PROMPT_MAX_TOKENS,
+): string[] {
   const seen = new Set<string>();
   const kept: string[] = [];
   let length = 0;
+  let tokens = 0;
   for (const raw of words) {
     const word = raw.replace(/\s+/g, " ").trim();
     if (!word) continue;
     const key = word.toLowerCase();
     if (seen.has(key)) continue;
     const added = (kept.length ? 2 : 0) + word.length;
-    if (length + added > maxChars) break;
+    const addedTokens = estimateWhisperTokens(word);
+    if (length + added > maxChars || tokens + addedTokens > maxTokens) break;
     seen.add(key);
     kept.push(word);
     length += added;
+    tokens += addedTokens;
   }
   return kept;
 }

@@ -16,6 +16,7 @@ import { isRealPromptMessage } from "../../../shared/user-prompt-kind";
 import { TurnChangeRollup } from "./turn-change-rollup";
 import { TurnCostWarning } from "./turn-cost-warning";
 import { MarkdownContent } from "./message-markdown";
+import { splitAnswerOpening, VoiceUnderstoodLine } from "./voice-understood-line";
 import { CHAT_MESSAGE_TEXT } from "@/lib/chat-message-text";
 import { UserBubble } from "./message-user-bubble";
 import { InterleavedEvents } from "./message-events";
@@ -28,7 +29,7 @@ export function assistantMessageText(msg: ChatMessage): string {
     : msg.content;
 }
 
-export const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLastAssistantInTurn, turnCopyText, turnChanges, turn, onJumpToEdit, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled, bashPartialOutput, onReply, replyTarget, onJumpToReply, replyAvailable }: {
+export const MessageBubble = memo(function MessageBubble({ message, isStreaming, voiceAnswer, isLastAssistantInTurn, turnCopyText, turnChanges, turn, onJumpToEdit, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled, bashPartialOutput, onReply, replyTarget, onJumpToReply, replyAvailable }: {
   onReply?: (message: ChatMessage) => void;
   /** Assistant only: the message of this turn that Reply quotes, which may be an earlier one. */
   replyTarget?: ChatMessage;
@@ -36,6 +37,8 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming,
   /** Whether the message this one quotes is in the list; undefined when it quotes none. */
   replyAvailable?: boolean;
   message: ChatMessage; isStreaming: boolean; isLastAssistantInTurn?: boolean; turnCopyText?: string; projectName?: string;
+  /** Assistant only: this message opens the answer to a voice message sent as heard, so its "Hiểu là" line is drawn. */
+  voiceAnswer?: boolean;
   /** Files this turn changed — drives the action-bar change pill. */
   turnChanges?: TurnFileChange[];
   /** The turn this message closes: what the change tray's "Revert turn" puts back. */
@@ -117,11 +120,9 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming,
   return (
     <div className="flex flex-col gap-2">
       {message.events && message.events.length > 0
-        ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} bashPartialOutput={bashPartialOutput} />
+        ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} bashPartialOutput={bashPartialOutput} voiceAnswer={voiceAnswer} />
         : message.content && (
-            <div className={`${CHAT_MESSAGE_TEXT} text-text-primary select-text`}>
-              <MarkdownContent content={message.content} projectName={projectName} />
-            </div>
+            <AnswerText content={message.content} projectName={projectName} voiceAnswer={voiceAnswer} />
           )}
       {/* Cost notice sits above the action bar so it reads as part of the finished turn */}
       {!isStreaming && isLastAssistantInTurn && message.usage && (
@@ -141,3 +142,14 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming,
     </div>
   );
 });
+
+/** An answer given as one text: its "Hiểu là" opening (if any) as a line of its own, then the rest. */
+function AnswerText({ content, projectName, voiceAnswer }: { content: string; projectName?: string; voiceAnswer?: boolean }) {
+  const opening = voiceAnswer ? splitAnswerOpening(content) : { pairs: null, rest: content };
+  return (
+    <div className={`${CHAT_MESSAGE_TEXT} text-text-primary select-text`}>
+      {opening.pairs && <VoiceUnderstoodLine pairs={opening.pairs} />}
+      {opening.rest && <MarkdownContent content={opening.rest} projectName={projectName} />}
+    </div>
+  );
+}

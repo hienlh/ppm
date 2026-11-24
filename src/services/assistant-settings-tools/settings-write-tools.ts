@@ -38,8 +38,17 @@ export async function settingsSet(ctx: ToolContext, args: Record<string, unknown
     if (found.kind === "unknown") return errorResult(`"${key.slice(0, 60)}" is not a setting the Assistant changes. Call settings_get to see the keys. Nothing was changed.`);
     const checked = checkValue(found.entry, value);
     if (!checked.ok) return errorResult(`${checked.error}. Nothing was changed.`);
-    const before = await found.entry.read();
-    if (!sameValue(before, checked.value)) planned.push({ entry: found.entry, before, after: checked.value });
+    // A summary switch is planned as the settings it stands for, each with its own old value.
+    const parts = found.entry.expand?.(checked.value) ?? [{ key, value: checked.value }];
+    for (const part of parts) {
+      const target = part.key === key ? found : lookupSetting(part.key);
+      if (target.kind !== "setting") return errorResult(`"${key}" cannot be changed right now. Nothing was changed.`);
+      if ((part.key !== key && seen.has(part.key)) || planned.some((p) => p.entry.key === part.key)) {
+        return errorResult(`"${key}" and "${part.key}" change the same setting; name one of them. Nothing was changed.`);
+      }
+      const before = await target.entry.read();
+      if (!sameValue(before, part.value)) planned.push({ entry: target.entry, before, after: part.value });
+    }
   }
   if (!planned.length) return result({ outcome: "unchanged", changes: [], note: "Every setting already has that value." });
 

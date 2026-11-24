@@ -18,7 +18,7 @@ export interface VoiceTimings {
   cleanupMs: number;
   /** Whether the clean-up gave the text: false when it failed, timed out or was refused. */
   cleaned: boolean;
-  /** The clean-up is turned off in Settings, so Haiku never ran. */
+  /** The chat box sends Whisper's text as heard, with hints (Settings → Voice), so Haiku never ran. */
   cleanupSkipped?: boolean;
 }
 
@@ -39,7 +39,7 @@ export function totalMs(t: VoiceTimings): number {
 
 /** The short line: total, then the two steps that usually dominate. Fits a 390 px phone. */
 export function timingSummary(t: VoiceTimings): string {
-  const haiku = t.cleaned ? `Haiku ${secs(t.cleanupMs)}` : t.cleanupSkipped ? "Haiku off" : "Haiku didn't tidy";
+  const haiku = t.cleaned ? `Haiku ${secs(t.cleanupMs)}` : t.cleanupSkipped ? "as heard" : "Haiku didn't tidy";
   return `${secs(totalMs(t))} · Whisper ${secs(t.transcribeMs)} · ${haiku}`;
 }
 
@@ -59,7 +59,7 @@ export function timingRows(t: VoiceTimings): TimingRow[] {
     { label: "Upload and reply", value: secs(uploadMs(t)) },
     { label: "Convert on the host", value: t.convertMs === undefined ? "—" : secs(t.convertMs) },
     { label: "Whisper (speech to text)", value: secs(t.transcribeMs) },
-    { label: "Claude Haiku (tidy-up)", value: t.cleaned ? secs(t.cleanupMs) : t.cleanupSkipped ? "off in Settings" : `didn't tidy after ${secs(t.cleanupMs)}` },
+    { label: "Claude Haiku (tidy-up)", value: t.cleaned ? secs(t.cleanupMs) : t.cleanupSkipped ? "not used: sent as heard, with hints" : `didn't tidy after ${secs(t.cleanupMs)}` },
     { label: "Total", value: secs(totalMs(t)) },
   ];
 }

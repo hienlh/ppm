@@ -66,9 +66,9 @@ describe("/voice-settings", () => {
     ready = false;
     const res = await app().request("/speech/voice-settings?project=demo");
     expect((await json(res)).data).toEqual({
-      enabled: false, reviewBeforeSend: true, cleanupEnabled: true,
-      selfLearning: false, learnAutoVocabulary: true, learnFromCleanup: true, weeklySummary: true, vietnameseFixes: true,
-      words: [], projectWords: [], projectLearned: [], projectBlocked: [],
+      enabled: false, reviewBeforeSend: true, transcriptFix: { composer: "hints", telegram: "hints" }, cleanupEnabled: false,
+      selfLearning: false, learnAutoVocabulary: true, learnFromCleanup: true, learnFromChat: true, weeklySummary: true, vietnameseFixes: true,
+      words: [], projectWords: [], projectLearned: [], projectBlocked: [], projectLearning: [],
       whisperPrompt: [], whisperPromptMaxChars: 600, whisperReady: false,
     });
   });
@@ -98,10 +98,48 @@ describe("/voice-settings", () => {
     expect((await put({ restoreBlocked: ["PPM"] })).status).toBe(400);
   });
 
+  it("lists the pairs still being learned, and stops learning one on Không học", async () => {
+    configService.set("voice_message", {
+      enabled: true, self_learning: true, review_before_send: true, words: [],
+      projects: { demo: { words: [], candidates: [
+        { from: "BPM", to: "PPM", hits: 1, at: "2026-11-20T10:00:00.000Z", source: "chat", chats: ["c1"] },
+        { from: "scale", to: "Slack", hits: 2, at: "2026-11-21T10:00:00.000Z" },
+      ] } },
+    });
+    const view = (await json(await put({ project: "demo", projectWords: [] }))).data;
+    expect(view.projectLearning).toEqual([
+      { from: "scale", to: "Slack", hits: 2, at: "2026-11-21T10:00:00.000Z", source: "cleanup", chats: 0 },
+      { from: "BPM", to: "PPM", hits: 1, at: "2026-11-20T10:00:00.000Z", source: "chat", chats: 1 },
+    ]);
+    const skipped = (await json(await put({ project: "demo", skipLearning: ["ppm"] }))).data;
+    expect(skipped.projectLearning.map((c: { to: string }) => c.to)).toEqual(["Slack"]);
+    expect(skipped.projectBlocked).toMatchObject([{ word: "PPM", from: "BPM", source: "chat" }]);
+    expect((await put({ skipLearning: ["PPM"] })).status).toBe(400);
+    const restored = (await json(await put({ project: "demo", restoreBlocked: ["PPM"] }))).data;
+    expect(restored.projectBlocked).toEqual([]);
+    expect(restored.projectLearned).toEqual([]);
+    expect(restored.projectLearning.map((c: { to: string; chats: number }) => [c.to, c.chats])).toEqual([["Slack", 0], ["PPM", 1]]);
+  });
+
   it("saves the Haiku clean-up switch and refuses a value that is not a boolean", async () => {
     expect((await json(await put({ cleanupEnabled: false }))).data).toMatchObject({ cleanupEnabled: false });
     expect((await put({ cleanupEnabled: "off" })).status).toBe(400);
-    expect((await json(await put({ cleanupEnabled: true }))).data).toMatchObject({ cleanupEnabled: true });
+    expect((await json(await put({ cleanupEnabled: true }))).data)
+      .toMatchObject({ cleanupEnabled: true, transcriptFix: { composer: "haiku", telegram: "haiku" } });
+  });
+
+  it("saves each surface's choice apart and refuses an unknown surface or value", async () => {
+    const data = (await json(await put({ transcriptFix: { telegram: "haiku" } }))).data;
+    expect(data).toMatchObject({ transcriptFix: { composer: "hints", telegram: "haiku" }, cleanupEnabled: false });
+    expect((await put({ transcriptFix: { email: "haiku" } })).status).toBe(400);
+    expect((await put({ transcriptFix: { composer: "tidy" } })).status).toBe(400);
+    expect((await put({ transcriptFix: ["haiku"] })).status).toBe(400);
+  });
+
+  it("records a chat-box recording and a chat-box edit as the chat box's", async () => {
+    await put({ enabled: true });
+    expect((await postVoice({ audio: audio(), project: "demo" })).status).toBe(200);
+    expect(processed.at(-1)).toMatchObject({ project: "demo", surface: "composer" });
   });
 
   it("saves lists and the review switch", async () => {

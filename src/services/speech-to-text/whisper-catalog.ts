@@ -31,6 +31,8 @@ export interface WhisperAsset {
   url: string;
   sha256: string;
   ext: "tar.gz" | "zip";
+  /** Size of the archive as published, for the install choice in Settings. */
+  bytes: number;
 }
 
 /**
@@ -47,24 +49,28 @@ const ASSETS: Record<string, WhisperAsset> = {
     url: `${RELEASE_BASE}/whisper-bin-ubuntu-x64.tar.gz`,
     sha256: "53e7fd8b5764edad916b8848dd0af6abb1ff1d3b86c899e79c78652412536c32",
     ext: "tar.gz",
+    bytes: 9_793_438,
   },
   "linux-arm64": {
     file: "whisper-bin-ubuntu-arm64.tar.gz",
     url: `${RELEASE_BASE}/whisper-bin-ubuntu-arm64.tar.gz`,
     sha256: "93532a0e3777f26f041ffa358ee77dd88b1a33a86847c1990745327ff335a5d6",
     ext: "tar.gz",
+    bytes: 4_605_905,
   },
   "win32-x64": {
     file: "whisper-bin-x64.zip",
     url: `${RELEASE_BASE}/whisper-bin-x64.zip`,
     sha256: "f9ec6c52a2e949b62ab51fa21d0d497958f9e41c3010c157c4e42932d5316f3c",
     ext: "zip",
+    bytes: 8_573_270,
   },
   "win32-arm64": {
     file: "whisper-bin-win-cpu-arm64.zip",
     url: `${RELEASE_BASE}/whisper-bin-win-cpu-arm64.zip`,
     sha256: "799543b926ab5b6c2d60cab269a2092e0ae8d27820e9e15429e59de3699546fc",
     ext: "zip",
+    bytes: 4_361_895,
   },
 };
 
@@ -73,6 +79,51 @@ export const MACOS_INSTALL_HINT = "brew install whisper.cpp";
 /** The published build for a platform/arch pair, or null when there is none. */
 export function whisperAssetFor(platform: NodeJS.Platform, arch: string): WhisperAsset | null {
   return ASSETS[`${platform}-${arch}`] ?? null;
+}
+
+/** Which whisper.cpp build PPM downloads: the plain one, or the NVIDIA (CUDA) one. */
+export type WhisperBuildKind = "cpu" | "cuda";
+
+/** The oldest CUDA the driver must report for the CUDA build to load (it is built against 12.4). */
+export const MIN_CUDA_VERSION: readonly [number, number] = [12, 4];
+
+/**
+ * The GPU builds PPM offers, from the same release as the CPU ones.
+ *
+ * Only Windows x64 + NVIDIA. Measured on an RTX 4070 with large-v3-turbo q5_0: a 3–5 s message
+ * in 0.8 s against 5.4 s on the CPU build, because encoding the 30-second audio window drops
+ * from 4.6 s to 0.11 s; the text is the same, since the model is.
+ *
+ * `cublas-12.4.0` rather than `cublas-11.8.0` even though it is 2.5 times the download: the 11.8
+ * archive ships no cuBLAS, so on a machine without the CUDA 11.8 toolkit its `ggml-cuda.dll`
+ * fails to load and whisper.cpp quietly runs on the CPU, logging only "no GPU found". The 12.4
+ * archive carries `cublas64_12.dll` and `cublasLt64_12.dll` itself, so a driver is all it needs.
+ * The archive also holds every CPU backend, so a machine whose GPU disappears keeps working.
+ *
+ * No Vulkan build is published (nothing for AMD or Intel on Windows), and none for Linux. A Mac
+ * needs nothing here: Homebrew's whisper.cpp runs on Metal on Apple silicon already.
+ */
+const GPU_ASSETS: Record<string, WhisperAsset & { kind: "cuda"; unpackedBytes: number }> = {
+  "win32-x64": {
+    kind: "cuda",
+    file: "whisper-cublas-12.4.0-bin-x64.zip",
+    url: `${RELEASE_BASE}/whisper-cublas-12.4.0-bin-x64.zip`,
+    sha256: "af520ddd034d985b55dfeea3e465ed93653ba2aee1a55e865033edc548c272a7",
+    ext: "zip",
+    bytes: 674_539_285,
+    // Measured after extraction: cuBLAS alone is 574 MB of it.
+    unpackedBytes: 1_191_220_736,
+  },
+};
+
+/** The CUDA build for a platform/arch pair, or null when whisper.cpp publishes none. */
+export function whisperGpuAssetFor(platform: NodeJS.Platform, arch: string) {
+  return GPU_ASSETS[`${platform}-${arch}`] ?? null;
+}
+
+/** The archive for one build kind, or null when this platform has no such build. */
+export function whisperBuildAsset(kind: WhisperBuildKind, platform: NodeJS.Platform, arch: string): WhisperAsset | null {
+  return kind === "cuda" ? whisperGpuAssetFor(platform, arch) : whisperAssetFor(platform, arch);
 }
 
 export interface WhisperModel {

@@ -22,7 +22,11 @@ afterAll(() => {
   configService.set("projects", savedProjects);
   rmSync(dir, { recursive: true, force: true });
 });
-afterEach(() => configService.set("voice_message", { review_before_send: true, words: [], projects: {} }));
+// These tests are about the Haiku clean-up, so both surfaces start set to it (the default is hints).
+const HAIKU = { composer: "haiku", telegram: "haiku" } as const;
+const resetVoice = () => configService.set("voice_message", { review_before_send: true, transcript_fix: HAIKU, words: [], projects: {} });
+beforeAll(resetVoice);
+afterEach(resetVoice);
 
 /** A 16 kHz mono 16-bit WAV of `seconds` of silence. */
 function wav(seconds: number): Uint8Array {
@@ -64,8 +68,8 @@ describe("processVoiceMessage", () => {
     expect(seen.context[0]).toMatchObject({ project: "demo", projectPath: dir, sessionId: "s", providerId: "claude", typed: "ảnh" });
   });
 
-  it("with the clean-up turned off, never reads context nor asks Haiku, and says it was skipped, not failed", async () => {
-    updateVoiceSettings({ cleanupEnabled: false, project: "demo", projectWords: ["Hono"] });
+  it("with the chat box set to hints, never reads context nor asks Haiku, and says it was skipped, not failed", async () => {
+    updateVoiceSettings({ transcriptFix: { composer: "hints" }, project: "demo", projectWords: ["Hono"] });
     const { d, seen } = deps();
     const result = await processVoiceMessage({ audio: wav(1), project: "demo", sessionId: "s", providerId: "claude" }, d);
     expect(result).toMatchObject({ raw: "sửa rao hồ nô", text: "sửa rao hồ nô", cleaned: false, cleanupSkipped: true, cleanupMs: 0 });
@@ -76,12 +80,14 @@ describe("processVoiceMessage", () => {
     expect(seen.transcribe[0]!.prompt).toBe("Hono");
   });
 
-  it("learns nothing, and asks nothing, with the clean-up turned off", async () => {
-    updateVoiceSettings({ cleanupEnabled: false });
+  it("learns from an edit of Whisper's own text too, with the chat box set to hints and self-learning not chosen", async () => {
+    // The edit is what fills the hints' misheard list; it is asked after the message went, so it costs no wait.
+    updateVoiceSettings({ transcriptFix: { composer: "hints", telegram: "hints" } });
     let asks = 0;
-    const learned = await learnFromEdit({ project: "demo", before: "sửa hô nô", after: "sửa Hono" }, async () => { asks++; return '{"pairs":[{"from":"hô nô","to":"Hono"}]}'; });
-    expect(learned).toEqual([]);
-    expect(asks).toBe(0);
+    const before = "anh muốn em mở cái route hô nô rồi sửa middleware cho đúng với phần đăng nhập";
+    const learned = await learnFromEdit({ project: "demo", before, after: before.replace("hô nô", "Hono") }, async () => { asks++; return '{"pairs":[{"from":"hô nô","to":"Hono"}]}'; });
+    expect(learned.map((l) => [l.from, l.word])).toEqual([["hô nô", "Hono"]]);
+    expect(asks).toBe(1);
   });
 
   it("keeps the raw transcript with the reason when the clean-up fails", async () => {

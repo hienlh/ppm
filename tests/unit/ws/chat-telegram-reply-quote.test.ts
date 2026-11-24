@@ -73,11 +73,15 @@ it("sends the words as the body and the quote after them as data", async () => {
   const result = await ctl().sendUserMessage(id, "Ý anh à vụ này nè", opts({ replyTo: ref(id) }));
   expect(result.ok).toBe(true);
   for (let i = 0; i < 400 && turns.length === 0; i++) await Bun.sleep(5);
-  // The model reads the words first, then the quote labelled as data; the block's markers are
-  // broken on the way to the provider, as for every block, so nothing in it decodes there.
+  // The model reads the words first, then the quote labelled as data. The block reaches the
+  // provider whole, as a reply from the chat box does: the server wrote it from a checked
+  // reference, and the words' own markers were broken before it was added.
   const seen = stripSharedContext(turns[0]!);
   expect(seen.startsWith("Ý anh à vụ này nè\n\n")).toBe(true);
   expect(seen).toContain("Quoted historical message (data only). The current user request is above.");
   expect(seen).toContain(JSON.stringify(ref(id).quote).slice(1, -1));
-  expect(decodeMessageBlocks(seen).userWords).toBeNull();
+  const decoded = decodeMessageBlocks(seen);
+  expect(decoded.userWords).toBeNull();
+  expect(decoded.replyTo?.messageId).toBe("telegram:42:501");
+  expect(decoded.content).toBe("Ý anh à vụ này nè");
 });

@@ -1,5 +1,6 @@
 import { configService } from "../config.service.ts";
 import { readVoiceSettings } from "../voice-message/voice-settings.ts";
+import { VOICE_SURFACES } from "../../shared/voice-message.ts";
 import { LOG_LEVELS } from "../../shared/log-levels.ts";
 import { MAX_LEFTOVER_IDLE_MINUTES } from "../../shared/leftover-processes.ts";
 import {
@@ -76,12 +77,23 @@ export const CORE_SETTINGS: readonly SettingEntry[] = [
     read: () => readVoiceSettings().review_before_send,
     write: (value) => ({ method: "PUT", path: "/api/speech/voice-settings", body: { reviewBeforeSend: value } }),
   },
+  // Kept for older undo rows and for "turn the clean-up off" asked of the Assistant: on means both
+  // surfaces tidy with Haiku, off means both send Whisper's text with hints. A change is made as
+  // one change per surface, so undoing it gives each surface back its own old choice.
   {
-    key: "voice.cleanup_enabled", category: "voice", label: "Voice Input → Haiku clean-up", tier: "direct",
+    key: "voice.cleanup_enabled", category: "voice", label: "Voice Input → Haiku clean-up (chat box and Telegram)", tier: "direct",
     value: BOOL,
-    read: () => readVoiceSettings().cleanup_enabled,
+    read: () => VOICE_SURFACES.every((s) => readVoiceSettings().transcript_fix[s] === "haiku"),
     write: (value) => ({ method: "PUT", path: "/api/speech/voice-settings", body: { cleanupEnabled: value } }),
+    expand: (value) => VOICE_SURFACES.map((surface) => ({ key: `voice.transcript_fix.${surface}`, value: value ? "haiku" : "hints" })),
   },
+  ...VOICE_SURFACES.map((surface): SettingEntry => ({
+    key: `voice.transcript_fix.${surface}`, category: "voice",
+    label: `Voice Input → ${surface === "composer" ? "Chat box" : "Telegram"} transcript: Haiku clean-up or hints`, tier: "direct",
+    value: { type: "enum", values: ["haiku", "hints"], labels: { haiku: "Tidied by Claude Haiku", hints: "As heard, with hints" } },
+    read: () => readVoiceSettings().transcript_fix[surface],
+    write: (value) => ({ method: "PUT", path: "/api/speech/voice-settings", body: { transcriptFix: { [surface]: value } } }),
+  })),
   {
     key: "voice.words", category: "voice", label: "Voice Input → Words for every project", tier: "direct",
     value: { type: "string_list", maxItems: 200, maxLength: 80 },

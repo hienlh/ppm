@@ -97,8 +97,9 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
     id: "voice-self-learning-2026-11",
     title: "Voice messages that learn your words",
     body: "PPM picks up names and task codes from your projects for Whisper, and learns a word once the clean-up has "
-      + "fixed it the same way a few times — nobody has to edit a transcript. Learned words work at once; see and "
-      + "undo them in Settings → Voice. Everything stays on this machine apart from the clean-up you already use.",
+      + "fixed it, or the chat's AI has read it, the same way a few times — nobody has to edit a transcript. Learned "
+      + "words work at once; see and undo them in Settings → Voice. Everything stays on this machine apart from the "
+      + "clean-up and the chats you already use.",
     tools: [],
     setting: "voice_self_learning",
     since: "2026-11",

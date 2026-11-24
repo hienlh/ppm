@@ -1384,6 +1384,13 @@ if (process.argv.includes("__serve__")) {
       console.error("[ExtService] Startup error:", e);
     });
 
+    // Voice self-learning from the chat's own reading of a voice message ("Hiểu là: …")
+    import("../services/voice-message/voice-chat-learning.ts")
+      .then(({ startVoiceChatLearning }) => startVoiceChatLearning())
+      .catch((e) => {
+        console.error("[voice-learning] Startup error:", e);
+      });
+
     // PPM Assistant's hub: chat watches, and the Telegram bridge when it is switched on
     import("../services/assistant-hub/assistant-hub-startup.ts")
       .then(({ startAssistantHub }) => startAssistantHub())

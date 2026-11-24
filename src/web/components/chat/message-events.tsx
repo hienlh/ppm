@@ -12,6 +12,7 @@ import type { SessionPhase } from "../../../types/api";
 import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
 import { MarkdownContent } from "./message-markdown";
+import { splitAnswerOpening, VoiceUnderstoodLine } from "./voice-understood-line";
 import { CHAT_MESSAGE_TEXT } from "@/lib/chat-message-text";
 import { approvalDrawsAsCard } from "@/lib/approval-request";
 import { AsyncQuestionCard } from "./async-question-card";
@@ -29,7 +30,9 @@ type EventGroup =
   | { kind: "tool"; tool: ChatEvent; result?: ChatEvent; completed?: boolean }
   | { kind: "notice"; event: SessionRecoveredEvent };
 
-export function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput }: {
+export function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput, voiceAnswer }: {
+  /** This answer replies to a voice message sent as heard: its opening "Hiểu là" line is drawn as one. */
+  voiceAnswer?: boolean;
   events: ChatEvent[];
   isStreaming: boolean;
   projectName?: string;
@@ -164,6 +167,9 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
     }
   }
 
+  // An answer to a voice message may open with "Hiểu là: …" (how it read it): drawn as a line of its own.
+  const firstText = voiceAnswer ? groups.findIndex((g) => g.kind === "text") : -1;
+
   return (
     <>
       {groups.map((group, i) => {
@@ -172,9 +178,11 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
         }
         if (group.kind === "text") {
           const isLast = isStreaming && i === groups.length - 1;
+          const opening = i === firstText ? splitAnswerOpening(group.content, !isLast) : { pairs: null, rest: group.content };
           return (
             <div key={`text-${i}`} className={`${CHAT_MESSAGE_TEXT} text-text-primary select-text`}>
-              <StreamingText content={group.content} animate={isLast} projectName={projectName} />
+              {opening.pairs && <VoiceUnderstoodLine pairs={opening.pairs} />}
+              {(opening.rest || isLast) && <StreamingText content={opening.rest} animate={isLast} projectName={projectName} />}
             </div>
           );
         }

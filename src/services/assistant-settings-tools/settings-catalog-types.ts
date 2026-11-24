@@ -56,6 +56,13 @@ export interface SettingEntry {
   write(value: unknown): WriteCall | Promise<WriteCall>;
   /** A warning line for the card when the new value deserves one. */
   warn?(value: unknown): string | null;
+  /**
+   * For a setting that only summarises others (one switch over two places): the changes `value`
+   * stands for, made and logged one by one, so each row keeps its own old value and an undo puts
+   * back exactly what was there. Reading the summary still works, and so does undoing a row
+   * written under it before it was split.
+   */
+  expand?(value: unknown): Array<{ key: string; value: unknown }>;
   /** Said with the value: when it takes effect, what else it touches. */
   note?: string;
 }

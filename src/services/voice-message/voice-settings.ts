@@ -1,6 +1,6 @@
 /**
- * The `voice_message` config row: on/off, "read the transcript before it is sent", the clean-up
- * and self-learning switches, and the word lists Whisper and the clean-up are given. Everything
+ * The `voice_message` config row: on/off, "read the transcript before it is sent", what each
+ * surface does with Whisper's text (Haiku or hints), the self-learning switches, and the word lists Whisper and the clean-up are given. Everything
  * read from the row goes through {@link normalizeVoiceConfig}, because the row is user data that a
  * CLI, an older build or a hand edit may have left in any shape.
  *
@@ -8,8 +8,10 @@
  * in `voice-learned-store.ts`; this file only reads, cleans and applies Settings' changes.
  */
 import { configService } from "../config.service.ts";
-import type {
-  BlockedWord, LearnedWord, VoiceCandidate, VoiceMessageConfig, VoiceProjectWords,
+import {
+  DEFAULT_TRANSCRIPT_FIX, VOICE_SURFACES,
+  type BlockedWord, type LearnedWord, type VoiceCandidate, type VoiceMessageConfig, type VoiceProjectWords, type VoiceSurface,
+  type VoiceTranscriptFix,
 } from "../../shared/voice-message.ts";
 
 export const VOICE_LIMITS = {
@@ -25,6 +27,10 @@ export const VOICE_LIMITS = {
   blocked: 200,
   /** Longest single word or phrase. */
   wordChars: 60,
+  /** Chats remembered per candidate counted from the chat's reading. */
+  candidateChats: 5,
+  /** Longest chat id remembered there. */
+  chatIdChars: 200,
   /** Longest project name a list may be stored under. */
   projectKeyChars: 200,
   /** Projects with a list; a row with more is cut rather than trusted. */
@@ -70,7 +76,7 @@ export function cleanLearnedList(raw: unknown): LearnedWord[] {
     const at = isoOrNull(item.at);
     if (!word || !from || !at) continue;
     const entry: LearnedWord = { word, from, at };
-    if (item.source === "edit" || item.source === "cleanup") entry.source = item.source;
+    if (item.source === "edit" || item.source === "cleanup" || item.source === "chat") entry.source = item.source;
     const hits = hitsOf(item.hits);
     if (hits) entry.hits = hits;
     if (item.kind === "term" || item.kind === "phrase") entry.kind = item.kind;
@@ -94,11 +100,45 @@ export function cleanCandidateList(raw: unknown): VoiceCandidate[] {
     const hits = hitsOf(item.hits);
     const at = isoOrNull(item.at);
     if (!from || !to || !hits || !at || from.toLowerCase() === to.toLowerCase()) continue;
-    const key = `${from.toLowerCase()}\u0000${to.toLowerCase()}`;
+    const chat = item.source === "chat";
+    const key = candidateKey({ from, to, ...(chat ? { source: "chat" as const } : {}) });
+    const entry: VoiceCandidate = { from, to, hits, at };
+    if (chat) {
+      entry.source = "chat";
+      const chats = Array.isArray(item.chats)
+        ? item.chats.filter((c): c is string => typeof c === "string" && c.length > 0 && c.length <= VOICE_LIMITS.chatIdChars)
+        : [];
+      entry.chats = [...new Set(chats)].slice(-VOICE_LIMITS.candidateChats);
+    }
     byPair.delete(key);
-    byPair.set(key, { from, to, hits, at });
+    byPair.set(key, entry);
   }
   return [...byPair.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-VOICE_LIMITS.candidates);
+}
+
+/** A candidate's identity: its pair, and whether the chat or the clean-up counted it. */
+export function candidateKey(c: Pick<VoiceCandidate, "from" | "to" | "source">): string {
+  return `${c.source === "chat" ? "chat\u0000" : ""}${c.from.toLowerCase()}\u0000${c.to.toLowerCase()}`;
+}
+
+/**
+ * The undone entries for words the user said not to learn while they were still being counted:
+ * one per word, even when the clean-up and the chat both counted it, keeping every candidate so
+ * Restore can put the count back as it was.
+ */
+function skippedWords(candidates: readonly VoiceCandidate[], skip: ReadonlySet<string>, at: string): BlockedWord[] {
+  const byWord = new Map<string, VoiceCandidate[]>();
+  for (const c of candidates) {
+    const key = c.to.toLowerCase();
+    if (skip.has(key)) byWord.set(key, [...(byWord.get(key) ?? []), c]);
+  }
+  return [...byWord.values()].map((group): BlockedWord => {
+    const newest = group.reduce((a, b) => (b.at > a.at ? b : a));
+    return {
+      word: newest.to, from: newest.from, at, source: newest.source === "chat" ? "chat" : "cleanup",
+      hits: Math.max(...group.map((c) => c.hits)), learning: group,
+    };
+  });
 }
 
 /** Valid undone words, each once (the newest wins), the newest {@link VOICE_LIMITS.blocked}. */
@@ -112,10 +152,12 @@ export function cleanBlockedList(raw: unknown): BlockedWord[] {
     const at = isoOrNull(item.at);
     if (!word || !from || !at) continue;
     const entry: BlockedWord = { word, from, at };
-    if (item.source === "edit" || item.source === "cleanup") entry.source = item.source;
+    if (item.source === "edit" || item.source === "cleanup" || item.source === "chat") entry.source = item.source;
     const hits = hitsOf(item.hits);
     if (hits) entry.hits = hits;
     if (item.kind === "term" || item.kind === "phrase") entry.kind = item.kind;
+    const learning = cleanCandidateList(item.learning);
+    if (learning.length) entry.learning = learning;
     byWord.delete(word.toLowerCase());
     byWord.set(word.toLowerCase(), entry);
   }
@@ -144,14 +186,29 @@ function cleanProjects(raw: unknown): Record<string, VoiceProjectWords> {
   return out;
 }
 
+const isTranscriptFix = (v: unknown): v is VoiceTranscriptFix => v === "haiku" || v === "hints";
+
+/**
+ * Each surface's choice, or its default. A row from before the choice existed carries only
+ * `cleanup_enabled`, which is not read: the switch was on in nearly every row (it defaulted on and
+ * every save wrote it), so it says nothing about what the user wants now.
+ */
+function cleanTranscriptFix(raw: unknown): Record<VoiceSurface, VoiceTranscriptFix> {
+  const value = isObj(raw) ? raw : {};
+  const out = { ...DEFAULT_TRANSCRIPT_FIX };
+  for (const surface of VOICE_SURFACES) if (isTranscriptFix(value[surface])) out[surface] = value[surface];
+  return out;
+}
+
 /** The stored row in a shape every reader can trust; anything missing takes its default. */
 export function normalizeVoiceConfig(raw: unknown): VoiceMessageConfig {
   const value = isObj(raw) ? raw : {};
   const config: VoiceMessageConfig = {
     review_before_send: value.review_before_send !== false,
-    cleanup_enabled: value.cleanup_enabled !== false,
+    transcript_fix: cleanTranscriptFix(value.transcript_fix),
     learn_auto_vocabulary: value.learn_auto_vocabulary !== false,
     learn_from_cleanup: value.learn_from_cleanup !== false,
+    learn_from_chat: value.learn_from_chat !== false,
     weekly_summary: value.weekly_summary !== false,
     vietnamese_fixes: value.vietnamese_fixes !== false,
     words: cleanWordList(value.words, VOICE_LIMITS.globalWords),
@@ -177,6 +234,16 @@ export function voiceMessagesEnabled(): boolean {
   return readVoiceSettings().enabled === true;
 }
 
+/** What `surface` does with Whisper's text: tidy it with Haiku, or send it with hints. */
+export function transcriptFixFor(config: VoiceMessageConfig, surface: VoiceSurface): VoiceTranscriptFix {
+  return config.transcript_fix[surface];
+}
+
+/** Whether any surface still tidies with Haiku (what learning from the clean-up needs). */
+export function haikuCleanupInUse(config: VoiceMessageConfig): boolean {
+  return VOICE_SURFACES.some((s) => config.transcript_fix[s] === "haiku");
+}
+
 /** Self-learning runs only inside a switched-on voice feature, and only once somebody chose it. */
 export function selfLearningOn(config: VoiceMessageConfig): boolean {
   return config.enabled === true && config.self_learning === true;
@@ -197,26 +264,38 @@ export function vocabularyOf(config: VoiceMessageConfig, project: string): strin
 export interface VoiceSettingsPatch {
   enabled?: boolean;
   reviewBeforeSend?: boolean;
+  /** Per surface; a surface left out keeps its choice. */
+  transcriptFix?: Partial<Record<VoiceSurface, VoiceTranscriptFix>>;
+  /**
+   * The older single switch, still taken from the Assistant's settings tools and its undo rows:
+   * true tidies both surfaces with Haiku, false sends both with hints.
+   */
   cleanupEnabled?: boolean;
   selfLearning?: boolean;
   learnAutoVocabulary?: boolean;
   learnFromCleanup?: boolean;
+  learnFromChat?: boolean;
   weeklySummary?: boolean;
   vietnameseFixes?: boolean;
   words?: string[];
-  /** Required for `projectWords`, `removeLearned` and `restoreBlocked`. */
+  /** Required for `projectWords`, `removeLearned`, `restoreBlocked` and `skipLearning`. */
   project?: string;
   projectWords?: string[];
   /** Learned words to undo, matched without case: dropped and never learned again from the clean-up. */
   removeLearned?: string[];
   /** Undone words to bring back as learned words. */
   restoreBlocked?: string[];
+  /**
+   * Pairs still being counted ("Đang học") the user said not to learn, by their meant word: they
+   * stop being counted and join the undone list, so they are never learned until restored.
+   */
+  skipLearning?: string[];
 }
 
 const SWITCHES = [
-  ["enabled", "enabled"], ["reviewBeforeSend", "review_before_send"], ["cleanupEnabled", "cleanup_enabled"],
+  ["enabled", "enabled"], ["reviewBeforeSend", "review_before_send"],
   ["selfLearning", "self_learning"], ["learnAutoVocabulary", "learn_auto_vocabulary"],
-  ["learnFromCleanup", "learn_from_cleanup"], ["weeklySummary", "weekly_summary"], ["vietnameseFixes", "vietnamese_fixes"],
+  ["learnFromCleanup", "learn_from_cleanup"], ["learnFromChat", "learn_from_chat"], ["weeklySummary", "weekly_summary"], ["vietnameseFixes", "vietnamese_fixes"],
 ] as const satisfies ReadonlyArray<readonly [keyof VoiceSettingsPatch, keyof VoiceMessageConfig]>;
 
 export function updateVoiceSettings(patch: VoiceSettingsPatch, now = new Date()): VoiceMessageConfig {
@@ -225,24 +304,40 @@ export function updateVoiceSettings(patch: VoiceSettingsPatch, now = new Date())
     const value = patch[from];
     if (typeof value === "boolean") (config as unknown as Record<string, boolean>)[to] = value;
   }
+  if (typeof patch.cleanupEnabled === "boolean") {
+    const fix: VoiceTranscriptFix = patch.cleanupEnabled ? "haiku" : "hints";
+    config.transcript_fix = { composer: fix, telegram: fix };
+  }
+  for (const surface of VOICE_SURFACES) {
+    const fix = patch.transcriptFix?.[surface];
+    if (isTranscriptFix(fix)) config.transcript_fix = { ...config.transcript_fix, [surface]: fix };
+  }
   if (patch.words) config.words = cleanWordList(patch.words, VOICE_LIMITS.globalWords);
   const project = patch.project;
-  if (project && (patch.projectWords || patch.removeLearned || patch.restoreBlocked)) {
+  if (project && (patch.projectWords || patch.removeLearned || patch.restoreBlocked || patch.skipLearning)) {
     const own = projectWordsOf(config, project);
     const words = patch.projectWords ? cleanWordList(patch.projectWords, VOICE_LIMITS.projectWords) : own.words;
     const drop = new Set((patch.removeLearned ?? []).map((w) => String(w).trim().toLowerCase()));
+    const skip = new Set((patch.skipLearning ?? []).map((w) => String(w).trim().toLowerCase()));
     const restore = new Set((patch.restoreBlocked ?? []).map((w) => String(w).trim().toLowerCase()));
     const undone = own.learned.filter((l) => drop.has(l.word.toLowerCase()));
     const at = now.toISOString();
     const blocked = [
       ...(own.blocked ?? []).filter((b) => !restore.has(b.word.toLowerCase())),
       ...undone.map((l): BlockedWord => ({ ...l, at })),
+      ...skippedWords(own.candidates ?? [], skip, at),
     ];
-    const restored = (own.blocked ?? []).filter((b) => restore.has(b.word.toLowerCase()))
-      .map((b): LearnedWord => ({ ...b, at }));
+    const restoring = (own.blocked ?? []).filter((b) => restore.has(b.word.toLowerCase()));
+    // A word stopped while it was being learned goes back to being counted, where it left off; a
+    // learned word that was undone comes back learned.
+    const restored = restoring.filter((b) => !b.learning?.length)
+      .map(({ learning: _, ...b }): LearnedWord => ({ ...b, at }));
     const learned = [...own.learned.filter((l) => !drop.has(l.word.toLowerCase())), ...restored];
     // An undone correction stops being counted too, or the next message would learn it straight back.
-    const candidates = (own.candidates ?? []).filter((c) => !drop.has(c.to.toLowerCase()));
+    const candidates = [
+      ...(own.candidates ?? []).filter((c) => !drop.has(c.to.toLowerCase()) && !skip.has(c.to.toLowerCase())),
+      ...restoring.flatMap((b) => b.learning ?? []),
+    ];
     config.projects = { ...config.projects, [project]: { ...own, words, learned, candidates, blocked } };
   }
   return writeVoiceSettings(config);

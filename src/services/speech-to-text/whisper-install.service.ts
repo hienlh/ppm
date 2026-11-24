@@ -12,7 +12,7 @@
  * One model is kept on disk at a time: they are 60–574 MB, and "which one is
  * active" then has no state to drift — it is whichever file is there.
  */
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   DEFAULT_MODEL_ID,
@@ -24,10 +24,15 @@ import {
   modelUrl,
   vadModelUrl,
   whisperAssetFor,
+  whisperBuildAsset,
   type WhisperAsset,
+  type WhisperBuildKind,
 } from "./whisper-catalog.ts";
 import { downloadVerified, type FetchFn } from "./whisper-download.ts";
+import { forgetProbe, installedBuild, probeWhisperBackend } from "./whisper-gpu-state.ts";
+import { whisperBusy, withWhisperLock } from "./whisper-run-lock.ts";
 import {
+  findBundledBinary,
   findWhisperBinary,
   whisperBinDir,
   whisperDir,
@@ -39,10 +44,12 @@ import { createLogger } from "../logger.ts";
 
 const log = createLogger("whisper");
 
-export type InstallPhase = "binary" | "model" | "vad" | "verify";
+export type InstallPhase = "binary" | "model" | "vad" | "verify" | "gpu";
 
 export interface InstallJobState {
   modelId: string;
+  /** The whisper.cpp build this install puts in place; a host's own whisper-cli keeps `system`. */
+  build: WhisperBuildKind | "system";
   phase: InstallPhase;
   receivedBytes: number;
   totalBytes: number;
@@ -70,6 +77,8 @@ export interface WhisperStatus {
   ready: boolean;
   models: WhisperStatusModel[];
   install: InstallJobState | null;
+  /** Download size of this platform's CPU build, for the CPU / GPU choice; null when there is none. */
+  cpuBuildBytes: number | null;
 }
 
 let currentJob: InstallJobState | null = null;
@@ -96,7 +105,8 @@ export function getWhisperStatus(
 ): WhisperStatus {
   const binary = findWhisperBinary(platform);
   const model = installedModel();
-  const hasAsset = whisperAssetFor(platform, arch) !== null;
+  const asset = whisperAssetFor(platform, arch);
+  const hasAsset = asset !== null;
 
   return {
     installable: hasAsset || binary !== null,
@@ -107,6 +117,7 @@ export function getWhisperStatus(
     ready: binary !== null && model !== null && existsSync(vadModelPath()),
     models: WHISPER_MODELS.map(publicModel),
     install: currentJob,
+    cpuBuildBytes: asset?.bytes ?? null,
   };
 }
 
@@ -149,7 +160,51 @@ function pruneOtherModels(keepFile: string) {
   }
 }
 
-async function runInstall(modelId: string, platform: NodeJS.Platform, arch: string, fetchFn?: FetchFn) {
+/**
+ * A model already on disk at its pinned size is kept: switching between the CPU and the CUDA
+ * build must not download 574 MB again. Its hash was checked when it was written, and only a
+ * verified download is ever renamed into place.
+ */
+function alreadyOnDisk(path: string, bytes: number): boolean {
+  try { return statSync(path).size === bytes; } catch { return false; }
+}
+
+/**
+ * Put the unpacked build at `staging` where the old one was. Under the run lock, because Windows
+ * cannot move a directory whose `whisper-cli.exe` is running; the old build is set aside first
+ * and put back if the new one cannot be moved in.
+ */
+function swapInBuild(staging: string): Promise<void> {
+  return withWhisperLock(async () => {
+    const bin = whisperBinDir();
+    const old = `${bin}.old`;
+    rmSync(old, { recursive: true, force: true });
+    if (existsSync(bin)) renameSync(bin, old);
+    try {
+      renameSync(staging, bin);
+    } catch (e) {
+      if (existsSync(old)) renameSync(old, bin);
+      throw e;
+    }
+    rmSync(old, { recursive: true, force: true });
+    forgetProbe();
+  });
+}
+
+/**
+ * The build an install puts in place: the one asked for, else the one already there (switching
+ * models keeps a CUDA build), else the CPU build. A host's own whisper-cli is never replaced.
+ */
+export function resolveInstallBuild(
+  requested: WhisperBuildKind | undefined, current: WhisperBuildKind | "system" | null,
+): WhisperBuildKind | "system" {
+  if (current === "system") return "system";
+  return requested ?? current ?? "cpu";
+}
+
+async function runInstall(
+  modelId: string, build: WhisperBuildKind | "system", platform: NodeJS.Platform, arch: string, fetchFn?: FetchFn,
+) {
   const model = modelById(modelId);
   if (!model) throw new Error(`unknown model: ${modelId}`);
   const job = currentJob!;
@@ -160,38 +215,45 @@ async function runInstall(modelId: string, platform: NodeJS.Platform, arch: stri
 
   mkdirSync(whisperModelDir(), { recursive: true });
 
-  // A host that already has whisper-cli (Homebrew, distro package) needs models only.
-  if (!findWhisperBinary(platform)) {
-    const asset = whisperAssetFor(platform, arch);
-    if (!asset) throw new Error(`no whisper.cpp build for ${platform}/${arch} — install it manually`);
+  // A host that already has whisper-cli (Homebrew, distro package) needs models only. A bundled
+  // build of the other kind is replaced, and never left half-replaced: the new archive is
+  // downloaded, checked, unpacked beside the old build and run once before the two swap places.
+  const existing = findWhisperBinary(platform);
+  if (build !== "system" && (!existing || installedBuild(existing) !== build)) {
+    const asset = whisperBuildAsset(build, platform, arch);
+    if (!asset) throw new Error(`no whisper.cpp ${build} build for ${platform}/${arch} — install it manually`);
     job.phase = "binary";
-    mkdirSync(whisperBinDir(), { recursive: true });
     mkdirSync(whisperTmpDir(), { recursive: true });
     const archive = resolve(whisperTmpDir(), asset.file);
     await downloadVerified({ url: asset.url, dest: archive, sha256: asset.sha256, onProgress: progress, fetchFn });
-    await extractArchive(archive, asset, whisperBinDir(), platform);
-    rmSync(archive, { force: true });
+    const staging = `${whisperBinDir()}.new`;
+    try {
+      rmSync(staging, { recursive: true, force: true });
+      mkdirSync(staging, { recursive: true });
+      await extractArchive(archive, asset, staging, platform);
+      const staged = findBundledBinary(platform, staging);
+      if (!staged) throw new Error("whisper-cli missing from the downloaded build");
+      job.phase = "verify";
+      await verifyBinaryRuns(staged);
+      await swapInBuild(staging);
+    } finally {
+      rmSync(archive, { force: true });
+      rmSync(staging, { recursive: true, force: true });
+    }
   }
 
-  job.phase = "model";
-  progress(0, model.bytes);
-  await downloadVerified({
-    url: modelUrl(model),
-    dest: resolve(whisperModelDir(), model.file),
-    sha256: model.sha256,
-    onProgress: progress,
-    fetchFn,
-  });
+  const modelPath = resolve(whisperModelDir(), model.file);
+  if (!alreadyOnDisk(modelPath, model.bytes)) {
+    job.phase = "model";
+    progress(0, model.bytes);
+    await downloadVerified({ url: modelUrl(model), dest: modelPath, sha256: model.sha256, onProgress: progress, fetchFn });
+  }
 
-  job.phase = "vad";
-  progress(0, VAD_MODEL.bytes);
-  await downloadVerified({
-    url: vadModelUrl(),
-    dest: vadModelPath(),
-    sha256: VAD_MODEL.sha256,
-    onProgress: progress,
-    fetchFn,
-  });
+  if (!alreadyOnDisk(vadModelPath(), VAD_MODEL.bytes)) {
+    job.phase = "vad";
+    progress(0, VAD_MODEL.bytes);
+    await downloadVerified({ url: vadModelUrl(), dest: vadModelPath(), sha256: VAD_MODEL.sha256, onProgress: progress, fetchFn });
+  }
 
   job.phase = "verify";
   const binary = findWhisperBinary(platform);
@@ -199,6 +261,13 @@ async function runInstall(modelId: string, platform: NodeJS.Platform, arch: stri
   await verifyBinaryRuns(binary.path);
 
   pruneOtherModels(model.file);
+
+  // A build that may use a GPU is asked which one it uses now, so Settings can say so at once.
+  // A probe that fails does not fail the install: the build still runs, on the CPU.
+  if (installedBuild(binary) !== "cpu") {
+    job.phase = "gpu";
+    await probeWhisperBackend(binary, modelPath).catch(() => {});
+  }
 }
 
 /**
@@ -207,15 +276,24 @@ async function runInstall(modelId: string, platform: NodeJS.Platform, arch: stri
  */
 export function startWhisperInstall(
   modelId: string = DEFAULT_MODEL_ID,
-  opts: { platform?: NodeJS.Platform; arch?: string; fetchFn?: FetchFn } = {},
+  opts: { platform?: NodeJS.Platform; arch?: string; fetchFn?: FetchFn; build?: WhisperBuildKind } = {},
 ): InstallJobState {
   if (currentJob && !currentJob.done) throw new Error("An install is already running");
   const platform = opts.platform ?? process.platform;
   const arch = opts.arch ?? process.arch;
   if (!modelById(modelId)) throw new Error(`unknown model: ${modelId}`);
 
+  // The lookup `runInstall` starts with: a host that already has whisper-cli downloads models only.
+  let existing: WhisperBinary | null = null;
+  try { existing = findWhisperBinary(platform); } catch { /* runInstall meets the same error and reports it */ }
+  const build = resolveInstallBuild(opts.build, installedBuild(existing));
+  if (build !== "system" && !whisperBuildAsset(build, platform, arch)) {
+    throw new Error(`whisper.cpp publishes no ${build} build for ${platform}/${arch}`);
+  }
+
   const job: InstallJobState = {
     modelId,
+    build,
     phase: "binary",
     receivedBytes: 0,
     totalBytes: 0,
@@ -224,18 +302,16 @@ export function startWhisperInstall(
   };
   currentJob = job;
 
-  // The lookup `runInstall` starts with: a host that already has whisper-cli downloads models only.
-  let existing: WhisperBinary | null = null;
-  try { existing = findWhisperBinary(platform); } catch { /* runInstall meets the same error and reports it */ }
+  const downloadsBinary = build !== "system" && installedBuild(existing) !== build;
   const startedAt = Date.now();
   log.info(
     `install started: model=${modelId} ${platform}/${arch}, ` +
-    (existing ? `using ${existing.source} whisper-cli ${existing.path}` : `downloading whisper.cpp ${WHISPER_VERSION}`),
+    (downloadsBinary ? `downloading whisper.cpp ${WHISPER_VERSION} (${build})` : `using ${existing!.source} whisper-cli ${existing!.path}`),
   );
-  runInstall(modelId, platform, arch, opts.fetchFn)
+  runInstall(modelId, build, platform, arch, opts.fetchFn)
     .then(() => {
       job.done = true;
-      log.info(`installed ${existing ? "" : `whisper.cpp ${WHISPER_VERSION} + `}model ${modelId} in ${((Date.now() - startedAt) / 1000).toFixed(1)} s`);
+      log.info(`installed ${downloadsBinary ? `whisper.cpp ${WHISPER_VERSION} (${build}) + ` : ""}model ${modelId} in ${((Date.now() - startedAt) / 1000).toFixed(1)} s`);
     })
     .catch((e: any) => {
       job.error = e?.message ?? String(e);
@@ -249,6 +325,9 @@ export function startWhisperInstall(
 /** Remove everything PPM downloaded. A system-installed whisper-cli is left alone. */
 export function uninstallWhisper(): void {
   if (currentJob && !currentJob.done) throw new Error("An install is running");
+  // A running whisper-cli (a transcription, a GPU check) holds files Windows will not delete, and a
+  // check finishing afterwards would write its result into a folder that is gone.
+  if (whisperBusy()) throw new Error("Whisper is running; try again in a moment");
   rmSync(whisperDir(), { recursive: true, force: true });
   currentJob = null;
 }

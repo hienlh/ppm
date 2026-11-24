@@ -16,7 +16,7 @@ import { approvalAskerFor, createApprovalBroker } from "../../src/services/assis
 import { assistantFullMode } from "../../src/services/assistant/assistant-full-mode-live.ts";
 import { assistantTurnProvenance } from "../../src/services/assistant/assistant-turn-provenance.ts";
 import { SETTINGS_TOOL_HANDLERS } from "../../src/services/assistant-settings-tools/settings-tools.ts";
-import { listSettingChanges } from "../../src/services/assistant-settings-tools/settings-change-log.ts";
+import { listSettingChanges, recordSettingChange } from "../../src/services/assistant-settings-tools/settings-change-log.ts";
 import { undoSettingChange } from "../../src/services/assistant-settings-tools/settings-apply.ts";
 import { assistantToolOff } from "../../src/services/assistant-mcp/assistant-mcp-endpoint.ts";
 
@@ -57,7 +57,7 @@ describe("the switch", () => {
     expect(assistantToolOff("projects_list")).toBeNull();
     const r = await call("settings_set", ctx(allowAuto), { changes: [{ key: "voice.cleanup_enabled", value: false }] });
     expect(text(r)).toContain("off");
-    expect(readVoiceSettings().cleanup_enabled).toBe(true);
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "haiku", telegram: "haiku" });
   });
 });
 
@@ -66,10 +66,24 @@ describe("settings_set", () => {
     const r = json(await call("settings_set", ctx(allowAuto, "user_telegram"), { changes: [{ key: "voice.cleanup_enabled", value: false }] }));
     expect(r.outcome).toBe("changed");
     expect(r.approval).toBe("full");
-    expect(readVoiceSettings().cleanup_enabled).toBe(false);
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "hints", telegram: "hints" });
     expect(asked[0]!.alwaysAsk).toBeUndefined();
+    // The one switch over two places is made and logged as one change per place.
+    const rows = listSettingChanges({ limit: 2 });
+    expect(rows.map((r) => r.key).sort()).toEqual(["voice.transcript_fix.composer", "voice.transcript_fix.telegram"]);
+    for (const row of rows) {
+      expect(row).toMatchObject({ beforeText: "Tidied by Claude Haiku", afterText: "As heard, with hints", origin: "telegram", approval: "full" });
+    }
+  });
+
+  it("changes one surface's choice between Haiku and hints, leaving the other", async () => {
+    const r = json(await call("settings_set", ctx(allowAuto), { changes: [{ key: "voice.transcript_fix.telegram", value: "hints" }] }));
+    expect(r.outcome).toBe("changed");
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "haiku", telegram: "hints" });
     const [row] = listSettingChanges({ limit: 1 });
-    expect(row).toMatchObject({ key: "voice.cleanup_enabled", beforeText: "On", afterText: "Off", origin: "telegram", approval: "full" });
+    expect(row).toMatchObject({ key: "voice.transcript_fix.telegram", beforeText: "Tidied by Claude Haiku", afterText: "As heard, with hints" });
+    expect(text(await call("settings_set", ctx(allowAuto), { changes: [{ key: "voice.transcript_fix.composer", value: "tidy" }] }))).not.toContain('"changed"');
+    expect(readVoiceSettings().transcript_fix.composer).toBe("haiku");
   });
 
   it("asks with an always-ask reason for a permission setting, and changes nothing when denied", async () => {
@@ -101,6 +115,45 @@ describe("settings_set", () => {
       expect((r as { isError?: boolean }).isError).toBe(true);
     }
     expect(asked).toHaveLength(0);
+  });
+});
+
+describe("undo of the switch over both places", () => {
+  const undo = (id: number) => undoSettingChange(id, { callRoute: routeCallerFor("settings"), approval: "user", origin: "ppm", sessionId: null });
+
+  it("gives each place back its own old choice, not one value for both", async () => {
+    updateVoiceSettings({ transcriptFix: { composer: "haiku", telegram: "hints" } });
+    const set = json(await call("settings_set", ctx(allowAuto), { changes: [{ key: "voice.cleanup_enabled", value: true }] }));
+    // Only the place that changed is a change: the chat box was already on Haiku.
+    expect(set.changes.map((c: { key: string }) => c.key)).toEqual(["voice.transcript_fix.telegram"]);
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "haiku", telegram: "haiku" });
+    for (const c of set.changes) expect((await undo(c.changeId)).ok).toBe(true);
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "haiku", telegram: "hints" });
+
+    updateVoiceSettings({ transcriptFix: { composer: "hints", telegram: "haiku" } });
+    const off = json(await call("settings_set", ctx(allowAuto), { changes: [{ key: "voice.cleanup_enabled", value: false }] }));
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "hints", telegram: "hints" });
+    for (const c of off.changes) expect((await undo(c.changeId)).ok).toBe(true);
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "hints", telegram: "haiku" });
+  });
+
+  it("refuses to name the switch and one of its places in one call", async () => {
+    const r = await call("settings_set", ctx(allowAuto), {
+      changes: [{ key: "voice.transcript_fix.composer", value: "hints" }, { key: "voice.cleanup_enabled", value: true }],
+    });
+    expect((r as { isError?: boolean }).isError).toBe(true);
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "haiku", telegram: "haiku" });
+  });
+
+  it("still undoes a row written under the switch before it was split", async () => {
+    // Such a row was written while one switch drove both places, so its old value is both's.
+    updateVoiceSettings({ cleanupEnabled: false });
+    const legacy = recordSettingChange({
+      sessionId: null, origin: "ppm", approval: "full", kind: "setting", key: "voice.cleanup_enabled",
+      label: "Voice Input → Haiku clean-up", before: true, after: false, beforeText: "On", afterText: "Off",
+    });
+    expect((await undo(legacy.id)).ok).toBe(true);
+    expect(readVoiceSettings().transcript_fix).toEqual({ composer: "haiku", telegram: "haiku" });
   });
 });
 

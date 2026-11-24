@@ -26,12 +26,13 @@ export function VoiceSelfLearningSettings({ view, busy, projectSelect, save }: {
   save: (patch: VoiceSettingsPatch) => void;
 }) {
   const on = view.selfLearning;
+  const haikuInUse = Object.values(view.transcriptFix).includes("haiku");
   return (
     <>
       <Group title="Self-learning">
         <SwitchRow
           label="Learn your words by itself"
-          note="Without anyone editing a transcript, PPM picks up names and task codes for Whisper and learns a word once the clean-up has fixed it the same way a few times. Learned words work at once; undo any of them below."
+          note="Without anyone editing a transcript, PPM picks up names and task codes for Whisper and learns a word once the clean-up or the chat's AI has read it the same way a few times. Learned words work at once; undo any of them below."
           checked={on}
           disabled={busy}
           onChange={(selfLearning) => save({ selfLearning })}
@@ -47,12 +48,19 @@ export function VoiceSelfLearningSettings({ view, busy, projectSelect, save }: {
             />
             <SwitchRow
               label="Learn from the clean-up's corrections"
-              note={view.cleanupEnabled
+              note={haikuInUse
                 ? "A word the clean-up fixed the same way in three messages (two when the project already uses it) is learned, and one nobody says for 30 days leaves the list by itself. No extra Haiku call."
-                : "Needs the Haiku clean-up, which is off."}
-              checked={view.learnFromCleanup && view.cleanupEnabled}
-              disabled={busy || !view.cleanupEnabled}
+                : "Needs the Haiku clean-up, which neither the chat box nor Telegram uses."}
+              checked={view.learnFromCleanup && haikuInUse}
+              disabled={busy || !haikuInUse}
               onChange={(learnFromCleanup) => save({ learnFromCleanup })}
+            />
+            <SwitchRow
+              label="Learn from how the AI read your words"
+              note={'A voice message sent as heard asks the AI to open its answer with "Hiểu là: heard → meant" when it read a word differently. The same reading in three messages is learned, and one nobody says for 30 days leaves the list by itself. No extra AI call.'}
+              checked={view.learnFromChat}
+              disabled={busy}
+              onChange={(learnFromChat) => save({ learnFromChat })}
             />
             <SwitchRow
               label="Weekly summary"
@@ -74,9 +82,11 @@ export function VoiceSelfLearningSettings({ view, busy, projectSelect, save }: {
             <VoiceLearnedWordsList
               learned={view.projectLearned}
               blocked={view.projectBlocked}
+              learning={view.projectLearning}
               busy={busy}
               onUndo={(removeLearned) => save({ removeLearned })}
               onRestore={(word) => save({ restoreBlocked: [word] })}
+              onSkip={(word) => save({ skipLearning: [word] })}
             />
           </Group>
         </>

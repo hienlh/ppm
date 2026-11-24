@@ -131,9 +131,9 @@ describe("voice draft details", () => {
 
   it("reads a settings answer with anything missing as off", () => {
     expect(parseVoiceSettings(null)).toEqual({
-      enabled: false, reviewBeforeSend: true, cleanupEnabled: true,
-      selfLearning: false, learnAutoVocabulary: true, learnFromCleanup: true, weeklySummary: true, vietnameseFixes: true,
-      words: [], projectWords: [], projectLearned: [], projectBlocked: [], whisperPrompt: [], whisperPromptMaxChars: 600,
+      enabled: false, reviewBeforeSend: true, transcriptFix: { composer: "hints", telegram: "hints" },
+      selfLearning: false, learnAutoVocabulary: true, learnFromCleanup: true, learnFromChat: true, weeklySummary: true, vietnameseFixes: true,
+      words: [], projectWords: [], projectLearned: [], projectBlocked: [], projectLearning: [], whisperPrompt: [], whisperPromptMaxChars: 600,
       whisperReady: false,
     });
     // A prompt word from an unknown source is dropped rather than drawn in a colour that means nothing.

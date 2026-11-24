@@ -14,6 +14,8 @@ import { telegramChatsBoundTo } from "../assistant-hub/assistant-hub-db.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
 import { redactForTelegram } from "../telegram/telegram-html-format.ts";
 import { describeTurnStop } from "../../shared/turn-stop.ts";
+import { decodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
+import { voicePlainText } from "../../shared/voice-message.ts";
 import { canSendTo } from "./assistant-telegram-access.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { BridgeStateStore } from "./assistant-telegram-state.ts";
@@ -295,7 +297,10 @@ export function mirroredLine(origin: ChatMessageOrigin, text: string, imageCount
   if (origin === "watch") return WATCH_NEWS_LINE;
   if (origin !== "ws") return null;
   const images = imageCount > 0 ? ` [+${imageCount} image${imageCount === 1 ? "" : "s"}]` : "";
-  const body = escapeTelegramHtml(redactForTelegram(truncateText(text, MIRRORED_MESSAGE_MAX)));
+  // What the user wrote: no PPM block (a reply quote, turn references, voice hints) and no voice
+  // marker with its file path — the words alone, as a title or a reply quote shows them.
+  const said = voicePlainText(decodeMessageBlocks(text).content);
+  const body = escapeTelegramHtml(redactForTelegram(truncateText(said, MIRRORED_MESSAGE_MAX)));
   return `🖥 <i>(PPM)</i> ${body}${images}`;
 }
 

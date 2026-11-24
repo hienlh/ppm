@@ -3,7 +3,9 @@
  * transcript, and learning from a corrected transcript.
  */
 import { api, getAuthToken } from "@/lib/api-client";
-import type { BlockedWord, LearnedWord } from "../../shared/voice-message";
+import {
+  DEFAULT_TRANSCRIPT_FIX, VOICE_SURFACES, type BlockedWord, type LearnedWord, type LearningPair, type VoiceSurface, type VoiceTranscriptFix,
+} from "../../shared/voice-message";
 
 /** One word of Whisper's prompt and where it came from: typed by the user, learned, or picked up. */
 export interface PromptWord { word: string; source: "typed" | "learned" | "picked" }
@@ -11,12 +13,14 @@ export interface PromptWord { word: string; source: "typed" | "learned" | "picke
 export interface VoiceSettingsView {
   enabled: boolean;
   reviewBeforeSend: boolean;
-  /** Tidy the transcript with Claude Haiku; off: Whisper's text as it is. */
-  cleanupEnabled: boolean;
+  /** Per surface: tidy with Claude Haiku, or send Whisper's text with hints. */
+  transcriptFix: Record<VoiceSurface, VoiceTranscriptFix>;
   /** Self-learning as chosen (the feature intro or this pane); its parts below. */
   selfLearning: boolean;
   learnAutoVocabulary: boolean;
   learnFromCleanup: boolean;
+  /** Learn a word once the chat's AI read it the same way in three voice messages. */
+  learnFromChat: boolean;
   weeklySummary: boolean;
   /** The clean-up also fixes misheard Vietnamese words. */
   vietnameseFixes: boolean;
@@ -25,6 +29,8 @@ export interface VoiceSettingsView {
   projectLearned: LearnedWord[];
   /** Learned words the user undid for the project: not learned again until restored. */
   projectBlocked: BlockedWord[];
+  /** Pairs still being counted for the project, newest first. */
+  projectLearning: LearningPair[];
   /** What Whisper's prompt holds for the project, in order. */
   whisperPrompt: PromptWord[];
   whisperPromptMaxChars: number;
@@ -34,10 +40,11 @@ export interface VoiceSettingsView {
 export interface VoiceSettingsPatch {
   enabled?: boolean;
   reviewBeforeSend?: boolean;
-  cleanupEnabled?: boolean;
+  transcriptFix?: Partial<Record<VoiceSurface, VoiceTranscriptFix>>;
   selfLearning?: boolean;
   learnAutoVocabulary?: boolean;
   learnFromCleanup?: boolean;
+  learnFromChat?: boolean;
   weeklySummary?: boolean;
   vietnameseFixes?: boolean;
   words?: string[];
@@ -45,6 +52,8 @@ export interface VoiceSettingsPatch {
   projectWords?: string[];
   removeLearned?: string[];
   restoreBlocked?: string[];
+  /** Stop learning these pairs, by their meant word; they join the undone list. */
+  skipLearning?: string[];
 }
 
 export interface VoiceTranscript {
@@ -55,7 +64,7 @@ export interface VoiceTranscript {
   transcribeMs: number;
   cleanupMs: number;
   reviewBeforeSend: boolean;
-  /** The user turned the clean-up off: Whisper's text, by choice, not a failure. */
+  /** The chat box sends Whisper's text with hints instead of a clean-up: by choice, not a failure. */
   cleanupSkipped: boolean;
   /** The server's step timings, when it sends them. */
   convertMs?: number;
@@ -76,6 +85,13 @@ export const VOICE_SETTINGS_CHANGED_EVENT = "ppm:voice-settings-changed";
 
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []);
 
+function parseTranscriptFix(raw: unknown): Record<VoiceSurface, VoiceTranscriptFix> {
+  const v = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const out = { ...DEFAULT_TRANSCRIPT_FIX };
+  for (const surface of VOICE_SURFACES) if (v[surface] === "haiku" || v[surface] === "hints") out[surface] = v[surface] as VoiceTranscriptFix;
+  return out;
+}
+
 /** What the server answered, with anything missing read as off or empty. */
 export function parseVoiceSettings(raw: unknown): VoiceSettingsView {
   const v = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -87,6 +103,11 @@ export function parseVoiceSettings(raw: unknown): VoiceSettingsView {
     ? v.projectBlocked.filter((b): b is BlockedWord =>
         !!b && typeof b === "object" && typeof (b as BlockedWord).word === "string" && typeof (b as BlockedWord).at === "string")
     : [];
+  const learning = Array.isArray(v.projectLearning)
+    ? v.projectLearning.filter((c): c is LearningPair =>
+        !!c && typeof c === "object" && typeof (c as LearningPair).to === "string" && typeof (c as LearningPair).from === "string"
+        && typeof (c as LearningPair).hits === "number" && typeof (c as LearningPair).at === "string")
+    : [];
   const prompt = Array.isArray(v.whisperPrompt)
     ? v.whisperPrompt.filter((p): p is PromptWord =>
         !!p && typeof p === "object" && typeof (p as PromptWord).word === "string"
@@ -95,16 +116,18 @@ export function parseVoiceSettings(raw: unknown): VoiceSettingsView {
   return {
     enabled: v.enabled === true,
     reviewBeforeSend: v.reviewBeforeSend !== false,
-    cleanupEnabled: v.cleanupEnabled !== false,
+    transcriptFix: parseTranscriptFix(v.transcriptFix),
     selfLearning: v.selfLearning === true,
     learnAutoVocabulary: v.learnAutoVocabulary !== false,
     learnFromCleanup: v.learnFromCleanup !== false,
+    learnFromChat: v.learnFromChat !== false,
     weeklySummary: v.weeklySummary !== false,
     vietnameseFixes: v.vietnameseFixes !== false,
     words: strings(v.words),
     projectWords: strings(v.projectWords),
     projectLearned: learned,
     projectBlocked: blocked,
+    projectLearning: learning,
     whisperPrompt: prompt,
     whisperPromptMaxChars: typeof v.whisperPromptMaxChars === "number" ? v.whisperPromptMaxChars : 600,
     whisperReady: v.whisperReady === true,

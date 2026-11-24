@@ -32,6 +32,8 @@ import { runWebScenarios } from "./fixtures/voice-message-steps-web.mjs";
 import { runTelegramScenario } from "./fixtures/voice-message-steps-telegram.mjs";
 import { runIntroScenario } from "./fixtures/voice-message-steps-intro.mjs";
 import { runSelfLearningTelegramScenarios, runSelfLearningWebScenarios } from "./fixtures/voice-message-steps-self-learning.mjs";
+import { runHintsScenarios } from "./fixtures/voice-message-steps-hints.mjs";
+import { runChatLearningScenarios } from "./fixtures/voice-message-steps-learning.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-voice-e2e-"));
 const shots = resolve(process.env.PPM_VOICE_SHOTS ?? join(sandbox, "shots"));
@@ -124,6 +126,20 @@ try {
     });
     try {
       await runSelfLearningWebScenarios({ kit, browser, install, shots });
+    } finally {
+      await install.stop();
+    }
+  });
+
+  // A fresh install's default: each surface sends Whisper's text as heard, with hints (H), and
+  // self-learning from the chat's own reading of it (L2).
+  await kit.scenario("install hints: startup", async () => {
+    const install = await startFixture({
+      sandbox, artifacts: shots, webDir, name: "hints", mode: "web", feature: "on", kit, env: { PPM_VOICE_TRANSCRIPT_FIX: "hints" },
+    });
+    try {
+      await runHintsScenarios({ kit, browser, install, shots });
+      await runChatLearningScenarios({ kit, browser, install, shots });
     } finally {
       await install.stop();
     }
