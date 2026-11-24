@@ -58,6 +58,24 @@ export interface VoiceCandidate {
  */
 export interface BlockedWord { word: string; from: string; at: string; source?: LearnedSource; hits?: number; kind?: "term" | "phrase" }
 
+/** Why a heard → meant pair was not counted toward a learned word. */
+export type LearnSkipReason =
+  | "same-chat" | "not-in-transcript" | "already-spelled" | "case-only" | "plural-only"
+  | "undone" | "typed-word" | "too-long" | "secret";
+
+/** What became of one heard → meant pair a learning source read. */
+export interface LearnReading {
+  from: string;
+  to: string;
+  status: "learning" | "learned" | "skipped";
+  /** Readings counted so far (learning), or the learned word's uses (learned). */
+  hits?: number;
+  reason?: LearnSkipReason;
+}
+
+/** A pair still being counted, as Settings → Voice lists it under "Learning". */
+export interface LearningPair { from: string; to: string; hits: number; at: string; source: "cleanup" | "chat"; chats: number }
+
 export interface VoiceProjectWords {
   words: string[];
   learned: LearnedWord[];

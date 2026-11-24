@@ -68,7 +68,7 @@ describe("/voice-settings", () => {
     expect((await json(res)).data).toEqual({
       enabled: false, reviewBeforeSend: true, transcriptFix: { composer: "hints", telegram: "hints" }, cleanupEnabled: false,
       selfLearning: false, learnAutoVocabulary: true, learnFromCleanup: true, learnFromChat: true, weeklySummary: true, vietnameseFixes: true,
-      words: [], projectWords: [], projectLearned: [], projectBlocked: [],
+      words: [], projectWords: [], projectLearned: [], projectBlocked: [], projectLearning: [],
       whisperPrompt: [], whisperPromptMaxChars: 600, whisperReady: false,
     });
   });
@@ -96,6 +96,25 @@ describe("/voice-settings", () => {
     expect(restored.projectBlocked).toEqual([]);
     expect(restored.projectLearned).toMatchObject([{ word: "PPM", from: "BPM" }]);
     expect((await put({ restoreBlocked: ["PPM"] })).status).toBe(400);
+  });
+
+  it("lists the pairs still being learned, and stops learning one on Không học", async () => {
+    configService.set("voice_message", {
+      enabled: true, self_learning: true, review_before_send: true, words: [],
+      projects: { demo: { words: [], candidates: [
+        { from: "BPM", to: "PPM", hits: 1, at: "2026-11-20T10:00:00.000Z", source: "chat", chats: ["c1"] },
+        { from: "scale", to: "Slack", hits: 2, at: "2026-11-21T10:00:00.000Z" },
+      ] } },
+    });
+    const view = (await json(await put({ project: "demo", projectWords: [] }))).data;
+    expect(view.projectLearning).toEqual([
+      { from: "scale", to: "Slack", hits: 2, at: "2026-11-21T10:00:00.000Z", source: "cleanup", chats: 0 },
+      { from: "BPM", to: "PPM", hits: 1, at: "2026-11-20T10:00:00.000Z", source: "chat", chats: 1 },
+    ]);
+    const skipped = (await json(await put({ project: "demo", skipLearning: ["ppm"] }))).data;
+    expect(skipped.projectLearning.map((c: { to: string }) => c.to)).toEqual(["Slack"]);
+    expect(skipped.projectBlocked).toMatchObject([{ word: "PPM", from: "BPM", source: "chat" }]);
+    expect((await put({ skipLearning: ["PPM"] })).status).toBe(400);
   });
 
   it("saves the Haiku clean-up switch and refuses a value that is not a boolean", async () => {

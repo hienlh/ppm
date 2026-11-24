@@ -20,6 +20,7 @@ import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import { decodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
 import { redactLogText } from "../../shared/log-redact.ts";
 import { splitUnderstoodLine, type UnderstoodPair } from "../../shared/voice-understood.ts";
+import type { LearnReading, LearnSkipReason } from "../../shared/voice-message.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { chatLifecycle, type ChatLifecycle } from "../chat-control/chat-lifecycle.ts";
 import { createLogger } from "../logger.ts";
@@ -56,20 +57,47 @@ interface Followed {
 /** Whether a text holds something PPM never stores as a learned word (a token, a key). */
 const holdsSecret = (text: string) => redactLogText(text, { home: false, email: false, chats: false }) !== text;
 
+/** "Voices" and "Voice", "routes" and "route": the same word, not a misheard one. */
+export function pluralOnly(a: string, b: string): boolean {
+  const x = a.toLowerCase().normalize("NFC");
+  const y = b.toLowerCase().normalize("NFC");
+  // One is the other plus "s" or "es" ("voice"/"voices", "box"/"boxes"); stripping a suffix from
+  // both would turn "voices" into "voic" and miss it.
+  const plural = (one: string, many: string) => many === `${one}s` || many === `${one}es`;
+  return x !== y && (plural(x, y) || plural(y, x));
+}
+
 /**
- * The pairs worth counting: the heard side said in the transcript, the meant side not (or nothing
- * was misheard), short enough to be a misheard word rather than a rewording, no secret either side.
+ * The pairs worth counting — the heard side said in the transcript, the meant side not (or nothing
+ * was misheard), more than a plural apart, short enough to be a misheard word rather than a
+ * rewording, no secret either side — and the rest, each with why it was left out.
  */
-export function chatReplacements(transcript: string, pairs: readonly UnderstoodPair[], known: ReadonlySet<string>): Replacement[] {
-  const out: Replacement[] = [];
+export function chatReadings(transcript: string, pairs: readonly UnderstoodPair[], known: ReadonlySet<string>): {
+  found: Replacement[]; skipped: LearnReading[];
+} {
+  const found: Replacement[] = [];
+  const skipped: LearnReading[] = [];
+  const skip = (from: string, to: string, reason: LearnSkipReason) => skipped.push({ from, to, status: "skipped", reason });
   for (const { heard, meant } of pairs) {
-    if (!wordUsedIn(transcript, heard) || wordUsedIn(transcript, meant)) continue;
-    if (heard.split(/\s+/).length > CLEANUP_LEARN_LIMITS.maxWords || meant.split(/\s+/).length > CLEANUP_LEARN_LIMITS.maxWords) continue;
-    if (meant.length > CLEANUP_LEARN_LIMITS.maxToChars || heard.length > CLEANUP_LEARN_LIMITS.maxFromChars) continue;
-    if (!/\p{L}/u.test(meant) || holdsSecret(heard) || holdsSecret(meant)) continue;
-    out.push({ from: heard, to: meant, kind: replacementKind(meant, known) });
+    if (holdsSecret(heard) || holdsSecret(meant)) { skip("…", "…", "secret"); continue; }
+    if (!wordUsedIn(transcript, heard)) { skip(heard, meant, "not-in-transcript"); continue; }
+    // "ppm" read as "PPM": Whisper heard the word right, only its capitals differ.
+    if (heard.normalize("NFC").toLowerCase() === meant.normalize("NFC").toLowerCase()) { skip(heard, meant, "case-only"); continue; }
+    if (wordUsedIn(transcript, meant)) { skip(heard, meant, "already-spelled"); continue; }
+    if (pluralOnly(heard, meant)) { skip(heard, meant, "plural-only"); continue; }
+    if (heard.split(/\s+/).length > CLEANUP_LEARN_LIMITS.maxWords || meant.split(/\s+/).length > CLEANUP_LEARN_LIMITS.maxWords
+      || meant.length > CLEANUP_LEARN_LIMITS.maxToChars || heard.length > CLEANUP_LEARN_LIMITS.maxFromChars || !/\p{L}/u.test(meant)) {
+      skip(heard, meant, "too-long");
+      continue;
+    }
+    found.push({ from: heard, to: meant, kind: replacementKind(meant, known) });
   }
-  return out;
+  return { found, skipped };
+}
+
+/** The pairs worth counting (see {@link chatReadings}). */
+export function chatReplacements(transcript: string, pairs: readonly UnderstoodPair[], known: ReadonlySet<string>): Replacement[] {
+  return chatReadings(transcript, pairs, known).found;
 }
 
 export interface VoiceChatLearningDeps {
@@ -150,18 +178,29 @@ export function startVoiceChatLearning(deps: VoiceChatLearningDeps = {}): () => 
   };
 }
 
-/** Counts the pairs toward learned words when self-learning and its chat part are on. */
-export function learnFromUnderstood(project: string, transcript: string, pairs: readonly UnderstoodPair[], at = new Date(), chatId?: string): void {
+/**
+ * Counts the pairs toward learned words when self-learning and its chat part are on, and answers
+ * with what became of each pair: counted, learned, or skipped and why (null when it did not run).
+ */
+export function learnFromUnderstood(
+  project: string, transcript: string, pairs: readonly UnderstoodPair[], at = new Date(), chatId?: string,
+): LearnReading[] | null {
   try {
     const settings = readVoiceSettings();
-    if (!selfLearningOn(settings) || !settings.learn_from_chat) return;
+    if (!selfLearningOn(settings) || !settings.learn_from_chat) return null;
     const known = new Set(vocabularyOf(settings, project).map((w) => w.toLowerCase()));
-    const found = chatReplacements(transcript, pairs, known);
-    if (!found.length) return;
-    const learned = recordCleanupReplacements(project, found, known, at, "chat", chatId);
-    // Counts only: what was said never goes into the log.
-    if (learned.length) log.info(`learned ${learned.length} word(s) from the chat's reading for project "${project}"`);
+    const { found, skipped } = chatReadings(transcript, pairs, known);
+    const items: LearnReading[] = [...skipped];
+    const learned = found.length ? recordCleanupReplacements(project, found, known, at, "chat", chatId, (item) => items.push(item)) : [];
+    // Counts and reasons only: what was said never goes into the log.
+    const reasons = new Map<string, number>();
+    for (const i of items) if (i.reason) reasons.set(i.reason, (reasons.get(i.reason) ?? 0) + 1);
+    const why = reasons.size ? ` (${[...reasons].map(([r, n]) => `${r} ${n}`).join(", ")})` : "";
+    const counted = items.filter((i) => i.status !== "skipped").length;
+    log.info(`chat reading counted ${counted} pair(s), skipped ${items.length - counted}${why}, learned ${learned.length} for project "${project}"`);
+    return items;
   } catch (e) {
     log.warn(`could not count the chat's reading of a voice message: ${(e as Error).message}`);
+    return null;
   }
 }

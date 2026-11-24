@@ -256,13 +256,18 @@ export interface VoiceSettingsPatch {
   weeklySummary?: boolean;
   vietnameseFixes?: boolean;
   words?: string[];
-  /** Required for `projectWords`, `removeLearned` and `restoreBlocked`. */
+  /** Required for `projectWords`, `removeLearned`, `restoreBlocked` and `skipLearning`. */
   project?: string;
   projectWords?: string[];
   /** Learned words to undo, matched without case: dropped and never learned again from the clean-up. */
   removeLearned?: string[];
   /** Undone words to bring back as learned words. */
   restoreBlocked?: string[];
+  /**
+   * Pairs still being counted ("Đang học") the user said not to learn, by their meant word: they
+   * stop being counted and join the undone list, so they are never learned until restored.
+   */
+  skipLearning?: string[];
 }
 
 const SWITCHES = [
@@ -287,22 +292,26 @@ export function updateVoiceSettings(patch: VoiceSettingsPatch, now = new Date())
   }
   if (patch.words) config.words = cleanWordList(patch.words, VOICE_LIMITS.globalWords);
   const project = patch.project;
-  if (project && (patch.projectWords || patch.removeLearned || patch.restoreBlocked)) {
+  if (project && (patch.projectWords || patch.removeLearned || patch.restoreBlocked || patch.skipLearning)) {
     const own = projectWordsOf(config, project);
     const words = patch.projectWords ? cleanWordList(patch.projectWords, VOICE_LIMITS.projectWords) : own.words;
     const drop = new Set((patch.removeLearned ?? []).map((w) => String(w).trim().toLowerCase()));
+    const skip = new Set((patch.skipLearning ?? []).map((w) => String(w).trim().toLowerCase()));
     const restore = new Set((patch.restoreBlocked ?? []).map((w) => String(w).trim().toLowerCase()));
     const undone = own.learned.filter((l) => drop.has(l.word.toLowerCase()));
     const at = now.toISOString();
     const blocked = [
       ...(own.blocked ?? []).filter((b) => !restore.has(b.word.toLowerCase())),
       ...undone.map((l): BlockedWord => ({ ...l, at })),
+      // One undone entry per word, even when the clean-up and the chat both counted it.
+      ...[...new Map((own.candidates ?? []).filter((c) => skip.has(c.to.toLowerCase())).map((c) => [c.to.toLowerCase(), c])).values()]
+        .map((c): BlockedWord => ({ word: c.to, from: c.from, at, source: c.source === "chat" ? "chat" : "cleanup", hits: c.hits })),
     ];
     const restored = (own.blocked ?? []).filter((b) => restore.has(b.word.toLowerCase()))
       .map((b): LearnedWord => ({ ...b, at }));
     const learned = [...own.learned.filter((l) => !drop.has(l.word.toLowerCase())), ...restored];
     // An undone correction stops being counted too, or the next message would learn it straight back.
-    const candidates = (own.candidates ?? []).filter((c) => !drop.has(c.to.toLowerCase()));
+    const candidates = (own.candidates ?? []).filter((c) => !drop.has(c.to.toLowerCase()) && !skip.has(c.to.toLowerCase()));
     config.projects = { ...config.projects, [project]: { ...own, words, learned, candidates, blocked } };
   }
   return writeVoiceSettings(config);

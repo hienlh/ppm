@@ -4,7 +4,7 @@
  */
 import { api, getAuthToken } from "@/lib/api-client";
 import {
-  DEFAULT_TRANSCRIPT_FIX, VOICE_SURFACES, type BlockedWord, type LearnedWord, type VoiceSurface, type VoiceTranscriptFix,
+  DEFAULT_TRANSCRIPT_FIX, VOICE_SURFACES, type BlockedWord, type LearnedWord, type LearningPair, type VoiceSurface, type VoiceTranscriptFix,
 } from "../../shared/voice-message";
 
 /** One word of Whisper's prompt and where it came from: typed by the user, learned, or picked up. */
@@ -29,6 +29,8 @@ export interface VoiceSettingsView {
   projectLearned: LearnedWord[];
   /** Learned words the user undid for the project: not learned again until restored. */
   projectBlocked: BlockedWord[];
+  /** Pairs still being counted for the project, newest first. */
+  projectLearning: LearningPair[];
   /** What Whisper's prompt holds for the project, in order. */
   whisperPrompt: PromptWord[];
   whisperPromptMaxChars: number;
@@ -50,6 +52,8 @@ export interface VoiceSettingsPatch {
   projectWords?: string[];
   removeLearned?: string[];
   restoreBlocked?: string[];
+  /** Stop learning these pairs, by their meant word; they join the undone list. */
+  skipLearning?: string[];
 }
 
 export interface VoiceTranscript {
@@ -99,6 +103,11 @@ export function parseVoiceSettings(raw: unknown): VoiceSettingsView {
     ? v.projectBlocked.filter((b): b is BlockedWord =>
         !!b && typeof b === "object" && typeof (b as BlockedWord).word === "string" && typeof (b as BlockedWord).at === "string")
     : [];
+  const learning = Array.isArray(v.projectLearning)
+    ? v.projectLearning.filter((c): c is LearningPair =>
+        !!c && typeof c === "object" && typeof (c as LearningPair).to === "string" && typeof (c as LearningPair).from === "string"
+        && typeof (c as LearningPair).hits === "number" && typeof (c as LearningPair).at === "string")
+    : [];
   const prompt = Array.isArray(v.whisperPrompt)
     ? v.whisperPrompt.filter((p): p is PromptWord =>
         !!p && typeof p === "object" && typeof (p as PromptWord).word === "string"
@@ -118,6 +127,7 @@ export function parseVoiceSettings(raw: unknown): VoiceSettingsView {
     projectWords: strings(v.projectWords),
     projectLearned: learned,
     projectBlocked: blocked,
+    projectLearning: learning,
     whisperPrompt: prompt,
     whisperPromptMaxChars: typeof v.whisperPromptMaxChars === "number" ? v.whisperPromptMaxChars : 600,
     whisperReady: v.whisperReady === true,

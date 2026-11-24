@@ -10,9 +10,9 @@ import { useMemo, useState } from "react";
 import { Undo2 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { BlockedWord, LearnedWord } from "../../../shared/voice-message";
+import type { BlockedWord, LearnedWord, LearningPair } from "../../../shared/voice-message";
 
-type Tab = "week" | "all" | "undone";
+type Tab = "week" | "all" | "learning" | "undone";
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** "today 02:14", "yesterday", "Tue", "12 Nov": how long ago, as briefly as reads clearly. */
@@ -45,6 +45,14 @@ export function learnedSourceLabel(l: LearnedWord): string {
   return "your edit";
 }
 
+/**
+ * How far a pair still being learned has got: "chat · 1 of 3 chats" (the chat counts distinct
+ * chats), "clean-up · seen 2×" (the clean-up's threshold depends on the project, so no "of").
+ */
+export function learningLabel(c: LearningPair): string {
+  return c.source === "chat" ? `chat · ${c.chats} of 3 chats` : `clean-up · seen ${c.hits}×`;
+}
+
 /** The learned words of today (local day), for "Undo everything learned today". */
 export function learnedToday(learned: readonly LearnedWord[], now: Date = new Date()): string[] {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -54,12 +62,16 @@ export function learnedToday(learned: readonly LearnedWord[], now: Date = new Da
 interface Props {
   learned: LearnedWord[];
   blocked: BlockedWord[];
+  /** Pairs still being counted, newest first. */
+  learning: LearningPair[];
   busy?: boolean;
   onUndo: (words: string[]) => void;
   onRestore: (word: string) => void;
+  /** "Don't learn": stop counting a pair, by its meant word. */
+  onSkip: (word: string) => void;
 }
 
-export function VoiceLearnedWordsList({ learned, blocked, busy, onUndo, onRestore }: Props) {
+export function VoiceLearnedWordsList({ learned, blocked, learning, busy, onUndo, onRestore, onSkip }: Props) {
   const [tab, setTab] = useState<Tab>("week");
   const now = useMemo(() => new Date(), [learned, blocked]);
   const newestFirst = useMemo(() => [...learned].sort((a, b) => b.at.localeCompare(a.at)), [learned]);
@@ -72,9 +84,10 @@ export function VoiceLearnedWordsList({ learned, blocked, busy, onUndo, onRestor
       <div className="flex flex-wrap items-center gap-1.5 border-b border-border-soft px-3 py-2">
         <TabButton active={tab === "week"} onClick={() => setTab("week")}>This week · {week.length}</TabButton>
         <TabButton active={tab === "all"} onClick={() => setTab("all")}>All · {learned.length}</TabButton>
+        <TabButton active={tab === "learning"} onClick={() => setTab("learning")}>Learning · {learning.length}</TabButton>
         <TabButton active={tab === "undone"} onClick={() => setTab("undone")}>Undone · {blocked.length}</TabButton>
         <span className="flex-1" />
-        {tab !== "undone" && (
+        {(tab === "week" || tab === "all") && (
           <Button
             variant="outline"
             size="sm"
@@ -87,7 +100,21 @@ export function VoiceLearnedWordsList({ learned, blocked, busy, onUndo, onRestor
         )}
       </div>
 
-      {tab === "undone" ? (
+      {tab === "learning" ? (
+        learning.length === 0 ? <Empty>Nothing being learned. A word the clean-up or the chat's AI read differently is counted here until it is learned.</Empty> : (
+          <ul>
+            {learning.map((c) => (
+              <Row key={`learning-${c.from}-${c.to}`} word={c.to} heard={c.from} badge={learningLabel(c)}
+                badgeTone={c.source === "chat" ? "chat" : "cleanup"} when={{ text: `seen ${learnedWhen(c.at, now)}`, title: "" }}>
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => onSkip(c.to)} className="h-11 md:h-[30px]"
+                  aria-label={`Don't learn ${c.to}`}>
+                  Don't learn
+                </Button>
+              </Row>
+            ))}
+          </ul>
+        )
+      ) : tab === "undone" ? (
         blocked.length === 0 ? <Empty>Nothing undone. A word you undo stays here, and is never learned again until you restore it.</Empty> : (
           <ul>
             {[...blocked].sort((a, b) => b.at.localeCompare(a.at)).map((b) => (

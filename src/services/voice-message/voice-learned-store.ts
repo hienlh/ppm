@@ -5,6 +5,7 @@
  * explicit correction and lifts the block.
  */
 import type { LearnedSource, LearnedWord, VoiceCandidate, VoiceMessageConfig } from "../../shared/voice-message.ts";
+import type { LearnReading } from "../../shared/voice-message.ts";
 import { isFaded, isStaleCandidate, wordUsedIn } from "./voice-learned-fade.ts";
 import { readyToLearn, type Replacement } from "./voice-learn-from-cleanup.ts";
 import {
@@ -62,6 +63,8 @@ export function recordCleanupReplacements(
   now = new Date(),
   source: Extract<LearnedSource, "cleanup" | "chat"> = "cleanup",
   chatId?: string,
+  /** Told what became of each replacement. */
+  report?: (item: LearnReading) => void,
 ): LearnedWord[] {
   if (!validProject(project) || found.length === 0) return [];
   const config: VoiceMessageConfig = readVoiceSettings();
@@ -79,17 +82,24 @@ export function recordCleanupReplacements(
   for (const r of found) {
     const word = r.to.toLowerCase();
     const key = candidateKey({ from: r.from, to: r.to, ...chatSource });
-    if (seenThisMessage.has(key) || blocked.has(word) || typed.has(word)) continue;
+    if (seenThisMessage.has(key)) continue;
     seenThisMessage.add(key);
+    if (blocked.has(word)) { report?.({ from: r.from, to: r.to, status: "skipped", reason: "undone" }); continue; }
+    if (typed.has(word)) { report?.({ from: r.from, to: r.to, status: "skipped", reason: "typed-word" }); continue; }
     const index = learnedAt.get(word);
     if (index !== undefined) {
       const entry = learned[index]!;
-      learned[index] = { ...entry, hits: Math.min((entry.hits ?? 1) + 1, VOICE_LIMITS.maxHits), lastUsedAt: at };
+      const bumped = Math.min((entry.hits ?? 1) + 1, VOICE_LIMITS.maxHits);
+      learned[index] = { ...entry, hits: bumped, lastUsedAt: at };
+      report?.({ from: r.from, to: r.to, status: "learned", hits: bumped });
       continue;
     }
     const previous = candidates.get(key);
     // The same chat reading the same pair again is one reading, not another.
-    if (source === "chat" && chatId && previous?.chats?.includes(chatId)) continue;
+    if (source === "chat" && chatId && previous?.chats?.includes(chatId)) {
+      report?.({ from: r.from, to: r.to, status: "skipped", reason: "same-chat", hits: previous.hits });
+      continue;
+    }
     const chats = source === "chat" && chatId ? [...(previous?.chats ?? []), chatId].slice(-VOICE_LIMITS.candidateChats) : undefined;
     const hits = (previous?.hits ?? 0) + 1;
     if (readyToLearn(r, hits, known, source)) {
@@ -98,8 +108,10 @@ export function recordCleanupReplacements(
       learnedAt.set(word, learned.length - 1);
       candidates.delete(key);
       newlyLearned.push(entry);
+      report?.({ from: r.from, to: r.to, status: "learned", hits });
     } else {
       candidates.set(key, { from: r.from, to: r.to, hits, at, ...chatSource, ...(chats ? { chats } : {}) });
+      report?.({ from: r.from, to: r.to, status: "learning", hits });
     }
   }
 

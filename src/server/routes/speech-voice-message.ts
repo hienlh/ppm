@@ -71,6 +71,10 @@ async function settingsView(project: string | undefined, whisperReady: boolean) 
     // A faded word is gone from the list even before the next voice message prunes the row.
     projectLearned: own.learned.filter((l) => !isFaded(l, Date.now())),
     projectBlocked: own.blocked ?? [],
+    // "Đang học": the pairs still being counted, newest first, with how many chats have read them.
+    projectLearning: [...(own.candidates ?? [])].sort((a, b) => b.at.localeCompare(a.at)).map((c) => ({
+      from: c.from, to: c.to, hits: c.hits, at: c.at, source: c.source ?? "cleanup", chats: c.chats?.length ?? 0,
+    })),
     whisperPrompt: project ? whisperPromptPreview(config, project, { selfLearning, auto }) : [],
     whisperPromptMaxChars: WHISPER_PROMPT_MAX_CHARS,
     whisperReady,
@@ -102,7 +106,7 @@ function parsePatch(body: unknown): VoiceSettingsPatch | string {
     }
     patch.transcriptFix = out;
   }
-  for (const key of ["words", "projectWords", "removeLearned", "restoreBlocked"] as const) {
+  for (const key of ["words", "projectWords", "removeLearned", "restoreBlocked", "skipLearning"] as const) {
     const value = b[key];
     if (value === undefined) continue;
     if (!isStringList(value)) return `${key} must be a list of at most ${MAX_LIST_ITEMS} strings`;
@@ -112,8 +116,8 @@ function parsePatch(body: unknown): VoiceSettingsPatch | string {
     if (typeof b.project !== "string" || !voiceProjectPath(b.project)) return "Unknown project";
     patch.project = b.project;
   }
-  if ((patch.projectWords || patch.removeLearned || patch.restoreBlocked) && !patch.project) {
-    return "project is required with projectWords, removeLearned or restoreBlocked";
+  if ((patch.projectWords || patch.removeLearned || patch.restoreBlocked || patch.skipLearning) && !patch.project) {
+    return "project is required with projectWords, removeLearned, restoreBlocked or skipLearning";
   }
   return patch;
 }

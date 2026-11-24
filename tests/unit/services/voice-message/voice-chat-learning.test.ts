@@ -174,3 +174,41 @@ describe("chatReplacements", () => {
     expect(chatReplacements(t, [{ heard: "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789", meant: "the key" }], new Set())).toEqual([]);
   });
 });
+
+describe("what it says became of each pair", () => {
+  it("counts it, learns it, or skips it with why", async () => {
+    const { learnFromUnderstood } = await import("../../../../src/services/voice-message/voice-chat-learning.ts");
+    const t = "mở BPM rồi báo Voices qua slack";
+    const first = learnFromUnderstood(PROJECT, t, [
+      { heard: "BPM", meant: "PPM" }, { heard: "Voices", meant: "Voice" }, { heard: "scale", meant: "Slack" }, { heard: "slack", meant: "Slack" },
+    ], new Date(clock), "c1");
+    expect(first).toEqual([
+      { from: "Voices", to: "Voice", status: "skipped", reason: "plural-only" },
+      { from: "scale", to: "Slack", status: "skipped", reason: "not-in-transcript" },
+      { from: "slack", to: "Slack", status: "skipped", reason: "case-only" },
+      { from: "BPM", to: "PPM", status: "learning", hits: 1 },
+    ]);
+    // The same chat again is no new reading.
+    expect(learnFromUnderstood(PROJECT, t, [{ heard: "BPM", meant: "PPM" }], new Date(clock), "c1"))
+      .toEqual([{ from: "BPM", to: "PPM", status: "skipped", reason: "same-chat", hits: 1 }]);
+    learnFromUnderstood(PROJECT, t, [{ heard: "BPM", meant: "PPM" }], new Date(clock), "c2");
+    expect(learnFromUnderstood(PROJECT, t, [{ heard: "BPM", meant: "PPM" }], new Date(clock), "c3"))
+      .toEqual([{ from: "BPM", to: "PPM", status: "learned", hits: 3 }]);
+  });
+
+  it("reports nothing when self-learning is off", async () => {
+    const { learnFromUnderstood } = await import("../../../../src/services/voice-message/voice-chat-learning.ts");
+    updateVoiceSettings({ selfLearning: false });
+    expect(learnFromUnderstood(PROJECT, "mở BPM", [{ heard: "BPM", meant: "PPM" }], new Date(clock), "c1")).toBeNull();
+  });
+
+  it("lets the user stop a pair being learned, which then joins the undone list", async () => {
+    const { learnFromUnderstood } = await import("../../../../src/services/voice-message/voice-chat-learning.ts");
+    learnFromUnderstood(PROJECT, "mở BPM", [{ heard: "BPM", meant: "PPM" }], new Date(clock), "c1");
+    updateVoiceSettings({ project: PROJECT, skipLearning: ["ppm"] });
+    expect(candidates()).toEqual([]);
+    expect(readVoiceSettings().projects[PROJECT]?.blocked).toMatchObject([{ word: "PPM", from: "BPM", source: "chat" }]);
+    expect(learnFromUnderstood(PROJECT, "mở BPM", [{ heard: "BPM", meant: "PPM" }], new Date(clock), "c2"))
+      .toEqual([{ from: "BPM", to: "PPM", status: "skipped", reason: "undone" }]);
+  });
+});

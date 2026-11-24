@@ -1,5 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { learnedDates } from "../../../src/web/components/settings/voice-learned-words-list";
+import { learnedDates, learningLabel } from "../../../src/web/components/settings/voice-learned-words-list";
+
+describe("learningLabel", () => {
+  it("counts chats for the chat's readings and sightings for the clean-up's", () => {
+    const at = new Date(2026, 10, 20).toISOString();
+    expect(learningLabel({ from: "BPM", to: "PPM", hits: 2, at, source: "chat", chats: 2 })).toBe("chat · 2 of 3 chats");
+    expect(learningLabel({ from: "scale", to: "Slack", hits: 1, at, source: "cleanup", chats: 0 })).toBe("clean-up · seen 1×");
+  });
+});
 
 const NOW = new Date(2026, 10, 21, 9, 0);
 describe("learnedDates", () => {

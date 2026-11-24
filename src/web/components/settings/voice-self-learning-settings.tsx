@@ -82,9 +82,11 @@ export function VoiceSelfLearningSettings({ view, busy, projectSelect, save }: {
             <VoiceLearnedWordsList
               learned={view.projectLearned}
               blocked={view.projectBlocked}
+              learning={view.projectLearning}
               busy={busy}
               onUndo={(removeLearned) => save({ removeLearned })}
               onRestore={(word) => save({ restoreBlocked: [word] })}
+              onSkip={(word) => save({ skipLearning: [word] })}
             />
           </Group>
         </>
