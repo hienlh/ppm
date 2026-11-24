@@ -8,7 +8,7 @@ import { SCHEDULE_LIMITS } from "../../shared/schedule-definition.ts";
 import { MAX_SCHEDULES_PER_SESSION } from "../../shared/session-schedule-input.ts";
 import {
   SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_DELETE_TOOL, SESSION_SCHEDULE_LIST_TOOL,
-  SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL, SESSION_SCHEDULE_SET_ENABLED_TOOL,
+  SESSION_SCHEDULE_CLAIM_TOOL, SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL, SESSION_SCHEDULE_SET_ENABLED_TOOL,
 } from "../../shared/session-schedule-tools.ts";
 
 export function sessionScheduleToolDefinitions() {
@@ -139,6 +139,21 @@ export function sessionScheduleToolDefinitions() {
         additionalProperties: false,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    },
+    {
+      name: SESSION_SCHEDULE_CLAIM_TOOL,
+      title: "Claim a schedule for this chat",
+      description: "Make this chat the owner of a script or prompt schedule of its project that no chat owns yet, so "
+        + "this chat's footer chip lists it (session_schedule_list shows each project schedule's `owner`; null means "
+        + "nobody). Use it for a schedule this chat runs or receives reports from. Owning changes nothing else: the "
+        + "schedule runs as before. A schedule another chat owns is refused; only the user can move it, in Settings → Schedules.",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "integer", minimum: 1, description: "The schedule's id, from projectSchedules in session_schedule_list." } },
+        required: ["id"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
   ];
 }

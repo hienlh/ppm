@@ -98,6 +98,10 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Pause and resume schedules",
     note: "Pauses any schedule of its project at once, and says which. Turns a prompt scheduled into its own chat back on at once, and any other schedule of its project only after you allow a card.",
   },
+  session_schedule_claim: {
+    label: "Claim schedules",
+    note: "Lists a script or prompt schedule of its project that no chat owns in its own footer chip. It never takes one another chat owns; Settings → Schedules can move it.",
+  },
   session_schedule_propose_script: {
     label: "Propose script schedules",
     note: "Proposes a script schedule for its project. Nothing is created until you allow a card in PPM showing the whole script, where it runs, when, and which chats it messages.",

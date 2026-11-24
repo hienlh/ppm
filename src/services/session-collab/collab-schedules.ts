@@ -9,11 +9,13 @@ import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import type { BroadcastOutcome, NotificationPayload } from "../notification.service.ts";
 import { MAX_SCHEDULES_PER_SESSION } from "../../shared/session-schedule-input.ts";
 import {
-  SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_DELETE_TOOL, SESSION_SCHEDULE_LIST_TOOL, type SessionScheduleTool,
+  SESSION_SCHEDULE_CLAIM_TOOL, SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_DELETE_TOOL, SESSION_SCHEDULE_LIST_TOOL,
+  type SessionScheduleTool,
 } from "../../shared/session-schedule-tools.ts";
 import type { Schedule } from "../../types/scheduler.ts";
 import { deleteSchedule, getSchedule, getSchedules } from "../scheduler-db.service.ts";
 import { projectOfFolder } from "../assistant-mcp/assistant-schedule-shape.ts";
+import { claimSchedule } from "./collab-schedule-claim.ts";
 import { ScheduleEditError } from "../scheduler-edit.ts";
 import { SessionScheduleRefusal, sessionScheduleTargetIds } from "../session-schedules/session-schedule-lifecycle.ts";
 import { createSessionSchedule, sessionSchedulesOf } from "../session-schedules/session-schedule-save.ts";
@@ -126,6 +128,7 @@ function describeProjectSchedule(s: Schedule, env: SessionScheduleToolEnv): Json
     enabled: s.enabled === 1,
     nextFire: s.enabled && s.next_fire_at ? { at: s.next_fire_at, local: wallClock(s.next_fire_at, zone) } : null,
     ...(s.description && { description: s.description.slice(0, 300) }),
+    owner: s.created_by_session_id ?? null,
   };
 }
 
@@ -202,9 +205,10 @@ export function sessionScheduleToolCall(env: SessionScheduleToolEnv, tokenSessio
   }
 
   // The other schedule tools wait on a card and are served by `collab-schedule-proposals.ts`.
-  if (name !== SESSION_SCHEDULE_DELETE_TOOL) return fail(`${name} is not served here.`);
+  if (name !== SESSION_SCHEDULE_DELETE_TOOL && name !== SESSION_SCHEDULE_CLAIM_TOOL) return fail(`${name} is not served here.`);
   const id = typeof args.id === "number" ? args.id : typeof args.id === "string" && /^\d+$/.test(args.id) ? Number(args.id) : NaN;
   if (!Number.isSafeInteger(id) || id < 1) return fail("`id` must be a schedule id from session_schedule_list.");
+  if (name === SESSION_SCHEDULE_CLAIM_TOOL) return claimSchedule(chat.target, id, env.changed, env.target);
   const schedule = getSchedule(id);
   // Another chat's schedule reads exactly like one that does not exist: its id says nothing here.
   const own = schedule?.kind === "session" && sessionScheduleTargetIds(sessionId, env.target).includes(schedule.target_session_id ?? "");

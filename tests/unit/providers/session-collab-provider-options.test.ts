@@ -26,7 +26,7 @@ describe("session tools provider options", () => {
     expect(CLAUDE_SESSION_COLLAB_TOOLS).toEqual([
       "mcp__ppm-sessions__create_session", "mcp__ppm-sessions__send_to_session", "mcp__ppm-sessions__session_status", "mcp__ppm-sessions__design_screenshot",
       "mcp__ppm-sessions__session_schedule_create", "mcp__ppm-sessions__session_schedule_list", "mcp__ppm-sessions__session_schedule_delete",
-      "mcp__ppm-sessions__session_schedule_set_enabled", "mcp__ppm-sessions__session_schedule_propose_script",
+      "mcp__ppm-sessions__session_schedule_set_enabled", "mcp__ppm-sessions__session_schedule_propose_script", "mcp__ppm-sessions__session_schedule_claim",
       "mcp__ppm-sessions__report_to_assistant",
       "mcp__ppm-sessions__vault_list", "mcp__ppm-sessions__vault_read", "mcp__ppm-sessions__vault_propose",
       "mcp__ppm-sessions__ppm_task_list", "mcp__ppm-sessions__ppm_task_get", "mcp__ppm-sessions__ppm_task_project",
@@ -51,7 +51,7 @@ describe("session tools provider options", () => {
     const params = buildThreadParams({ cwd: "/p", permission, sessionCollabMcp: access });
     expect(params.config!["mcp_servers.ppm_sessions"]).toEqual({
       url: access.url, bearer_token_env_var: "PPM_SESSIONS_MCP_TOKEN",
-      enabled_tools: ["create_session", "send_to_session", "session_status", "design_screenshot", "session_schedule_create", "session_schedule_list", "session_schedule_delete", "session_schedule_set_enabled", "session_schedule_propose_script", "vault_list", "vault_read", "vault_propose",
+      enabled_tools: ["create_session", "send_to_session", "session_status", "design_screenshot", "session_schedule_create", "session_schedule_list", "session_schedule_delete", "session_schedule_set_enabled", "session_schedule_propose_script", "session_schedule_claim", "vault_list", "vault_read", "vault_propose",
         "ppm_task_list", "ppm_task_get", "ppm_task_project", "ppm_task_create", "ppm_task_update", "ppm_task_close", "ppm_task_reorder",
         "ppm_task_undo", "ppm_task_project_update", "ppm_task_notify_manager"],
       default_tools_approval_mode: "approve", startup_timeout_sec: 10, tool_timeout_sec: Math.ceil(SESSION_COLLAB_TOOLS_TIMEOUT_MS / 1000),
