@@ -9,13 +9,16 @@ import type { ViewerHub } from "../viewer-hub.ts";
 import { resolveAddress } from "../address-bar.ts";
 import { inputToCdp } from "../input-bridge.ts";
 import { buildSnapshot, type AxNode } from "./ax-snapshot.ts";
+import { aiControlLock } from "./ai-control-lock.ts";
 
 const refsByTab = new Map<string, Map<string, number>>();
 
 export class AiBrowserError extends Error {}
 
 export function createAiBrowserActions(host: WebBrowserHost, hub: ViewerHub) {
+  /** Every step of an action goes through here: once the person took the browser back, nothing more happens. */
   const cdp = () => {
+    if (aiControlLock.state().heldByUser) throw new AiBrowserError("The user took the browser back, so the rest was not done.");
     if (!host.cdp) throw new AiBrowserError("The browser is not running.");
     return host.cdp;
   };
@@ -51,7 +54,8 @@ export function createAiBrowserActions(host: WebBrowserHost, hub: ViewerHub) {
   async function open(url: string): Promise<string> {
     const r = resolveAddress(url);
     if (!r.ok) throw new AiBrowserError("Only http and https addresses can be opened.");
-    const tab = await aiTab(r.url);
+    const tab = await aiTab();
+    cdp();
     await host.tabs!.navigate(tab.id, r.url);
     refsByTab.delete(tab.id);
     await waitForLoad(tab.id);

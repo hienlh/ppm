@@ -17,7 +17,7 @@ import type { NetworkInterfaceInfo } from "node:os";
  * the IPv4 address it reaches.
  */
 
-export type EgressBlockReason = "private-address" | "own-port" | "metadata" | "dns-failed";
+export type EgressBlockReason = "private-address" | "own-port" | "metadata" | "dns-failed" | "public-name-inward";
 export type AddressVerdict = { ok: true } | { ok: false; reason: EgressBlockReason };
 
 /** What `os.networkInterfaces()` says about this machine, refreshed by the caller. */
@@ -112,7 +112,7 @@ function embeddedV4(n: bigint): bigint[] {
   return [];
 }
 
-const RANK: Record<EgressBlockReason, number> = { metadata: 3, "own-port": 2, "private-address": 1, "dns-failed": 0 };
+const RANK: Record<EgressBlockReason, number> = { metadata: 4, "own-port": 3, "public-name-inward": 2, "private-address": 1, "dns-failed": 0 };
 
 /** The most telling of several refusals, so a metadata hit is never reported as a plain private one. */
 export function worstVerdict(verdicts: AddressVerdict[]): AddressVerdict {
@@ -146,6 +146,20 @@ function classifyParsed(ip: Ip, ctx: AddressPolicyContext): AddressVerdict {
     return ctx.allowLan ? OK : block("private-address");
   }
   return OK;
+}
+
+/**
+ * Names that may lead into this machine or the home network: `localhost`, a single label (`nas`,
+ * `router`), and the suffixes no public registry hands out (`.local`, `.lan`, `.home.arpa`,
+ * `.internal`, `.localhost`) plus Tailscale's `*.ts.net`. Any other name is public, and a public
+ * name answering with an inward address is DNS rebinding: a web page pointing its own name at
+ * the router to read it. The user chose this rule over a list of allowed names (card 4ff0bb9c).
+ */
+export function isLocalName(name: string): boolean {
+  const n = name.trim().toLowerCase().replace(/\.+$/, "");
+  if (!n) return false;
+  if (!n.includes(".")) return true;
+  return [".local", ".lan", ".home.arpa", ".internal", ".localhost", ".ts.net"].some((s) => n.endsWith(s));
 }
 
 /** Whether a requested name is a cloud metadata service's (case and a trailing dot ignored). */

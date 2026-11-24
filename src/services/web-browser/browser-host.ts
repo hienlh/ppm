@@ -17,7 +17,7 @@ import { freeLoopbackPort, killOrphanChrome, type RunningChrome, startChrome, st
 import { BrowserTabs } from "./browser-tabs.ts";
 import { idleDeadline, shouldStopForIdle } from "./browser-idle.ts";
 import { EGRESS_CANARY_HOST, type EgressGuard, startEgressGuard } from "./egress/egress-process.ts";
-import { ppmOwnPorts } from "./ppm-own-ports.ts";
+import { ppmOwnHostNames, ppmOwnPorts } from "./ppm-own-ports.ts";
 import { chromeMemoryMB } from "./chrome-memory.ts";
 import { createLogger } from "../logger.ts";
 
@@ -40,10 +40,10 @@ export class WebBrowserUnavailableError extends Error {
  * cards dccf1ef2 and 2b73ffa8) and the ports that stay closed whatever they say: PPM's own and
  * the DevTools port, which would hand a page the whole browser.
  */
-export function egressOptionsFor(settings: Pick<WebBrowserSettings, "allowLocalhost" | "allowLan">, ownPorts: number[], devtoolsPort?: number) {
+export function egressOptionsFor(settings: Pick<WebBrowserSettings, "allowLocalhost" | "allowLan">, ownPorts: number[], devtoolsPort?: number, ownHostNames: string[] = []) {
   const blockedLocalPorts = [...ownPorts];
   if (devtoolsPort) blockedLocalPorts.push(devtoolsPort);
-  return { allowLocalhost: settings.allowLocalhost, allowLan: settings.allowLan, blockedLocalPorts };
+  return { allowLocalhost: settings.allowLocalhost, allowLan: settings.allowLan, blockedLocalPorts, blockedHostNames: ownHostNames };
 }
 
 export class WebBrowserHost extends EventEmitter {
@@ -62,6 +62,8 @@ export class WebBrowserHost extends EventEmitter {
   private lastVisibleAt = 0;
   private lastInputAt = 0;
   private lastAiAt = 0;
+  /** Bumped by stop(): a start() that sees it change gives up and tears down what it made. */
+  private generation = 0;
 
   settings(): WebBrowserSettings {
     return parseWebBrowserSettings(configService.get("web_browser"));
@@ -88,6 +90,11 @@ export class WebBrowserHost extends EventEmitter {
   }
 
   private async start(): Promise<void> {
+    const gen = this.generation;
+    /** Throws when stop() ran since this start began, so nothing started after it survives. */
+    const live = () => {
+      if (this.generation !== gen) throw new WebBrowserUnavailableError("start-failed", "The browser was stopped while it was starting.");
+    };
     const settings = this.settings();
     if (!isWebBrowserAllowedByEnv()) throw new WebBrowserUnavailableError("disabled", "WEB_BROWSER_ENABLED=0 turns the browser off on this host.");
     if (settings.enabled !== true) {
@@ -98,15 +105,18 @@ export class WebBrowserHost extends EventEmitter {
     this.setState("starting");
     try {
       await killOrphanChrome();
+      live();
       const transport = preferredTransport();
       const devtoolsPort = transport === "port" ? await freeLoopbackPort() : undefined;
       this.egress = await startEgressGuard(this.egressOptions(settings, devtoolsPort));
+      live();
       this.egress.onBlocked((b) => this.emit("blocked", { url: `${b.host}:${b.port}`, reason: b.reason }));
       const canary = new Promise<boolean>((resolve) => {
         const off = this.egress!.onCanary(() => { off(); resolve(true); });
         setTimeout(() => { off(); resolve(false); }, CANARY_TIMEOUT_MS);
       });
       this.chrome = await startChrome({ executable: browser.path, egressPort: this.egress.port, transport, devtoolsPort, audio: settings.audio });
+      live();
       log.info(`Browser started: ${browser.name} ${browser.version} (PID ${this.chrome.pid}, CDP over ${transport})`);
       void this.chrome.exited.then(() => this.onChromeExit());
       this.tabs = new BrowserTabs(this.chrome.cdp, {
@@ -122,10 +132,13 @@ export class WebBrowserHost extends EventEmitter {
       let probe = this.tabs.list()[0]?.id ?? null;
       if (probe) await this.tabs.navigate(probe, `http://${EGRESS_CANARY_HOST}/`);
       else probe = await this.tabs.open(`http://${EGRESS_CANARY_HOST}/`);
-      if (!(await canary)) {
+      const canaryArrived = await canary;
+      live();
+      if (!canaryArrived) {
         throw new WebBrowserUnavailableError("proxy-bypassed", "Chrome did not use PPM's network guard (a machine policy may override its proxy), so it was stopped.");
       }
       if (probe) await this.tabs.navigate(probe, "about:blank");
+      live();
       this.activeTabId = probe;
       this.touchInput();
       this.idleTimer = setInterval(() => this.checkIdle(), IDLE_CHECK_MS);
@@ -141,7 +154,7 @@ export class WebBrowserHost extends EventEmitter {
   }
 
   private egressOptions(settings: WebBrowserSettings, devtoolsPort?: number) {
-    return egressOptionsFor(settings, ppmOwnPorts(), devtoolsPort);
+    return egressOptionsFor(settings, ppmOwnPorts(), devtoolsPort, ppmOwnHostNames());
   }
 
   /** Settings changed: tell the guard now; tab limits are read on each new tab. */
@@ -197,6 +210,9 @@ export class WebBrowserHost extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    this.generation++;
+    // A start in progress sees the new generation at its next step, tears down and rejects.
+    if (this.starting) await this.starting.catch(() => {});
     if (this.state === "stopped") return;
     this.setState("stopping");
     await this.teardown();

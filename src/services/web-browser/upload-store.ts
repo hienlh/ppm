@@ -9,6 +9,19 @@ import { basename, join } from "node:path";
 import { webBrowserPaths } from "./chrome-launch-args.ts";
 
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+/** All uploads waiting at once; they are removed an hour after arriving. */
+export const MAX_TOTAL_UPLOAD_BYTES = 1024 * 1024 * 1024;
+
+function uploadsTotalBytes(): number {
+  const root = webBrowserPaths.uploads();
+  let total = 0;
+  let ids: string[] = [];
+  try { ids = readdirSync(root); } catch { return 0; }
+  for (const id of ids) {
+    try { for (const f of readdirSync(join(root, id))) total += statSync(join(root, id, f)).size; } catch {}
+  }
+  return total;
+}
 const KEEP_MS = 3600_000;
 
 /** A file name safe on every OS: no path, no reserved characters, at most 120 characters. */
@@ -24,6 +37,8 @@ export function cleanFileName(raw: string): string {
 /** Streams `body` to disk; throws when it exceeds the cap. Returns the upload id. */
 export async function saveUpload(body: ReadableStream<Uint8Array>, rawName: string): Promise<string> {
   pruneUploads();
+  const already = uploadsTotalBytes();
+  if (already >= MAX_TOTAL_UPLOAD_BYTES) throw new Error("too many uploads are waiting; try again in a while");
   const id = randomUUIDv7();
   const dir = join(webBrowserPaths.uploads(), id);
   mkdirSync(dir, { recursive: true });
@@ -37,6 +52,7 @@ export async function saveUpload(body: ReadableStream<Uint8Array>, rawName: stri
       if (done) break;
       total += value.byteLength;
       if (total > MAX_UPLOAD_BYTES) throw new Error(`files over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB are not accepted`);
+      if (already + total > MAX_TOTAL_UPLOAD_BYTES) throw new Error("too many uploads are waiting; try again in a while");
       sink.write(value);
       await sink.flush();
     }

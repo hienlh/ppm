@@ -22,6 +22,9 @@ export interface Viewer {
   id: string;
   send(msg: WebBrowserServerMessage): void;
   sendBinary(bytes: Uint8Array): void;
+  /** Connected through a public tunnel or proxy. */
+  isPublic?: boolean;
+  close?(reason: string): void;
 }
 
 /** Handlers other modules add for message types this file does not own (files, clipboard, dialogs, AI). */
@@ -98,6 +101,15 @@ export class ViewerHub {
     if (this.controllerId === viewerId) {
       this.controllerId = null;
       this.dropStream();
+    }
+  }
+
+  /** Public access was switched off: viewers that came in that way lose the browser now. */
+  dropPublicViewers(): void {
+    for (const v of [...this.viewers.values()]) {
+      if (!v.isPublic) continue;
+      try { v.close?.("the web browser is turned off for public links"); } catch {}
+      this.remove(v.id);
     }
   }
 

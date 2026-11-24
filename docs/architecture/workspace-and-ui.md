@@ -1061,8 +1061,12 @@ setting `web_browser.enabled`); Settings → Web Browser holds every switch.
   names itself and connects to the address it checked, so DNS rebinding cannot reach what it refused.
   `allowLocalhost` and `allowLan` (both on by default, the user's choice) open this machine and the
   private ranges; PPM's own ports on every address of the machine, the DevTools port, cloud metadata
-  addresses, multicast and broadcast are always refused. `file:` and other non-http schemes are refused
-  at the address bar (`address-bar.ts`).
+  addresses, multicast and broadcast are always refused, and so are PPM's own public host names (its
+  tunnel, the share host). Inward addresses open only to IP literals and local names (`localhost`, a
+  single label, `.local`, `.lan`, `.home.arpa`, `.internal`, `*.ts.net`): a public name answering with
+  one is DNS rebinding and is refused as `public-name-inward`, checked on every connection (the user's
+  choice, card 4ff0bb9c, over an allow-list). `file:` and other non-http schemes are refused at the
+  address bar (`address-bar.ts`).
 - **Stream** (`viewer-hub.ts`, `screencast-pacer.ts`): `/ws/web-browser` behind PPM auth (required),
   a one-use nonce, and `allowPublicTunnel` (`tunnel-request-guard.ts`: Cloudflare, Funnel and generic
   proxy headers are public, Tailscale Serve is the tailnet). Pictures are JPEG in binary frames

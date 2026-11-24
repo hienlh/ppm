@@ -18,13 +18,17 @@ export type { EgressBlockReason } from "../address-policy.ts";
 const log = createLogger("web-egress");
 const READY_TIMEOUT_MS = 5000;
 const STOP_GRACE_MS = 2000;
-const REASONS: EgressBlockReason[] = ["private-address", "own-port", "metadata", "dns-failed"];
+const BLOCK_REPORT_EVERY_MS = 5000;
+const lastReported = new Map<string, number>();
+const REASONS: EgressBlockReason[] = ["private-address", "own-port", "metadata", "dns-failed", "public-name-inward"];
 
 export interface EgressOptions {
   allowLocalhost: boolean;
   allowLan: boolean;
   /** PPM, supervisor, edge, relay and Chrome DevTools ports: refused on every address of this machine. */
   blockedLocalPorts: number[];
+  /** PPM's own public host names, refused by name. */
+  blockedHostNames?: string[];
 }
 
 export interface EgressBlockedEvent {
@@ -58,6 +62,7 @@ function configLine(opts: EgressOptions): string {
     allowLocalhost: opts.allowLocalhost,
     allowLan: opts.allowLan,
     blockedLocalPorts: [...new Set(opts.blockedLocalPorts)],
+    blockedHostNames: [...new Set(opts.blockedHostNames ?? [])],
   })}\n`;
 }
 
@@ -97,6 +102,13 @@ export async function startEgressGuard(opts: EgressOptions): Promise<EgressGuard
     else if (m.type === "canary") for (const cb of canary) try { cb(); } catch {}
     else if (m.type === "blocked" && typeof m.host === "string" && REASONS.includes(m.reason as EgressBlockReason)) {
       const event = { host: m.host, port: Number(m.port), reason: m.reason as EgressBlockReason };
+      // A page retrying a refused address in a loop must not flood ppm.log or the viewers:
+      // one report per host:port every few seconds.
+      const key = `${event.host}:${event.port}`;
+      const now = Date.now();
+      if (now - (lastReported.get(key) ?? 0) < BLOCK_REPORT_EVERY_MS) return;
+      lastReported.set(key, now);
+      if (lastReported.size > 512) lastReported.clear();
       log.info(`Browser blocked from ${event.host}:${event.port} (${event.reason})`);
       for (const cb of blocked) try { cb(event); } catch {}
     }

@@ -16,6 +16,21 @@ import { DownloadsPanel, FileChooserPanel, InfoPanel, MenuPanel, PanelFrame, typ
 import { WebBrowserStatusBar } from "./web-browser-status-bar";
 import { openWebBrowserSettings } from "./open-web-browser";
 
+/** Why the browser refused something, in words. */
+export function blockedReasonText(reason: string): string {
+  switch (reason) {
+    case "public-name-inward": return "a public site pointed its name at this machine or your network (DNS rebinding); type the IP or a local name instead";
+    case "private-address": return "this machine or your network is switched off in Settings → Web Browser";
+    case "own-port": return "that is PPM itself";
+    case "metadata": return "cloud metadata addresses are always blocked";
+    case "dns-failed": return "the name could not be found";
+    case "scheme": return "only http and https addresses open here";
+    case "tab-limit": return "the most tabs are open; close one first";
+    case "public-access": return "not available over a public link";
+    default: return reason;
+  }
+}
+
 export function WebBrowserView({ phone }: { phone: boolean }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const visible = useVisibleWhileShown(rootRef);
@@ -67,7 +82,7 @@ export function WebBrowserView({ phone }: { phone: boolean }) {
       {s.ai && <WebBrowserAiBanner ai={s.ai} onTakeBack={() => send({ type: "ai.release" })} onGiveBack={() => send({ type: "ai.return" })} />}
       {s.blocked && (
         <div role="status" className="flex items-center gap-2 shrink-0 px-3 py-1 text-xs bg-warning/15 text-text border-b border-border">
-          <span className="flex-1 truncate">Blocked: {s.blocked.url} ({s.blocked.reason.replace("-", " ")})</span>
+          <span className="flex-1 min-w-0 truncate" title={`${s.blocked.url}: ${blockedReasonText(s.blocked.reason)}`}>Blocked {s.blocked.url} — {blockedReasonText(s.blocked.reason)}</span>
           <button type="button" className={`${WB_TEXT_BUTTON} hover:bg-panel-2`} onClick={() => patch({ blocked: null })}>Dismiss</button>
         </div>
       )}

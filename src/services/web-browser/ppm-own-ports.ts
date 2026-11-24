@@ -5,6 +5,7 @@
  * saved there, and the API answers loopback callers.
  */
 import { configService } from "../config.service.ts";
+import { getForwardedShareHosts } from "../design/share/design-share-address.ts";
 
 const runtimePorts = new Set<number>();
 
@@ -15,6 +16,15 @@ export function registerPpmOwnPort(port: number): void {
 
 export function unregisterPpmOwnPort(port: number): void {
   runtimePorts.delete(port);
+}
+
+/** PPM's public names (its tunnel and the share host), without ports: they lead back to PPM too. */
+export function ppmOwnHostNames(): string[] {
+  try {
+    return [...new Set(getForwardedShareHosts().map((h) => h.replace(/:\d+$/, "").toLowerCase()))];
+  } catch {
+    return [];
+  }
 }
 
 export function ppmOwnPorts(): number[] {

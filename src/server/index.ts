@@ -39,7 +39,7 @@ import { globalWebSocket } from "./ws/global.ts";
 import { groupChatWebSocket } from "./ws/group-chat.ts";
 import { remoteDesktopWebSocket } from "./ws/remote-desktop.ts";
 import { webBrowserWebSocket } from "./ws/web-browser.ts";
-import { checkWebBrowserAccess } from "../services/web-browser/web-browser-access.ts";
+import { checkWebBrowserAccess, isPublicRequest as isPublicWebBrowserRequest } from "../services/web-browser/web-browser-access.ts";
 import { lspWebSocket } from "./ws/lsp.ts";
 import { androidWebSocket } from "./ws/android.ts";
 import { lspManager } from "../services/lsp/lsp-manager.ts";
@@ -1258,7 +1258,7 @@ if (process.argv.includes("__serve__")) {
           wsLog.warn(`Refused ${url.pathname}: ${refusal.code}`);
           return new Response(`Forbidden: ${refusal.message}`, { status: refusal.status });
         }
-        const upgraded = server.upgrade(req, { data: { type: "web-browser" } });
+        const upgraded = server.upgrade(req, { data: { type: "web-browser", isPublic: isPublicWebBrowserRequest(req) } });
         if (upgraded) return undefined;
         return upgradeFailed(url);
       }
@@ -1392,6 +1392,9 @@ if (process.argv.includes("__serve__")) {
     registerPpmOwnPort(Number(server.port));
     const { installWebBrowserExitHook } = await import("../services/web-browser/browser-host.ts");
     installWebBrowserExitHook();
+    // A server killed outright (supervisor health kill) runs no exit hook; on Windows its Chrome
+    // keeps running with its DevTools port open. Kill it now rather than at the next browser start.
+    void import("../services/web-browser/chrome-process.ts").then((m) => m.killOrphanChrome()).catch(() => {});
   }
 
   // Start background account token refresh in daemon child

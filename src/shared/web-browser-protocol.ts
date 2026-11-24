@@ -64,6 +64,7 @@ export type WebBrowserState = "starting" | "running" | "stopping" | "stopped" | 
 
 export type WebBrowserBlockReason =
   | "private-address"
+  | "public-name-inward"
   | "own-port"
   | "metadata"
   | "dns-failed"

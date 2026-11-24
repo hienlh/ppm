@@ -72,6 +72,14 @@ describe("SOCKS5 egress proxy", () => {
     expect(p.blocked).toEqual([{ host: "127.0.0.1", port: echoPort, reason: "own-port" }]);
   });
 
+  it("refuses PPM's own public host names by name, before resolving them", async () => {
+    const p = await start({ policy: { blockedHostNames: ["ppm.example.com"] }, names: { "ppm.example.com": ["203.0.113.9"] } });
+    const r = await attempt(p.port, { domain: "PPM.Example.com.", port: 443 });
+    expect(r.code).toBe(2);
+    expect(p.blocked[0]?.reason).toBe("own-port");
+    expect(p.lookups).toEqual([]);
+  });
+
   it("refuses this machine's LAN address on a blocked port without dialling it", async () => {
     const p = await start({ policy: { blockedLocalPorts: [8080] } });
     const r = await attempt(p.port, { ipv4: "192.168.1.50", port: 8080 });
@@ -89,12 +97,47 @@ describe("SOCKS5 egress proxy", () => {
     expect(p.blocked.at(-1)?.reason).toBe("private-address");
   });
 
-  it("resolves a name once and connects to the address it checked", async () => {
-    const p = await start({ names: { "dev.test": ["127.0.0.1"] } });
-    const r = await attempt(p.port, { domain: "dev.test", port: echoPort });
+  it("resolves a local name once and connects to the address it checked", async () => {
+    const p = await start({ names: { "devbox.local": ["127.0.0.1"] } });
+    const r = await attempt(p.port, { domain: "devbox.local", port: echoPort });
     expect(r.code).toBe(0);
     expect(await exchange(r.socket, "ping", 500)).toBe("ping");
-    expect(p.lookups).toEqual(["dev.test"]);
+    expect(p.lookups).toEqual(["devbox.local"]);
+  });
+
+  it("lets local names reach this machine and the LAN: a single label, .local, .lan, .home.arpa, .internal, .ts.net", async () => {
+    const names = { nas: ["127.0.0.1"], "nas.lan": ["127.0.0.1"], "printer.home.arpa": ["127.0.0.1"], "svc.internal": ["127.0.0.1"], "ppm.tail1.ts.net": ["127.0.0.1"] };
+    const p = await start({ names });
+    for (const domain of Object.keys(names)) {
+      const r = await attempt(p.port, { domain, port: echoPort });
+      expect([domain, r.code]).toEqual([domain, 0]);
+    }
+  });
+
+  it("refuses a public name that answers with this machine or a LAN address (DNS rebinding)", async () => {
+    const p = await start({ names: { "evil.example": ["192.168.1.1"], "evil2.example": ["127.0.0.1"] } });
+    expect((await attempt(p.port, { domain: "evil.example", port: 80 })).code).toBe(2);
+    expect((await attempt(p.port, { domain: "evil2.example", port: echoPort })).code).toBe(2);
+    expect(p.blocked.map((b) => b.reason)).toEqual(["public-name-inward", "public-name-inward"]);
+    // Typed as an IP, the same LAN address stays open: the user's choice.
+    expect((await attempt(p.port, { ipv4: "127.0.0.1", port: echoPort })).code).toBe(0);
+  });
+
+  it("checks every connection, so a public name that switches its answer inward is refused then", async () => {
+    let calls = 0;
+    proxy = await startSocks5Server({
+      policy: () => ({ allowLocalhost: true, allowLan: true, blockedLocalPorts: [] }),
+      onBlocked: () => {},
+      onCanary: () => {},
+      resolve: async () => (++calls === 1 ? ["203.0.113.10"] : ["127.0.0.1"]),
+      localNetwork: () => ({ ownAddresses: ["127.0.0.1"] }),
+      handshakeTimeoutMs: 300,
+    });
+    // Allowed by policy; 203.0.113.10 is unreachable here, so the dial itself fails or times out.
+    const first = await attempt(proxy.port, { domain: "flip.example", port: echoPort }).catch(() => null);
+    expect(first?.code).not.toBe(2);
+    const second = await attempt(proxy.port, { domain: "flip.example", port: echoPort });
+    expect(second.code).toBe(2);
   });
 
   it("refuses a name when any of its answers points inward (rebinding)", async () => {

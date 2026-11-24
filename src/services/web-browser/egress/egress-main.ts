@@ -28,7 +28,10 @@ export function parseEgressConfig(message: unknown): EgressPolicy | null {
   if (!Array.isArray(m.blockedLocalPorts)) return null;
   const ports = m.blockedLocalPorts.filter((p): p is number => Number.isInteger(p) && p > 0 && p <= 65535);
   if (ports.length !== m.blockedLocalPorts.length) return null;
-  return { allowLocalhost: m.allowLocalhost, allowLan: m.allowLan, blockedLocalPorts: ports };
+  const names = Array.isArray(m.blockedHostNames)
+    ? m.blockedHostNames.filter((n): n is string => typeof n === "string" && n.length > 0 && n.length <= 253).slice(0, 64).map((n) => n.toLowerCase())
+    : [];
+  return { allowLocalhost: m.allowLocalhost, allowLan: m.allowLan, blockedLocalPorts: ports, blockedHostNames: names };
 }
 
 async function main(): Promise<void> {

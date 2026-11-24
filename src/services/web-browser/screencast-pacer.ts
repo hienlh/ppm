@@ -47,8 +47,15 @@ export class ScreencastPacer {
     });
   }
 
-  /** Streams `sessionId` (a page) at `vp`; replaces whatever was streaming. */
-  async start(sessionId: string, vp: Viewport): Promise<void> {
+  private chain: Promise<void> = Promise.resolve();
+
+  /** Streams `sessionId` (a page) at `vp`; replaces whatever was streaming. Calls run one at a time. */
+  start(sessionId: string, vp: Viewport): Promise<void> {
+    this.chain = this.chain.then(() => this.startNow(sessionId, vp), () => this.startNow(sessionId, vp));
+    return this.chain;
+  }
+
+  private async startNow(sessionId: string, vp: Viewport): Promise<void> {
     await this.stopCurrent();
     this.sessionId = sessionId;
     this.inFlight = 0;

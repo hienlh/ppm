@@ -14,7 +14,7 @@ import { createLogger } from "../../services/logger.ts";
 const log = createLogger("web-browser");
 
 interface BrowserWs {
-  data: { type: "web-browser"; viewer?: Viewer; authenticated?: boolean };
+  data: { type: "web-browser"; viewer?: Viewer; authenticated?: boolean; isPublic?: boolean };
   send(data: string | Uint8Array): number;
   close(code?: number, reason?: string): void;
 }
@@ -42,6 +42,8 @@ export const webBrowserWebSocket = {
         id: randomUUIDv7(),
         send: (m) => { ws.send(JSON.stringify(m)); },
         sendBinary: (b) => { ws.send(b); },
+        isPublic: ws.data.isPublic === true,
+        close: (reason) => ws.close(1008, reason),
       };
       ws.data.viewer = viewer;
       viewerHub.add(viewer);

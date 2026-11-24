@@ -62,6 +62,7 @@ webBrowserRoutes.put("/settings", async (c) => {
   }
   configService.set("web_browser", next);
   webBrowserHost.applySettings();
+  if (!next.allowPublicTunnel) viewerHub.dropPublicViewers();
   if (next.enabled === false && webBrowserHost.state !== "stopped") await webBrowserHost.stop();
   settleWebBrowserIntro();
   return c.json(ok(next));
@@ -156,6 +157,8 @@ webBrowserRoutes.post("/clear-data", async (c) => {
     rmSync(dir, { recursive: true, force: true });
   }
   rmSync(webBrowserPaths.tabsFile(), { force: true });
+  const { clearDownloadRecords } = await import("../../services/web-browser/download-manager.ts");
+  clearDownloadRecords();
   viewerHub.broadcast(viewerHub.status());
   return c.json(ok({ cleared: true }));
 });

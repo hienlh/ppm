@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
-  classifyAddress, isMetadataHostName, localNetworkFrom, type AddressPolicyContext, type EgressBlockReason,
+  classifyAddress, isLocalName, isMetadataHostName, localNetworkFrom, type AddressPolicyContext, type EgressBlockReason,
 } from "../../../../src/services/web-browser/address-policy.ts";
 
 const OWN_LAN = "192.168.1.50";
@@ -124,5 +124,14 @@ describe("localNetworkFrom", () => {
     expect(net.ownAddresses).toEqual(["127.0.0.1", "192.168.1.50", "2001:db8:5:6::10", "fe80::1", "45.1.2.3"]);
     expect(net.onLinkPrefixes).toEqual(["192.168.1.50/24", "2001:db8:5:6::10/64"]);
     expect(net.broadcastAddresses).toEqual(["192.168.1.255"]);
+  });
+});
+
+describe("isLocalName", () => {
+  it.each(["localhost", "nas", "NAS.local", "router.lan", "printer.home.arpa", "svc.internal", "app.localhost", "ppm.tail1.ts.net", "nas.local."])("%s is local", (n) => {
+    expect(isLocalName(n)).toBe(true);
+  });
+  it.each(["example.com", "evil.example", "nip.io", "192.168.1.1.nip.io", "local.example.com", ""])("%s is public", (n) => {
+    expect(isLocalName(n)).toBe(false);
   });
 });

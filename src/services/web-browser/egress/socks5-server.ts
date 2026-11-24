@@ -2,7 +2,7 @@ import { lookup } from "node:dns/promises";
 import { createServer, isIP, type Socket } from "node:net";
 import { networkInterfaces } from "node:os";
 import {
-  classifyAddress, isMetadataHostName, localNetworkFrom, worstVerdict,
+  classifyAddress, isLocalName, isMetadataHostName, localNetworkFrom, worstVerdict,
   type EgressBlockReason, type LocalNetwork,
 } from "../address-policy.ts";
 import {
@@ -27,6 +27,8 @@ export interface EgressPolicy {
   allowLocalhost: boolean;
   allowLan: boolean;
   blockedLocalPorts: number[];
+  /** PPM's own public names (its tunnel, the share host): they lead back to PPM whatever they resolve to. */
+  blockedHostNames?: string[];
 }
 
 export interface EgressBlockedEvent {
@@ -95,6 +97,8 @@ export async function startSocks5Server(opts: Socks5ServerOptions): Promise<Sock
       sock.end(reply(code));
     };
     if (req.domain && isMetadataHostName(host)) return refuse("metadata");
+    const name = host.toLowerCase().replace(/\.+$/, "");
+    if (req.domain && (opts.policy().blockedHostNames ?? []).includes(name)) return refuse("own-port");
     let addresses: string[] = [];
     if (!req.domain || isIP(host)) addresses = [host];
     else {
@@ -105,6 +109,13 @@ export async function startSocks5Server(opts: Socks5ServerOptions): Promise<Sock
     const ctx = { ...opts.policy(), ...currentNetwork(), port };
     const verdict = worstVerdict(addresses.map((a) => classifyAddress(a, ctx)));
     if (!verdict.ok) return refuse(verdict.reason);
+    // Localhost and the LAN are open to addresses typed as such and to local names only. A public
+    // name answering inward is checked on every connection, so a name that changes its answer
+    // between two requests is caught on the one that points inside.
+    if (req.domain && !isIP(host) && !isLocalName(host)) {
+      const strict = { ...ctx, allowLocalhost: false, allowLan: false };
+      if (addresses.some((a) => !classifyAddress(a, strict).ok)) return refuse("public-name-inward");
+    }
     let code = REP_HOST_UNREACHABLE;
     for (const address of addresses) {
       const up = await dialAddress(address, port, handshakeMs);
