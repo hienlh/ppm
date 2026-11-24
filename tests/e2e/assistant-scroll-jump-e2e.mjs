@@ -79,25 +79,42 @@ async function startSampling(page, prompt) {
       if (el) {
         const rows = [...el.querySelectorAll("[data-msg-id]")];
         const promptRow = rows.slice(-12).reverse().find((r) => (r.textContent ?? "").includes(prompt));
+        // Cards and folded lines drawn between the previous user message and the one just sent:
+        // anything newer than the message just sent belongs below it.
+        let itemsJustAbove = null;
+        if (promptRow) {
+          const at = rows.indexOf(promptRow);
+          const prevUser = rows.slice(0, at).reverse().find((r) => r.hasAttribute("data-anchor-key"));
+          itemsJustAbove = [...el.querySelectorAll("[data-timeline-item]")].filter((item) =>
+            (!prevUser || (prevUser.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING))
+            && (item.compareDocumentPosition(promptRow) & Node.DOCUMENT_POSITION_FOLLOWING)).length;
+        }
         probe.frames.push({
           t: performance.now(), top: el.scrollTop, sh: el.scrollHeight, ch: el.clientHeight,
           dist: el.scrollHeight - el.scrollTop - el.clientHeight, rows: rows.length,
           trailing: !!el.querySelector("[data-chat-trailing]"),
           promptTop: promptRow ? Math.round(promptRow.getBoundingClientRect().top - el.getBoundingClientRect().top) : null,
           items: el.querySelectorAll("[data-timeline-item]").length,
+          itemsJustAbove,
         });
       }
-      next();
     };
-    // Measured after the frame is painted (a task queued from the frame's callback), not inside
-    // it: reading layout from requestAnimationFrame forces a layout before the ResizeObserver
-    // callbacks run, and records a state the reading anchor corrects before anything is drawn.
-    const next = () => requestAnimationFrame(() => setTimeout(tick, 0));
-    next();
+    // Measured only where the state is the one drawn: in a ResizeObserver callback (made after the
+    // list's own, so it runs after the reading anchor has corrected the layout change), and for a
+    // scroll in the frame after it. Reading layout anywhere else between a render and its frame
+    // forces a layout before the observers run, and records a state nobody ever sees.
+    const el0 = find();
+    const ro = new ResizeObserver(() => tick());
+    ro.observe(el0);
+    if (el0.firstElementChild) ro.observe(el0.firstElementChild);
+    const onScroll = () => requestAnimationFrame(() => tick());
+    el0.addEventListener("scroll", onScroll, { passive: true });
+    probe.stop = () => { ro.disconnect(); el0.removeEventListener("scroll", onScroll); };
+    tick();
   }, { scroller: SCROLLER, prompt });
 }
 const mark = (page, name) => page.evaluate((name) => { window.__assistantScroll.marks[name] = performance.now(); }, name);
-const stopSampling = (page) => page.evaluate(() => { const p = window.__assistantScroll; p.sampling = false; return { frames: p.frames, marks: p.marks }; });
+const stopSampling = (page) => page.evaluate(() => { const p = window.__assistantScroll; p.sampling = false; p.stop?.(); return { frames: p.frames, marks: p.marks }; });
 const jumpCount = (page) => page.evaluate(() => (window.__ppmScrollJumps ?? []).length);
 
 async function readerScrollBy(page, dy) {
@@ -224,11 +241,9 @@ try {
     // A card or a folded wake line drawn ABOVE the message just sent: the frame its item lands in
     // is the frame the prompt is pushed down by it. Both are newer than the prompt, so their place
     // is below it; one placed above was compared with a time the browser stamped by its own clock.
-    let placedAbovePrompt = 0;
-    for (let i = 1; i < frames.length; i++) {
-      const [a, b] = [frames[i - 1], frames[i]];
-      if (b.items > a.items && a.promptTop != null && b.promptTop != null && b.promptTop - a.promptTop > 20) placedAbovePrompt++;
-    }
+    // Counted in the DOM, not by where the prompt moved: a reader scrolling in the same frame moves it too.
+    const above = frames.map((f) => f.itemsJustAbove).filter((n) => n != null);
+    const placedAbovePrompt = above.length ? Math.max(0, Math.max(...above) - above[0]) : 0;
     let ok;
     if (placedAbovePrompt > 0) ok = false;
     else if (READING) ok = promptShift !== null && Math.abs(promptShift) <= SHIFT_TOLERANCE_PX && !viewAbovePrompt;
