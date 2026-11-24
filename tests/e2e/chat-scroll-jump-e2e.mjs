@@ -118,7 +118,11 @@ async function sampleFrames(page, tabId, prompt) {
         const hasPrompt = [...rows].slice(-4).some((r) => (r.textContent ?? "").includes(prompt));
         // How much of the answer is drawn: grows step by step while it streams.
         const answerLen = hasPrompt && !lastIsPrompt ? (rows[rows.length - 1].textContent ?? "").length : 0;
-        probe.frames.push({ t: performance.now(), top: el.scrollTop, sh: el.scrollHeight, ch: el.clientHeight, dist: el.scrollHeight - el.scrollTop - el.clientHeight, trailing, rows: rows.length, lastIsPrompt, hasPrompt, answerLen });
+        // Where the run's own prompt sits below the scroller's top: past the viewport's height, the
+        // view is above the message just sent.
+        const promptRow = [...rows].slice(-6).reverse().find((r) => (r.textContent ?? "").includes(prompt));
+        const promptTop = promptRow ? Math.round(promptRow.getBoundingClientRect().top - el.getBoundingClientRect().top) : null;
+        probe.frames.push({ t: performance.now(), top: el.scrollTop, sh: el.scrollHeight, ch: el.clientHeight, dist: el.scrollHeight - el.scrollTop - el.clientHeight, trailing, rows: rows.length, lastIsPrompt, hasPrompt, answerLen, promptTop });
       }
       requestAnimationFrame(tick);
     };
@@ -340,6 +344,8 @@ try {
     let idleReads = null;
     /** rescroll: how far from the end the view was 1.5 s after the reader came back down. */
     let rescrollLater = null;
+    /** reading-done: the reader stays scrolled up through the turn's end. */
+    let readingAcrossEnd = false;
     if (VARIANT === "idle-reconnect") {
       // The turn ends normally; then the chat socket drops and comes back while idle, as after a
       // network blip. The greeting finds the history stale and refetches it, replacing every row.
@@ -425,6 +431,18 @@ try {
       }, { root: `[data-tab-pool-id="${tabId}"]`, prompt: `run ${run} deltas=` });
       await waitEnded(page, tabId, before, 1500);
       extra = `sentPromptTop800msAfterSend=${promptTop}`;
+    } else if (VARIANT === "reading-done") {
+      // The reader sends, then while the answer streams scrolls up a little to read it (so the view
+      // rightly stops following), and stays there until the turn ends. Reported on 0.26.31: "it not
+      // following is right, but it jerks back up above the message I just sent". What must hold is
+      // the place being read: the turn ending may not move it.
+      const before = await turnsEnded();
+      await send(page, tabId, `long run ${run} deltas=${1200 + (run % 4) * 400}`);
+      await until("the answer to be streaming", async () => ((await serverTurns()).at(-1)?.yielded ?? 0) > 500, { timeout: 60000, interval: 50 });
+      await readerScrollBy(page, tabId, -[150, 300, 600, 900][run % 4]);
+      await until("the turn to end on the server", async () => (await turnsEnded()) > before, { timeout: 120000, interval: 50 });
+      await waitEnded(page, tabId, before, 2500);
+      readingAcrossEnd = true;
     } else if (VARIANT === "idle-loop") {
       // A chat left open and idle: count the history reloads it makes on its own.
       const t0 = Date.now();
@@ -502,6 +520,19 @@ try {
       if (b.trailing && a.answerLen > 0 && b.answerLen > a.answerLen) growth++;
     }
     extra += ` answerGoneMs=${gone.longest} drawnInSteps=${growth}`;
+    // Across the turn's end (the last frame the thinking line was drawn): how the scroll offset and
+    // the prompt's place moved. A drop in `top` nobody asked for is the view jerking upward.
+    const lastStreamIdx = trace.frames.findLastIndex((f) => f.trailing);
+    const endFrame = lastStreamIdx >= 0 ? trace.frames[lastStreamIdx] : null;
+    const afterEnd = lastStreamIdx >= 0 ? trace.frames.slice(lastStreamIdx) : [];
+    const minTopAfter = afterEnd.length ? Math.min(...afterEnd.map((f) => f.top)) : null;
+    const topDrop = endFrame && minTopAfter !== null ? Math.round(endFrame.top - minTopAfter) : null;
+    const promptEnd = endFrame?.promptTop ?? null;
+    const promptAfter = trace.frames.at(-1)?.promptTop ?? null;
+    // Only a move counts: a reader who scrolled the prompt out of view themselves is not the bug.
+    const promptBelowView = promptEnd !== null && promptAfter !== null
+      && promptEnd <= (endFrame?.ch ?? 0) && promptAfter > (trace.frames.at(-1)?.ch ?? 0);
+    extra += ` topAtEnd=${Math.round(endFrame?.top ?? -1)} topDropAfterEnd=${topDrop} promptTop ${promptEnd} -> ${promptAfter}${promptBelowView ? " VIEW-ABOVE-PROMPT" : ""}`;
     // Enforced on turns streamed without a drop: after a drop the rest of a turn is short, and the
     // count says more about where the drop fell than about how the answer is drawn.
     const drawnOk = DROPS_SOCKET.has(VARIANT) || growth >= MIN_DRAW_STEPS;
@@ -510,9 +541,27 @@ try {
       // The reader is not at the bottom: what must hold is the place they were reading.
       ok = readingShift !== null && Math.abs(readingShift) <= READING_SHIFT_TOLERANCE_PX && answerShown && gone.longest <= ANSWER_GONE_TOLERANCE_MS;
       extra += ` readingShift=${readingShift}px`;
+    } else if (readingAcrossEnd) {
+      // Not following is right here; the turn ending may not move the view: the prompt stays where
+      // it was within a few pixels, and the scroll offset does not drop.
+      const shift = promptEnd !== null && promptAfter !== null ? promptAfter - promptEnd : null;
+      ok = shift !== null && Math.abs(shift) <= READING_SHIFT_TOLERANCE_PX && (topDrop ?? 0) <= READING_SHIFT_TOLERANCE_PX && !promptBelowView && answerShown;
+      extra += ` promptShift=${shift}px`;
     } else if (VARIANT === "rescroll") {
       // Back at the end by hand, the view follows again: while the answer streams and once it ends.
       ok = after && after.dist <= AT_BOTTOM_PX && rescrollLater !== null && rescrollLater <= AT_BOTTOM_PX && answerShown;
+    } else if (VARIANT === "reading-done") {
+      // The reader sends, then while the answer streams scrolls up a little to read it (so the view
+      // rightly stops following), and stays there until the turn ends. Reported on 0.26.31: "it not
+      // following is right, but it jerks back up above the message I just sent". What must hold is
+      // the place being read: the turn ending may not move it.
+      const before = await turnsEnded();
+      await send(page, tabId, `long run ${run} deltas=${1200 + (run % 4) * 400}`);
+      await until("the answer to be streaming", async () => ((await serverTurns()).at(-1)?.yielded ?? 0) > 500, { timeout: 60000, interval: 50 });
+      await readerScrollBy(page, tabId, -[150, 300, 600, 900][run % 4]);
+      await until("the turn to end on the server", async () => (await turnsEnded()) > before, { timeout: 120000, interval: 50 });
+      await waitEnded(page, tabId, before, 2500);
+      readingAcrossEnd = true;
     } else if (VARIANT === "idle-loop") {
       // No turn runs here; an idle chat reloading its history on its own is what is measured.
       ok = idleReads !== null && idleReads <= MAX_IDLE_HISTORY_READS;
