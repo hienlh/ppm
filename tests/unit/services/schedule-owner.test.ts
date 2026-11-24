@@ -4,9 +4,12 @@
  * person moving it in Settings (`PATCH /api/schedules/:id/owner`) or linking from the trace
  * (`GET`/`POST /api/schedules/owners`).
  */
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
 import { openTestDb, setDb, setSessionMetadata, setSessionTitle } from "../../../src/services/db.service.ts";
 import { getSchedule, insertSchedule } from "../../../src/services/scheduler-db.service.ts";
 import { ownerRefusal } from "../../../src/services/schedule-owner.ts";
@@ -162,10 +165,25 @@ describe("GET and POST /api/schedules/owners", () => {
     t.close();
   }
 
+  // Each test reads a trace of its own: the shared PPM folder's `session-trace.db` can still be held
+  // open by a test file that ran earlier in the same process, and Windows refuses to delete it then.
+  let savedPpmHome: string | undefined;
+  let traceHome: string;
+
   beforeEach(() => {
-    if (existsSync(getTraceDbPath())) rmSync(getTraceDbPath(), { force: true });
+    savedPpmHome = process.env.PPM_HOME;
+    traceHome = mkdtempSync(join(tmpdir(), "ppm-schedule-owners-"));
+    process.env.PPM_HOME = traceHome;
+    _resetPpmDir();
     setSessionMetadata(CHAT_A, "proj", PROJECT);
     setSessionTitle(CHAT_A, "QL Slack");
+  });
+
+  afterEach(() => {
+    if (savedPpmHome === undefined) delete process.env.PPM_HOME;
+    else process.env.PPM_HOME = savedPpmHome;
+    _resetPpmDir();
+    try { rmSync(traceHome, { recursive: true, force: true }); } catch { /* EBUSY on Windows: left to the OS */ }
   });
 
   it("lists what it would link without writing, then links it", async () => {
