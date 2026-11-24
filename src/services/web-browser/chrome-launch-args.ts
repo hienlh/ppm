@@ -63,6 +63,8 @@ export function chromeLaunchArgs(input: LaunchArgsInput): string[] {
     "--password-store=basic",
     "--lang=vi-VN",
     "--mute-audio",
+    // Pages play and the sound tap runs without waiting for a gesture on the host, where nobody is.
+    "--autoplay-policy=no-user-gesture-required",
     "--window-size=1280,800",
   ];
   if (input.transport === "pipe") {

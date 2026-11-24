@@ -13,6 +13,7 @@ import { resolveAddress } from "./address-bar.ts";
 import { webBrowserHost, type WebBrowserHost } from "./browser-host.ts";
 import { createLogger } from "../logger.ts";
 import { installPageFeatures } from "./page-features.ts";
+import { installAudioRelay } from "./audio/audio-relay.ts";
 
 const log = createLogger("web-browser");
 
@@ -197,3 +198,4 @@ export class ViewerHub {
 
 export const viewerHub = new ViewerHub(webBrowserHost);
 installPageFeatures(viewerHub);
+installAudioRelay(viewerHub);

@@ -26,6 +26,8 @@ let page: ReturnType<typeof Bun.serve> | null = null;
 let fakePpm: ReturnType<typeof Bun.serve> | null = null;
 const received: WebBrowserServerMessage[] = [];
 let pictures = 0;
+let soundPeak = 0;
+let soundFrames = 0;
 let chromePid = 0;
 
 const viewer: Viewer = {
@@ -33,12 +35,30 @@ const viewer: Viewer = {
   send: (m) => { received.push(m); },
   sendBinary: (b) => {
     const f = decodeBinaryFrame(b);
+    if (f?.kind === 2) {
+      soundFrames++;
+      const v = new DataView(f.payload.buffer, f.payload.byteOffset, f.payload.byteLength);
+      for (let i = 0; i + 1 < f.payload.byteLength; i += 2) soundPeak = Math.max(soundPeak, Math.abs(v.getInt16(i, true)));
+    }
     if (f?.kind === 1) {
       pictures++;
       void viewerHub.onMessage(viewer, { type: "frame.ack", seq: f.seq });
     }
   },
 };
+
+/** One second of a 440 Hz tone, 8 kHz mono 16-bit WAV. */
+function toneWav(): Uint8Array {
+  const rate = 8000, n = rate;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (o: number, t: string) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVE"); str(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * 12000), true);
+  return new Uint8Array(buf);
+}
 
 async function until(cond: () => boolean | Promise<boolean>, ms = 15_000): Promise<void> {
   const end = Date.now() + ms;
@@ -68,6 +88,9 @@ describe.skipIf(!hasBrowser)("PPM's browser with a real Chrome", () => {
     const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } });
     page = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => {
       const path = new URL(req.url).pathname;
+      if (path === "/tone") return html("<script>const c = new AudioContext(); const o = c.createOscillator(); o.frequency.value = 440; o.connect(c.destination); o.start();</script>");
+      if (path === "/media") return html("<audio id=a src='/tone.wav' autoplay loop></audio>");
+      if (path === "/tone.wav") return new Response(toneWav(), { headers: { "content-type": "audio/wav" } });
       if (path === "/alert") return html("<script>setTimeout(() => alert('hi from page'), 50)</script>");
       if (path === "/file") return new Response("report body", { headers: { "content-type": "application/pdf", "content-disposition": "attachment; filename*=UTF-8''b%C3%A1o%20c%C3%A1o.pdf" } });
       if (path === "/upload") return html("<input type=file id=f style='position:fixed;inset:0;width:100%;height:100%'>");
@@ -163,6 +186,20 @@ describe.skipIf(!hasBrowser)("PPM's browser with a real Chrome", () => {
     const tab = webBrowserHost.tabs!.get(before!)!;
     await webBrowserHost.cdp!.send("Runtime.evaluate", { expression: `window.open('http://localhost:${page!.port}/')`, userGesture: true }, tab.sessionId);
     await until(() => webBrowserHost.activeTabId !== before && webBrowserHost.tabs!.count === 2);
+  }, 20_000);
+
+  it("carries Web Audio sound to the viewer", async () => {
+    soundPeak = 0; soundFrames = 0;
+    await viewerHub.onMessage(viewer, { type: "navigate", url: `http://localhost:${page!.port}/tone` });
+    await until(() => soundFrames > 3 && soundPeak > 1000);
+  }, 20_000);
+
+  it("carries an <audio> element's sound to the viewer", async () => {
+    await viewerHub.onMessage(viewer, { type: "navigate", url: `http://localhost:${page!.port}/` });
+    await Bun.sleep(500);
+    soundPeak = 0; soundFrames = 0;
+    await viewerHub.onMessage(viewer, { type: "navigate", url: `http://localhost:${page!.port}/media` });
+    await until(() => soundFrames > 3 && soundPeak > 1000);
   }, 20_000);
 
   it("stops Chrome and leaves no process behind", async () => {
