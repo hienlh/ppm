@@ -92,7 +92,13 @@ export async function startChrome(input: StartChromeInput): Promise<RunningChrom
   const stdio = input.transport === "pipe"
     ? (["ignore", "ignore", "ignore", "pipe", "pipe"] as const)
     : (["ignore", "ignore", "ignore"] as const);
-  const child = nodeSpawn(input.executable, args, { stdio: [...stdio], windowsHide: true });
+  // Chrome refuses remote debugging when USERPROFILE is not the account's real profile folder
+  // (measured: "DevTools remote debugging requires a non-default data directory", whatever
+  // --user-data-dir says). PPM never changes it; an isolated test sandbox does, and names the
+  // real folder for Chrome here.
+  const realProfile = process.env.PPM_WEB_BROWSER_CHROME_USERPROFILE;
+  const env = realProfile ? { ...process.env, USERPROFILE: realProfile } : process.env;
+  const child = nodeSpawn(input.executable, args, { stdio: [...stdio], windowsHide: true, env });
   if (!child.pid) throw new Error(`Could not start ${input.executable}`);
   const pid = child.pid;
   const exited = new Promise<number | null>((resolve) => {

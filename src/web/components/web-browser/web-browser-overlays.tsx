@@ -5,12 +5,13 @@
  * and styled unlike PPM's own dialogs — otherwise `prompt("PPM session expired, enter your
  * password")` would look exactly like PPM asking.
  */
+import { WB_TEXT_BUTTON, WB_TEXT_BUTTON_OUTLINE, WB_TEXT_BUTTON_PRIMARY } from "./web-browser-button-styles";
 import { useState } from "react";
 import { AlertTriangle, Bot, Globe, Loader2, Monitor, Power } from "@/lib/icons";
 import type { WebBrowserViewState } from "./use-web-browser-connection";
 
-const primary = "min-h-11 md:min-h-8 px-4 rounded-md bg-primary text-white text-sm hover:opacity-90";
-const secondary = "min-h-11 md:min-h-8 px-4 rounded-md border border-border text-sm text-text hover:bg-panel-2";
+const primary = WB_TEXT_BUTTON_PRIMARY;
+const secondary = WB_TEXT_BUTTON_OUTLINE;
 
 function Screen({ icon, title, body, children }: { icon: React.ReactNode; title: string; body?: string; children?: React.ReactNode }) {
   return (
@@ -91,8 +92,8 @@ export function WebBrowserPageDialog(p: { dialog: NonNullable<WebBrowserViewStat
             className="mt-3 w-full rounded border border-[#dadce0] px-2 py-1.5 text-sm outline-none focus:border-[#1a73e8]" />
         )}
         <div className="mt-4 flex justify-end gap-2">
-          {kind !== "alert" && <button type="button" className="min-h-11 md:min-h-8 px-3 rounded text-sm text-[#1a73e8] hover:bg-[#f1f3f4]" onClick={() => p.onAnswer(false)}>Cancel</button>}
-          <button type="button" className="min-h-11 md:min-h-8 px-4 rounded bg-[#1a73e8] text-sm text-white" onClick={() => p.onAnswer(true, kind === "prompt" ? text : undefined)}>
+          {kind !== "alert" && <button type="button" className={`${WB_TEXT_BUTTON} text-[#1a73e8] hover:bg-[#f1f3f4]`} onClick={() => p.onAnswer(false)}>Cancel</button>}
+          <button type="button" className={`${WB_TEXT_BUTTON} bg-[#1a73e8] text-white`} onClick={() => p.onAnswer(true, kind === "prompt" ? text : undefined)}>
             {kind === "beforeunload" ? "Leave" : "OK"}
           </button>
         </div>
@@ -104,7 +105,7 @@ export function WebBrowserPageDialog(p: { dialog: NonNullable<WebBrowserViewStat
 export function WebBrowserAiBanner(p: { ai: NonNullable<WebBrowserViewState["ai"]>; onTakeBack(): void; onGiveBack(): void }) {
   if (!p.ai.active && !p.ai.heldByUser) return null;
   return (
-    <div className="flex items-center gap-2 shrink-0 px-3 min-h-9 text-xs bg-accent-2/15 border-b border-border text-text">
+    <div className="flex items-center gap-2 shrink-0 px-3 py-1 text-xs bg-accent-2/15 border-b border-border text-text">
       <Bot className="size-4 text-accent-2" />
       <span className="flex-1 min-w-0 truncate">
         {p.ai.heldByUser ? "You took the browser back from the AI." : `AI is using the browser${p.ai.sessionTitle ? ` (${p.ai.sessionTitle})` : ""}.`}

@@ -1,4 +1,5 @@
 /** The browser's own tabs (not PPM's tabs). Desktop: a strip; phone: the list in a sheet. */
+import { WB_ICON_BUTTON, WB_TEXT_BUTTON } from "./web-browser-button-styles";
 import { Bot, Globe, Plus, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { WebBrowserTabInfo } from "../../../shared/web-browser-protocol";
@@ -25,21 +26,20 @@ export function WebBrowserTabStrip(p: {
       {p.tabs.map((t) => (
         <div key={t.id} role="tab" aria-selected={t.id === p.activeTabId}
           className={cn("group flex items-center gap-1.5 min-w-0 rounded-md px-2 text-xs cursor-pointer select-none",
-            p.vertical ? "min-h-12 text-sm" : "h-7 max-w-52",
+            p.vertical ? "min-h-10 text-sm" : "h-7 max-w-52",
             t.id === p.activeTabId ? "bg-panel text-text border border-border" : "text-text-2 hover:bg-panel-2")}
           onClick={() => p.onActivate(t.id)}>
           {t.ai ? <Bot className="size-3.5 shrink-0 text-accent-2" /> : <Globe className="size-3.5 shrink-0 text-text-3" />}
           <span className="truncate flex-1">{tabLabel(t)}</span>
           <button type="button" aria-label={`Close ${tabLabel(t)}`} onClick={(e) => { e.stopPropagation(); p.onClose(t.id); }}
-            className={cn("flex items-center justify-center rounded hover:bg-panel-2", p.vertical ? "min-h-11 min-w-11" : "size-5 opacity-60 group-hover:opacity-100")}>
+            className={cn(WB_ICON_BUTTON, !p.vertical && "opacity-60 group-hover:opacity-100")}>
             <X className="size-3" />
           </button>
         </div>
       ))}
       <button type="button" onClick={p.onNew} disabled={full} aria-label="New tab"
         title={full ? `At most ${p.maxTabs} tabs (Settings → Web browser)` : "New tab"}
-        className={cn("flex items-center justify-center rounded-md text-text-2 hover:bg-panel-2 disabled:opacity-40",
-          p.vertical ? "min-h-12 gap-2 text-sm" : "size-7 shrink-0")}>
+        className={p.vertical ? cn(WB_TEXT_BUTTON, "self-start text-text-2 hover:bg-panel-2") : WB_ICON_BUTTON}>
         <Plus className="size-4" />{p.vertical && "New tab"}
       </button>
     </div>

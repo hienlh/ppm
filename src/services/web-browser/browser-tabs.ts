@@ -94,6 +94,20 @@ export class BrowserTabs extends EventEmitter {
     } catch {}
   }
 
+  private async refreshInfo(tabId: string): Promise<void> {
+    const tab = this.tabs.get(tabId);
+    if (!tab) return;
+    try {
+      const { targetInfo } = await this.cdp.send<{ targetInfo: { url: string; title: string } }>("Target.getTargetInfo", { targetId: tabId });
+      if (targetInfo.url !== tab.url || targetInfo.title !== tab.title) {
+        tab.url = targetInfo.url;
+        tab.title = targetInfo.title;
+        this.emit("changed");
+      }
+    } catch {}
+    await this.refreshHistory(tabId);
+  }
+
   private async waitFor(targetId: string, timeoutMs = 5000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (!this.tabs.has(targetId) && Date.now() < deadline) await Bun.sleep(20);
@@ -145,6 +159,8 @@ export class BrowserTabs extends EventEmitter {
       if (tab && p.frameId === tab.id) {
         tab.loading = e.method === "Page.frameStartedLoading";
         this.emit("changed");
+        // The title is often set after the URL changed; ask again once the page has loaded.
+        if (!tab.loading) void this.refreshInfo(tab.id);
       }
     }
   }

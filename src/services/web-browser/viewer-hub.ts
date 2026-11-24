@@ -49,6 +49,7 @@ export class ViewerHub {
       // The tab on screen was closed: show the one the host fell back to.
       if (this.controller && host.activeTabId !== this.streamedTabId) void this.restream();
     });
+    host.on("ram", () => this.broadcast(this.status()));
     host.on("blocked", (b: { url: string; reason: never }) => this.broadcast({ type: "blocked", url: b.url, reason: b.reason }));
     host.addPageSetup(async (sessionId) => {
       const cdp = host.cdp;
@@ -68,7 +69,7 @@ export class ViewerHub {
 
   status(message?: string): WebBrowserServerMessage {
     const h = this.host;
-    return { type: "status", state: h.state, ramMB: null, tabCount: h.tabs?.count ?? 0, idleStopAt: h.idleStopAt(), ...(message ? { message } : {}) };
+    return { type: "status", state: h.state, ramMB: h.ramMB, tabCount: h.tabs?.count ?? 0, idleStopAt: h.idleStopAt(), ...(message ? { message } : {}) };
   }
 
   tabsMessage(): WebBrowserServerMessage {

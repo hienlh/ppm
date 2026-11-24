@@ -20,9 +20,14 @@ export interface WebBrowserClientHandlers {
   onSound(frame: SoundFrame): void;
 }
 
-export function webBrowserWsUrl(loc: Pick<Location, "protocol" | "hostname" | "host">, isDev: boolean, devPort = "8081"): string {
+/**
+ * Same origin, through Vite's `/ws` proxy in dev, unless `VITE_DEV_API_PORT` names the API port
+ * to reach directly (the bypass other sockets use). Never a hard-coded 8081: a scratch e2e server
+ * listens elsewhere, and 8081 may be someone's live dev PPM.
+ */
+export function webBrowserWsUrl(loc: Pick<Location, "protocol" | "hostname" | "host">, devPort?: string): string {
   const authed = withWsAuth("/ws/web-browser");
-  if (isDev && loc.protocol !== "https:") return `ws://${loc.hostname}:${devPort}${authed}`;
+  if (devPort && loc.protocol !== "https:") return `ws://${loc.hostname}:${devPort}${authed}`;
   return `${loc.protocol === "https:" ? "wss:" : "ws:"}//${loc.host}${authed}`;
 }
 
@@ -45,7 +50,8 @@ export class WebBrowserClient {
       return;
     }
     const env = (import.meta as { env?: Record<string, string | boolean | undefined> }).env ?? {};
-    const ws = new WebSocket(webBrowserWsUrl(window.location, env.DEV === true, String(env.VITE_DEV_API_PORT ?? "8081")));
+    const devPort = env.DEV === true && typeof env.VITE_DEV_API_PORT === "string" ? env.VITE_DEV_API_PORT : undefined;
+    const ws = new WebSocket(webBrowserWsUrl(window.location, devPort));
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     ws.onopen = () => {

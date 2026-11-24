@@ -2,6 +2,7 @@
  * The small panels the toolbar opens: what "On host" means, downloads, the menu, and the
  * page's file chooser. A dropdown-sized card on desktop, a bottom sheet on a phone.
  */
+import { WB_TEXT_BUTTON_OUTLINE, WB_TEXT_BUTTON_PRIMARY } from "./web-browser-button-styles";
 import { useRef } from "react";
 import { Download, ExternalLink, Trash2, Upload, Volume2, VolumeX, X } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
@@ -10,7 +11,7 @@ import type { WebBrowserViewState } from "./use-web-browser-connection";
 
 export type PanelKind = "info" | "downloads" | "menu" | "tabs" | null;
 
-const row = "flex w-full items-center gap-2 rounded-md px-3 min-h-11 md:min-h-8 text-sm text-left hover:bg-panel-2 disabled:opacity-40";
+const row = "flex w-full items-center gap-2 rounded-md px-3 py-2 md:py-1.5 text-sm text-left hover:bg-panel-2 disabled:opacity-40 [&_svg]:size-4";
 
 export function PanelFrame(p: { phone: boolean; onClose(): void; children: React.ReactNode; title?: string }) {
   if (p.phone) {
@@ -48,14 +49,14 @@ export function DownloadsPanel(p: { s: WebBrowserViewState }) {
   return (
     <>
       {p.s.downloads.map((d) => (
-        <div key={d.id} className="flex items-center gap-2 px-2 min-h-11 text-sm">
+        <div key={d.id} className="flex items-center gap-2 px-2 py-1.5 text-sm">
           <Download className="size-4 text-text-3 shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="truncate">{d.name}</div>
             <div className="text-xs text-text-3">{d.state === "done" ? formatBytes(d.sizeBytes ?? d.receivedBytes) : d.state === "canceled" ? "Canceled" : `${formatBytes(d.receivedBytes)}…`}</div>
           </div>
           {d.state === "done" && (
-            <button type="button" className="min-h-11 md:min-h-8 px-3 rounded-md bg-primary text-white text-xs"
+            <button type="button" className={WB_TEXT_BUTTON_PRIMARY}
               onClick={() => void saveDownload(d.id)}>Save</button>
           )}
         </div>
@@ -124,10 +125,10 @@ export function FileChooserPanel(p: { chooser: NonNullable<WebBrowserViewState["
       <div className="text-xs text-text-2">The page wants {p.chooser.multiple ? "files" : "a file"} from you.</div>
       <input ref={input} type="file" className="hidden" multiple={p.chooser.multiple} accept={p.chooser.accept || undefined}
         onChange={(e) => void pick(e.target.files)} />
-      <button type="button" className="min-h-11 md:min-h-8 rounded-md bg-primary text-white flex items-center justify-center gap-2" onClick={() => input.current?.click()}>
+      <button type="button" className={WB_TEXT_BUTTON_PRIMARY} onClick={() => input.current?.click()}>
         <Upload className="size-4" />Choose from this device
       </button>
-      <button type="button" className="min-h-11 md:min-h-8 rounded-md border border-border" onClick={p.onCancel}>Cancel</button>
+      <button type="button" className={WB_TEXT_BUTTON_OUTLINE} onClick={p.onCancel}>Cancel</button>
     </div>
   );
 }

@@ -18,11 +18,13 @@ import { BrowserTabs } from "./browser-tabs.ts";
 import { idleDeadline, shouldStopForIdle } from "./browser-idle.ts";
 import { EGRESS_CANARY_HOST, type EgressGuard, startEgressGuard } from "./egress/egress-process.ts";
 import { ppmOwnPorts } from "./ppm-own-ports.ts";
+import { chromeMemoryMB } from "./chrome-memory.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("web-browser");
 const CANARY_TIMEOUT_MS = 6000;
 const IDLE_CHECK_MS = 30_000;
+const RAM_SAMPLE_MS = 10_000;
 
 export type PageSetupHook = (sessionId: string, targetId: string, host: WebBrowserHost) => Promise<void>;
 
@@ -52,6 +54,9 @@ export class WebBrowserHost extends EventEmitter {
   private egress: EgressGuard | null = null;
   private starting: Promise<void> | null = null;
   private idleTimer: ReturnType<typeof setInterval> | null = null;
+  private ramTimer: ReturnType<typeof setInterval> | null = null;
+  /** Last measured memory of the whole Chrome, MB; null when unknown. */
+  ramMB: number | null = null;
   private readonly setupHooks: PageSetupHook[] = [];
   private readonly visibleViewers = new Set<string>();
   private lastVisibleAt = 0;
@@ -124,7 +129,9 @@ export class WebBrowserHost extends EventEmitter {
       this.activeTabId = probe;
       this.touchInput();
       this.idleTimer = setInterval(() => this.checkIdle(), IDLE_CHECK_MS);
+      this.ramTimer = setInterval(() => void this.sampleRam(), RAM_SAMPLE_MS);
       this.setState("running");
+      void this.sampleRam();
     } catch (error) {
       log.error(`Browser failed to start: ${(error as Error)?.message ?? error}`);
       await this.teardown();
@@ -204,9 +211,19 @@ export class WebBrowserHost extends EventEmitter {
     }
   }
 
+  private async sampleRam(): Promise<void> {
+    const chrome = this.chrome;
+    if (!chrome) return;
+    this.ramMB = await chromeMemoryMB(chrome.cdp, chrome.pid);
+    this.emit("ram", this.ramMB);
+  }
+
   private async teardown(): Promise<void> {
     if (this.idleTimer) clearInterval(this.idleTimer);
     this.idleTimer = null;
+    if (this.ramTimer) clearInterval(this.ramTimer);
+    this.ramTimer = null;
+    this.ramMB = null;
     this.tabs?.stop();
     this.tabs = null;
     this.activeTabId = null;

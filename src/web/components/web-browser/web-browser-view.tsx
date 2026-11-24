@@ -2,6 +2,7 @@
  * PPM's browser, one body for both the desktop window and the phone tab (`phone`).
  * Desktop: tabs and toolbar above the page. Phone: the page full-height, the toolbar below it.
  */
+import { WB_TEXT_BUTTON } from "./web-browser-button-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
@@ -65,9 +66,9 @@ export function WebBrowserView({ phone }: { phone: boolean }) {
       {!phone && toolbar}
       {s.ai && <WebBrowserAiBanner ai={s.ai} onTakeBack={() => send({ type: "ai.release" })} onGiveBack={() => send({ type: "ai.return" })} />}
       {s.blocked && (
-        <div role="status" className="flex items-center gap-2 shrink-0 px-3 min-h-8 text-xs bg-warning/15 text-text border-b border-border">
+        <div role="status" className="flex items-center gap-2 shrink-0 px-3 py-1 text-xs bg-warning/15 text-text border-b border-border">
           <span className="flex-1 truncate">Blocked: {s.blocked.url} ({s.blocked.reason.replace("-", " ")})</span>
-          <button type="button" className="min-h-8 px-2" onClick={() => patch({ blocked: null })}>Dismiss</button>
+          <button type="button" className={`${WB_TEXT_BUTTON} hover:bg-panel-2`} onClick={() => patch({ blocked: null })}>Dismiss</button>
         </div>
       )}
       <div ref={surfaceRef} className="relative flex-1 min-h-0 overflow-hidden bg-white touch-none select-none" onPointerDown={unlockAudio}>

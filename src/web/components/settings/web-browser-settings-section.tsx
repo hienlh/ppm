@@ -3,11 +3,11 @@
  * limits that keep its memory in check, picture quality, sound, AI control, and the three
  * reach switches — each warned about, and warned about together when they stack.
  */
+import { WB_TEXT_BUTTON_OUTLINE } from "@/components/web-browser/web-browser-button-styles";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, Globe } from "@/lib/icons";
 import { Switch } from "@/components/ui/switch";
-import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api-client";
 import { WEB_BROWSER_QUALITY_PRESETS, type WebBrowserSettings } from "../../../shared/web-browser-settings";
 import { refreshWebBrowserAvailable } from "@/components/web-browser/use-web-browser-available";
@@ -24,7 +24,7 @@ interface Caps {
 
 function Row(p: { title: string; body?: React.ReactNode; checked: boolean; disabled?: boolean; onChange(v: boolean): void }) {
   return (
-    <label className="flex items-start gap-3 min-h-11 py-1 cursor-pointer">
+    <label className="flex items-start gap-3 py-1.5 cursor-pointer">
       <div className="flex-1">
         <div className="text-sm">{p.title}</div>
         {p.body && <div className="text-xs text-muted-foreground leading-relaxed">{p.body}</div>}
@@ -70,11 +70,11 @@ export function WebBrowserSettingsSection() {
           </p>
         </div>
         <Row title="Turn on the web browser" checked={s.enabled === true} onChange={(v) => void save({ enabled: v })} />
-        {s.enabled === true && <Button variant="outline" className="min-h-11" onClick={openWebBrowser}><Globe className="size-4" />Open the browser</Button>}
+        {s.enabled === true && <button type="button" className={WB_TEXT_BUTTON_OUTLINE} onClick={openWebBrowser}><Globe />Open the browser</button>}
         {caps.browsers.length === 0 ? (
           <p className={warn}><AlertTriangle className="size-4 shrink-0" />No Chrome or Edge found on this host. {caps.installHint}</p>
         ) : (
-          <label className="flex items-center gap-3 min-h-11 text-sm">
+          <label className="flex items-center gap-3 py-1 text-sm">
             <span className="flex-1">Browser on this host</span>
             <select className="min-h-9 rounded-md border border-border bg-panel px-2 text-sm" disabled={locked}
               value={s.browserPath ?? caps.browsers[0]!.path} onChange={(e) => void save({ browserPath: e.target.value })}>
@@ -86,15 +86,15 @@ export function WebBrowserSettingsSection() {
 
       <section className="space-y-2">
         <h3 className="text-sm font-medium">Memory</h3>
-        <label className="flex items-center gap-3 min-h-11 text-sm">
+        <label className="flex items-center gap-3 py-1 text-sm">
           <span className="flex-1">Most tabs at once <span className="text-xs text-muted-foreground">(each page costs 100–500 MB)</span></span>
           <input type="number" min={1} max={8} value={s.maxTabs} onChange={(e) => void save({ maxTabs: Number(e.target.value) })} className="w-20 min-h-9 rounded-md border border-border bg-panel px-2" />
         </label>
-        <label className="flex items-center gap-3 min-h-11 text-sm">
+        <label className="flex items-center gap-3 py-1 text-sm">
           <span className="flex-1">Stop the browser after this many minutes unused</span>
           <input type="number" min={2} max={120} value={s.idleStopMinutes} onChange={(e) => void save({ idleStopMinutes: Number(e.target.value) })} className="w-20 min-h-9 rounded-md border border-border bg-panel px-2" />
         </label>
-        <label className="flex items-center gap-3 min-h-11 text-sm">
+        <label className="flex items-center gap-3 py-1 text-sm">
           <span className="flex-1">Picture <span className="text-xs text-muted-foreground">(more frames cost more bandwidth)</span></span>
           <select value={preset} onChange={(e) => { const p = WEB_BROWSER_QUALITY_PRESETS[e.target.value as keyof typeof WEB_BROWSER_QUALITY_PRESETS]; if (p) void save(p); }}
             className="min-h-9 rounded-md border border-border bg-panel px-2 text-sm">
@@ -129,11 +129,11 @@ export function WebBrowserSettingsSection() {
 
       <section className="space-y-2">
         <h3 className="text-sm font-medium">Data</h3>
-        <Button variant="outline" className="min-h-11" onClick={async () => {
+        <button type="button" className={WB_TEXT_BUTTON_OUTLINE} onClick={async () => {
           if (!window.confirm("Clear the browser's logins, history and downloads on the host?")) return;
           await api.post("/api/web-browser/clear-data");
           toast.success("Browsing data cleared");
-        }}>Clear browsing data…</Button>
+        }}>Clear browsing data…</button>
       </section>
     </div>
   );
