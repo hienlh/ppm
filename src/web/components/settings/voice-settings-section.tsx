@@ -18,6 +18,7 @@ import { useSettingsStore, type VoiceEngine } from "@/stores/settings-store";
 import { RunInTerminalButton } from "./run-in-terminal-button";
 import { VoiceMessageSettings } from "./voice-message-settings";
 import { WhisperBuildChoice, WhisperGpuPanel } from "./whisper-gpu-settings";
+import { WhisperTestPanel } from "./whisper-test-panel";
 import type { InstallJob, SpeechStatus, WhisperBuild } from "./whisper-status-types";
 
 const PHASE_LABEL: Record<InstallJob["phase"], string> = {
@@ -191,6 +192,7 @@ export function VoiceSettingsSection() {
         </div>
 
         {status && <WhisperGpuPanel status={status} onStatus={setStatus} />}
+        {status && !installing && <WhisperTestPanel status={status} />}
 
         {status && !status.installable && (status.installHint ? (
           <div className="space-y-2">

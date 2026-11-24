@@ -132,3 +132,18 @@ describe("Whisper's GPU, with the CUDA build already installed", () => {
     expect(((await res.json()) as any).error).toContain("unknown model");
   });
 });
+
+describe("POST /speech/test", () => {
+  it("checks the request before touching whisper-cli", async () => {
+    expect((await post("/speech/test", { body: new Uint8Array() })).status).toBe(400);
+    expect((await post("/speech/test?device=gpu", { body: new Uint8Array([1]) })).status).toBe(400);
+    expect((await post("/speech/test?lang=../x", { body: new Uint8Array([1]) })).status).toBe(400);
+    // A test is a few seconds: a long upload is refused rather than transcribed.
+    expect((await post("/speech/test", { body: new Uint8Array(2_000_000) })).status).toBe(413);
+  });
+
+  it("answers 409 rather than spawning anything when Whisper is not installed", async () => {
+    const res = await post("/speech/test?device=cpu", { body: new Uint8Array([1, 2, 3]) });
+    expect(res.status).toBe(409);
+  });
+});

@@ -133,6 +133,12 @@ export interface TranscribeResult {
   text: string;
   /** Wall time of the whisper-cli run, for the UI's "took Ns" and for tuning. */
   ms: number;
+  /** What the run that produced the text was allowed to use: `cpu` when it ran with `-ng`. */
+  ranOn?: "gpu" | "cpu";
+  /** What the binary was last seen to run on when the GPU is allowed (null: not checked yet). */
+  backend?: WhisperBackend | null;
+  /** The GPU run failed and the text came from the CPU retry. */
+  fellBack?: boolean;
 }
 
 /** Throws when Whisper is not installed, the run fails, or it outruns the timeout. */
@@ -140,7 +146,18 @@ export async function transcribeWav(wav: Uint8Array, language = "vi", prompt?: s
   return withWhisperLock(() => runOnce(wav, language, prompt));
 }
 
-async function runOnce(wav: Uint8Array, language: string, prompt: string | undefined): Promise<TranscribeResult> {
+/**
+ * The Settings test: one run over `wav`, through the same lock as a voice message so it never runs
+ * beside one. `cpu` forces `-ng` (the "compare with the CPU" button); `default` runs the way a
+ * message would. No word list is passed, so the time is the model's own.
+ */
+export function transcribeTest(wav: Uint8Array, language: string, device: "default" | "cpu"): Promise<TranscribeResult> {
+  return withWhisperLock(() => runOnce(wav, language, undefined, { forceCpu: device === "cpu" }));
+}
+
+async function runOnce(
+  wav: Uint8Array, language: string, prompt: string | undefined, opts: { forceCpu?: boolean } = {},
+): Promise<TranscribeResult> {
   const binary = findWhisperBinary();
   const model = installedModel();
   if (!binary || !model) throw new Error("Whisper is not installed on this host");
@@ -151,7 +168,8 @@ async function runOnce(wav: Uint8Array, language: string, prompt: string | undef
 
   // Asked before the clock starts: the first message after a start pays one `--help` run for it.
   const carryPrompt = !!prompt?.trim() && (await supportsCarryPrompt(binary.path));
-  const useGpu = gpuPreference();
+  const useGpu = !opts.forceCpu && gpuPreference();
+  let fellBack = false;
   const started = Date.now();
   try {
     const cmd = (noGpu: boolean) =>
@@ -166,12 +184,15 @@ async function runOnce(wav: Uint8Array, language: string, prompt: string | undef
       const detail = lastLine(run.stderr, run.code);
       log.warn(`whisper-cli failed with the GPU on (${detail}); running it again on the CPU`);
       run = await runWhisper(cmd(true));
+      fellBack = true;
       // Only a CPU run that works shows the GPU was what failed; a bad WAV fails both ways and
       // must not be reported as a GPU failure.
       if (run.code === 0) recordGpuFailure(detail);
     }
     if (run.code !== 0) throw new Error(`whisper-cli failed: ${lastLine(run.stderr, run.code)}`);
-    return { text: parseWhisperText(run.stdout), ms: Date.now() - started };
+    // "gpu" only when a probe saw this binary choose one; an unchecked binary is not claimed.
+    const ranOn = useGpu && !fellBack && backend !== null && backend !== "none" ? "gpu" : "cpu";
+    return { text: parseWhisperText(run.stdout), ms: Date.now() - started, ranOn, backend, fellBack };
   } finally {
     rmSync(wavPath, { force: true });
   }

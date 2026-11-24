@@ -13,16 +13,16 @@
  * PPM_WHISPER_GPU_KEEP_HOME=1 keeps the scratch PPM_HOME (printed) for a UI check afterwards;
  * otherwise it is deleted. A real install in `~/.ppm/whisper` is never touched.
  */
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 process.env.PPM_HOME = mkdtempSync(join(tmpdir(), "ppm-whisper-gpu-e2e-"));
 
 const { getWhisperStatus, startWhisperInstall } = await import("../../src/services/speech-to-text/whisper-install.service.ts");
-const { transcribeWav } = await import("../../src/services/speech-to-text/whisper-transcribe.service.ts");
+const { transcribeTest, transcribeWav } = await import("../../src/services/speech-to-text/whisper-transcribe.service.ts");
 const { setGpuPreference, silentWav, whisperGpuStatus } = await import("../../src/services/speech-to-text/whisper-gpu-state.ts");
-const { whisperModelDir } = await import("../../src/services/speech-to-text/whisper-paths.ts");
+const { whisperModelDir, whisperTmpDir } = await import("../../src/services/speech-to-text/whisper-paths.ts");
 const { DEFAULT_MODEL_ID, modelById } = await import("../../src/services/speech-to-text/whisper-catalog.ts");
 
 let failures = 0;
@@ -104,6 +104,14 @@ try {
   setGpuPreference(true);
   check("the GPU is faster than the CPU", gpuMs * 2 < cpuMs, { gpuMs, cpuMs });
   check("turning the GPU off runs on the CPU", offMs > gpuMs * 2, { offMs, gpuMs });
+
+  // The Settings test: the way a message runs, then the same audio forced onto the CPU.
+  const testGpu = await transcribeTest(jfk, "en", "default");
+  const testCpu = await transcribeTest(jfk, "en", "cpu");
+  console.log(`  Settings test: ${testGpu.ranOn} ${testGpu.ms} ms, ${testCpu.ranOn} ${testCpu.ms} ms`);
+  check("the Settings test reports the GPU run as gpu", testGpu.ranOn === "gpu" && testGpu.backend === "cuda", testGpu);
+  check("the Settings compare run reports the CPU", testCpu.ranOn === "cpu" && testCpu.ms > testGpu.ms * 2, testCpu);
+  check("the Settings test leaves no audio behind", readdirSync(whisperTmpDir()).filter((f) => f.endsWith(".wav")).length === 0);
 
   const quiet = await transcribeWav(silentWav(6), "vi");
   check("silence still transcribes to nothing on the GPU", quiet.text === "", quiet.text);

@@ -20,12 +20,14 @@ import {
   whisperGpuStatus,
 } from "../../services/speech-to-text/whisper-gpu-state.ts";
 import { findWhisperBinary, whisperModelDir } from "../../services/speech-to-text/whisper-paths.ts";
-import { transcribeWav } from "../../services/speech-to-text/whisper-transcribe.service.ts";
+import { transcribeTest, transcribeWav } from "../../services/speech-to-text/whisper-transcribe.service.ts";
 import { broadcastGlobalEvent } from "../ws/global.ts";
 import { defaultVoiceRouteDeps, registerVoiceMessageRoutes, type VoiceRouteDeps } from "./speech-voice-message.ts";
 
 /** 16 kHz mono 16-bit is 32 KB/s, so this is about 13 minutes of speech. */
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+/** The Settings test: 30 seconds of 16 kHz mono 16-bit WAV is under 1 MB. */
+const MAX_TEST_AUDIO_BYTES = 1_100_000;
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -79,6 +81,32 @@ export function createSpeechRoutes(voiceDeps: VoiceRouteDeps = defaultVoiceRoute
     if (typeof body.useGpu !== "boolean") return c.json(err("useGpu must be true or false"), 400);
     setGpuPreference(body.useGpu);
     return c.json(ok(await fullWhisperStatus()));
+  });
+
+  /**
+   * POST /api/speech/test?lang=en&device=default|cpu — the Settings test: a few seconds recorded in
+   * the browser (or the bundled sample), as a WAV, transcribed once on this host and answered with
+   * the text, the time and what it ran on. The audio goes to whisper-cli only: it is written to a
+   * temp file for the run and deleted after it, and nothing is sent to a model or kept.
+   * `device=cpu` is the "compare with the CPU" button.
+   */
+  speechRoutes.post("/test", async (c) => {
+    const lang = c.req.query("lang") ?? "vi";
+    if (!/^(auto|[a-z]{2})$/.test(lang)) return c.json(err("invalid lang"), 400);
+    const device = c.req.query("device") ?? "default";
+    if (device !== "default" && device !== "cpu") return c.json(err("device must be default or cpu"), 400);
+    const body = new Uint8Array(await c.req.arrayBuffer());
+    if (body.byteLength === 0) return c.json(err("empty audio"), 400);
+    if (body.byteLength > MAX_TEST_AUDIO_BYTES) return c.json(err("A test can be at most 30 seconds"), 413);
+    const model = installedModel();
+    if (!getWhisperStatus().ready || !model) return c.json(err("Whisper is not installed on this host"), 409);
+    try {
+      const out = await transcribeTest(body, lang, device);
+      const gpu = await whisperGpuStatus();
+      return c.json(ok({ ...out, model: model.label, device: out.ranOn === "gpu" ? gpu.device : null }));
+    } catch (e) {
+      return c.json(err(message(e)), 500);
+    }
   });
 
   /**
