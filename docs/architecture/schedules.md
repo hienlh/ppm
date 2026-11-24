@@ -255,7 +255,7 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   `schedule_save` / `schedule_propose_script`, which pass it in the route body. A schedule a person
   makes in Settings or the CLI has none. For older script and prompt schedules it is read back
   from `session-trace.db` where the trace names the schedule's id and name within 15 minutes of
-  its creation (`schedule-creator-backfill.ts`; migration 80, then 83, because 80 read Claude's
+  its creation (`schedule-creator-backfill.ts`; migration 80, then 82, because 80 read Claude's
   answers — stored as the MCP content array `[{"type":"text","text":"{…}"}]` — as the array and
   linked nothing). When the schedule's inputs name exactly one other chat of its project (the
   chat a watch reports to, `schedule-delivery-chat.ts`), that chat owns it rather than the one
