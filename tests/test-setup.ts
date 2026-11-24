@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -32,6 +32,25 @@ configService.load();
 // Disable auth for all tests
 const config = (configService as any).config;
 config.auth.enabled = false;
+
+// Vite's `?url` import is a string (the asset's URL). Bun 1.3.12 happened to answer it with the
+// file's path, but 1.4.4 loads `x.css?url` as a CSS module and the default export is `{}`, so a
+// `link.href` built from it was no URL at all (`file-icons.test.ts`). Answer it the way Vite does.
+// A real file rather than a plugin namespace: 1.3.12 cannot resolve a namespaced module from an
+// importer loaded with a query (`file-icons.tsx?fresh-sheet`).
+const viteUrlDir = resolve(testPpmHome, "vite-url-imports");
+mkdirSync(viteUrlDir, { recursive: true });
+Bun.plugin({
+  name: "vite-url-import",
+  setup(build) {
+    build.onResolve({ filter: /\?url$/ }, (args) => {
+      const url = args.path.replace(/\?url$/, "");
+      const file = resolve(viteUrlDir, `${Bun.hash(url).toString(16)}.js`);
+      writeFileSync(file, `export default ${JSON.stringify(url)};\n`);
+      return { path: file };
+    });
+  },
+});
 
 // A DOM for the whole process, installed before any module is imported. See
 // `installDomForProcess` for why nothing later is early enough.

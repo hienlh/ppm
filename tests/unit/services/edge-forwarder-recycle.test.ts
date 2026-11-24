@@ -24,8 +24,15 @@ beforeEach(async () => {
   process.env.PPM_HOME = home;
   _resetPpmDir();
   _resetTargetCache();
-  // A live origin, so connections through the edge are real pipes rather than retries.
-  const origin = net.createServer({ allowHalfOpen: true }, (s) => s.on("error", () => s.destroy()));
+  // A live origin, so connections through the edge are real pipes rather than retries. It closes
+  // its side once the edge's ends, as PPM's server does: with `allowHalfOpen` a socket only emits
+  // `close` when both directions are done, and an origin that never ends kept the edge's client
+  // socket counted forever. Bun 1.3.12 emitted `close` early anyway; 1.4.4 waits, as Node does.
+  // Measured against a real Bun.serve origin, both drop a departed client within ~60 ms.
+  const origin = net.createServer({ allowHalfOpen: true }, (s) => {
+    s.on("error", () => s.destroy());
+    s.on("end", () => s.end());
+  });
   servers.push(origin);
   await new Promise<void>((r) => origin.listen(0, "127.0.0.1", () => r()));
   writeFileSync(join(home, ".server-port"), String((origin.address() as net.AddressInfo).port));
