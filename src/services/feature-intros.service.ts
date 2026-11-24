@@ -7,6 +7,7 @@
  */
 import { configService } from "./config.service.ts";
 import { getDb } from "./db.service.ts";
+import { parseWebBrowserSettings } from "../shared/web-browser-settings.ts";
 import { createLogger } from "./logger.ts";
 import { getAssistantSettings, writeAssistantPermissionMode, writeAssistantSettingsTools } from "./assistant/assistant-settings.service.ts";
 import { readVoiceSettings, updateVoiceSettings, voiceMessagesEnabled } from "./voice-message/voice-settings.ts";
@@ -90,6 +91,10 @@ function answerFromSetting(setting: FeatureIntroSetting): FeatureIntroAnswer | n
       const on = configService.get("remembered_approvals")?.enabled;
       return on === true ? "on" : on === false ? "off" : null;
     }
+    case "web_browser": {
+      const enabled = parseWebBrowserSettings(configService.get("web_browser")).enabled;
+      return enabled === true ? "on" : enabled === false ? "off" : null;
+    }
   }
 }
 
@@ -115,6 +120,9 @@ function writeSettingAnswer(setting: FeatureIntroSetting, answer: FeatureIntroAn
       return;
     case "remembered_approvals":
       rememberedApprovals.setEnabled(answer === "on");
+      return;
+    case "web_browser":
+      configService.set("web_browser", { ...parseWebBrowserSettings(configService.get("web_browser")), enabled: answer === "on" });
       return;
   }
 }

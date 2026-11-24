@@ -7,6 +7,7 @@
  */
 
 import type { ComponentType, ElementType, HTMLAttributes, ReactNode } from "react";
+import type { FeatureBadgeId } from "@/lib/feature-badges";
 import type { WindowKind, WindowVisualState } from "./window-store-types";
 
 /** What a titlebar says about its window beyond the title; see `useWindowMeta`. */
@@ -30,6 +31,8 @@ export interface WindowChromeIdentity {
   count?: number;
   /** The titlebar says "Idle" when nothing runs, not only "Working" when something does. */
   showIdle?: boolean;
+  /** The "new" / "beta" tag the feature carries elsewhere (rail, drawer), after the title. */
+  badge?: FeatureBadgeId;
 }
 
 export interface WindowChromeProps {

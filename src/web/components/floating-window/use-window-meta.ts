@@ -10,13 +10,14 @@
 
 import { createElement, useSyncExternalStore, type ElementType } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { Activity, CalendarClock, FolderOpen, History, Monitor, ScrollText, Settings, Users } from "@/lib/icons";
+import { Activity, CalendarClock, FolderOpen, Globe, History, Monitor, ScrollText, Settings, Users } from "@/lib/icons";
 import { getTabTypeIcon } from "@/lib/tab-type-icons";
 import { tabSessionId } from "@/lib/tab-session-id";
 import { usePanelStore } from "@/stores/panel-store";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { NON_PIP_TAB_TYPES, windowPanelId } from "@/stores/panel-utils";
 import type { Tab, TabType } from "@/stores/tab-store";
+import type { FeatureBadgeId } from "@/lib/feature-badges";
 import type { WindowChromeIdentity } from "./window-chrome-contract";
 import { windowTitle } from "./window-content-registry";
 import { tabWindowExtras, type WindowSkinName } from "./tab-window-extras-registry";
@@ -63,7 +64,7 @@ export function designTone(slug: string): string {
   return DESIGN_TONES[Math.abs(hash) % DESIGN_TONES.length]!;
 }
 
-const KIND_META: Record<Exclude<WindowKind, "tab-host">, { icon: ElementType; tone: string; label: string }> = {
+const KIND_META: Record<Exclude<WindowKind, "tab-host">, { icon: ElementType; tone: string; label: string; badge?: FeatureBadgeId }> = {
   explorer: { icon: FolderOpen, tone: tone("info"), label: "Explorer" },
   "agent-session": { icon: Users, tone: tone("accent-2"), label: "Agent" },
   "system-monitor": { icon: Activity, tone: tone("warning"), label: "System Monitor" },
@@ -72,6 +73,7 @@ const KIND_META: Record<Exclude<WindowKind, "tab-host">, { icon: ElementType; to
   logs: { icon: ScrollText, tone: tone("text-2"), label: "Logs" },
   "release-notes": { icon: History, tone: tone("accent"), label: "Release notes" },
   schedules: { icon: CalendarClock, tone: tone("primary"), label: "Schedules" },
+  "web-browser": { icon: Globe, tone: tone("info"), label: "Browser", badge: "web-browser" },
 };
 
 const TAB_LABELS: Partial<Record<TabType, string>> = {
@@ -86,6 +88,7 @@ const TAB_LABELS: Partial<Record<TabType, string>> = {
   database: "Database",
   sqlite: "Database",
   "web-preview": "Preview",
+  "web-browser": "Browser",
   android: "Android",
   extension: "Extension",
   "extension-webview": "Extension",
@@ -117,7 +120,7 @@ function hostedTab(windowId: string): (s: ReturnType<typeof usePanelStore.getSta
 export function describeWindow(kind: WindowKind, tab: Tab | undefined, busy: boolean, count = 0): WindowMeta {
   if (kind !== "tab-host") {
     const meta = KIND_META[kind];
-    return { icon: meta.icon, tone: meta.tone, kindLabel: meta.label, busy: false, allowPip: true, filled: false };
+    return { icon: meta.icon, tone: meta.tone, kindLabel: meta.label, busy: false, allowPip: true, filled: false, ...(meta.badge ? { badge: meta.badge } : {}) };
   }
   if (!tab) return { icon: getTabTypeIcon("editor"), tone: tone("primary"), kindLabel: "Tab", busy: false, allowPip: true, filled: false };
   const isDesign = tab.type === "design";

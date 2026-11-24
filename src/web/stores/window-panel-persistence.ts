@@ -55,6 +55,8 @@ const POPPABLE_TAB_TYPES: Record<TabType, boolean> = {
   // so it is still one WS session and one controller lease.
   android: true,
   "web-preview": true,
+  // The browser owns a window kind of its own on a desktop; its phone tab never pops out.
+  "web-browser": false,
   logs: false,
   schedules: false,
   // The Assistant lives in a floating window on a desktop and comes back in one after a reload.

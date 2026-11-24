@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from "react";
-import { X, Cloud, FolderTree, MonitorSmartphone, ScrollText, Settings, Smartphone, CalendarClock } from "@/lib/icons";
+import { X, Cloud, FolderTree, Globe, MonitorSmartphone, ScrollText, Settings, Smartphone, CalendarClock } from "@/lib/icons";
 import { AssistantBotIcon } from "@/components/assistant/assistant-bot-icon";
 import { openAssistant } from "@/components/assistant/open-assistant";
 import { useAssistantWaitingTotal } from "@/stores/assistant-waiting-store";
@@ -31,6 +31,8 @@ import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
 import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";
+import { useWebBrowserAvailable } from "@/components/web-browser/use-web-browser-available";
+import { openWebBrowser } from "@/components/web-browser/open-web-browser";
 import { useOpenAndroid } from "@/components/android/open-android";
 import { useAndroidAvailable } from "@/components/android/use-android-available";
 import { openSettings } from "@/components/settings/open-settings";
@@ -118,6 +120,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
   const contributions = useExtensionStore((s) => s.contributions);
   const { available: remoteDesktopAvailable } = useRemoteDesktopAvailable();
   const openRemoteDesktop = useOpenRemoteDesktop();
+  const webBrowserAvailable = useWebBrowserAvailable();
   const openAndroid = useOpenAndroid();
   const { available: androidAvailable } = useAndroidAvailable();
   const [storedActiveTab, setActiveTab] = useState<SidebarActiveTab>(initialTab ?? "explorer");
@@ -172,6 +175,9 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
     { icon: FolderTree, label: "Files", onClick: () => { onClose(); void openExplorer(); } },
     ...(remoteDesktopAvailable
       ? [{ icon: MonitorSmartphone, label: "Remote", badge: "remote-desktop", onClick: () => { onClose(); openRemoteDesktop(); } } satisfies FooterTileDef]
+      : []),
+    ...(webBrowserAvailable
+      ? [{ icon: Globe, label: "Browser", badge: "web-browser", onClick: () => { onClose(); openWebBrowser(); } } satisfies FooterTileDef]
       : []),
     ...(androidAvailable
       ? [{ icon: Smartphone, label: "Android", badge: "android", onClick: () => { onClose(); openAndroid(); } } satisfies FooterTileDef]

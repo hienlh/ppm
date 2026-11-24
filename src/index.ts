@@ -169,11 +169,13 @@ export async function buildProgram(): Promise<Command> {
  */
 export function resolveEntryMode(
   argv: string[],
-): "supervise" | "serve" | "edge" | "share-host" | "ensure-supervisor" | "file-index-walk" | "cli" {
+): "supervise" | "serve" | "edge" | "share-host" | "web-egress" | "ensure-supervisor" | "file-index-walk" | "cli" {
   if (argv.includes("__supervise__")) return "supervise";
   if (argv.includes("__serve__")) return "serve";
   if (argv.includes("__edge__")) return "edge";
   if (argv.includes("__share_host__")) return "share-host";
+  // The in-app browser's egress proxy, one per browser session, started by the server.
+  if (argv.includes("__web_egress__")) return "web-egress";
   // PPM's watchdog task (Windows Task Scheduler): starts PPM when its last run died.
   if (argv.includes("__ensure_supervisor__")) return "ensure-supervisor";
   if (argv.includes("__file_index_walk__")) return "file-index-walk";
@@ -196,6 +198,9 @@ if (import.meta.main) {
       break;
     case "share-host":
       await import("./services/share-host/share-host-worker.ts");
+      break;
+    case "web-egress":
+      await import("./services/web-browser/egress/egress-main.ts");
       break;
     case "ensure-supervisor":
       await (await import("./services/supervisor-watchdog/ensure-supervisor.ts")).ensureSupervisorMain();

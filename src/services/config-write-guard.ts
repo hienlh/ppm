@@ -36,7 +36,7 @@ const DEDICATED: readonly { pattern: string; where: string }[] = [
 export const EXPOSURE_CONFIG_KEYS: readonly string[] = [
   "auth", "host", "port", "tunnel", "share_host", "cloud_url", "ntfy", "assistant", "android",
   "ai.providers.*.cli_command", "ai.providers.*.base_url", "ai.providers.*.api_key_env", "ai.providers.*.permission_mode",
-  "ai.ppm_tools", "ai.tab_tools",
+  "ai.ppm_tools", "ai.tab_tools", "web_browser",
 ];
 
 /** Plain preferences, with the type each holds when it is not set yet. */

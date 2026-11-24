@@ -23,6 +23,8 @@ import { TAB_TOOLS_MCP_TOOL_DEFINITIONS } from "./tab-tools-mcp-tool-list.ts";
 import { createTerminalTools, type TerminalTools } from "./terminal-tools.ts";
 import { createSessionHistoryTools, type SessionHistoryTools } from "./session-history-tools.ts";
 import { isSessionHistoryTool } from "../../shared/session-history-tools.ts";
+import { isBrowserTool } from "../../shared/web-browser-tools.ts";
+import { browserToolsUnavailable } from "../web-browser/browser-tools-availability.ts";
 
 /**
  * `/api/tab-tools-mcp` — serves the tab tools to one chat session's own agent (the MCP plumbing
@@ -56,6 +58,8 @@ export function createTabToolsMcpHandler(deps: {
   /** `search_sessions`, `list_session_turns`, `read_session_turns`. */
   sessionHistory: SessionHistoryTools;
   resolveTarget?: (input: unknown, binding: TabToolsBinding, opts?: TabTargetOptions) => Promise<TabTargetOutcome>;
+  /** Why the `browser_*` tools are off (Settings → Web Browser), or null. Unset: always off. */
+  browserUnavailable?: () => string | null;
 }) {
   const resolveTarget = deps.resolveTarget ?? resolveTabTarget;
 
@@ -109,8 +113,18 @@ export function createTabToolsMcpHandler(deps: {
     tokenRequired: "A chat session token is required",
     resolveToken: deps.resolveToken,
     tools: TAB_TOOLS_MCP_TOOL_DEFINITIONS,
-    unavailable: (name) => (deps.enabled(name) ? null : ppmToolOffMessage(name)),
+    // The browser tools follow Settings → Web Browser (the browser on, and AI control on), not
+    // Settings → Tools, so a chat whose user has either off is never offered them.
+    unavailable: (name) => {
+      if (isBrowserTool(name)) return deps.browserUnavailable ? deps.browserUnavailable() : "PPM's web browser is not available here.";
+      return deps.enabled(name) ? null : ppmToolOffMessage(name);
+    },
     callTool: async ({ sessionId }, name, rawArgs) => {
+      if (isBrowserTool(name)) {
+        const { callBrowserTool } = await import("./browser-tools.ts");
+        const { getSessionTitle } = await import("../db.service.ts");
+        return callBrowserTool(sessionId, getSessionTitle(sessionId), name, isObj(rawArgs) ? rawArgs : {});
+      }
       const binding: TabToolsBinding = { sessionId, ...(await deps.sessionProject(sessionId)) };
       const args = isObj(rawArgs) ? rawArgs : {};
       if (name === OPEN_URL_TOOL) return deps.openUrl(binding, args);
@@ -181,4 +195,5 @@ export const tabToolsMcpHandler = createTabToolsMcpHandler({
     startPrivateForward: async (port) => (await startTailscaleForward(port)).url,
   }),
   sessionHistory: createSessionHistoryTools({ canonical: canonicalTabSession }),
+  browserUnavailable: browserToolsUnavailable,
 });

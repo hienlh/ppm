@@ -40,9 +40,11 @@ export interface FeatureIntro {
  * `voice_messages`: `voice_message.enabled`. `voice_self_learning`: `voice_message.self_learning`,
  * asked only once voice messages are on (it means nothing without them).
  * `assistant_settings_tools`: `assistant.settings_tools`. `remembered_approvals`: `remembered_approvals.enabled`.
+ * `web_browser`: `web_browser.enabled`.
  */
 export type FeatureIntroSetting =
-  | "assistant_permission_mode" | "voice_messages" | "voice_self_learning" | "assistant_settings_tools" | "remembered_approvals";
+  | "assistant_permission_mode" | "voice_messages" | "voice_self_learning" | "assistant_settings_tools" | "remembered_approvals"
+  | "web_browser";
 
 export const FEATURE_INTROS: readonly FeatureIntro[] = [
   {
@@ -126,6 +128,17 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
       + "off until you choose.",
     tools: [],
     setting: "remembered_approvals",
+    since: "2026-11",
+  },
+  {
+    id: "web-browser-2026-11",
+    title: "A web browser inside PPM",
+    body: "PPM runs its own Chrome on this machine and shows it in a window (a tab on a phone), with sound. It uses a "
+      + "profile of its own, not your Chrome's logins. It can open this machine's local services and the devices on your "
+      + "network, it works over PPM's public link too, and AI chats can drive it after you allow each chat once. "
+      + "Each of those can be switched off in Settings → Web Browser.",
+    tools: [],
+    setting: "web_browser",
     since: "2026-11",
   },
 ];

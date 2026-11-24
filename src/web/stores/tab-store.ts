@@ -29,6 +29,7 @@ export type TabType =
   | "design"
   | "android"
   | "web-preview"
+  | "web-browser"
   | "logs"
   | "schedules"
   | "assistant"

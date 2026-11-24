@@ -32,7 +32,7 @@ function otherTools(seen: Array<{ tool: string; binding: unknown; args: unknown 
   };
 }
 
-function setup(opts: { outcome?: TabOpenOutcome; target?: TabTargetOutcome; enabled?: boolean } = {}) {
+function setup(opts: { outcome?: TabOpenOutcome; target?: TabTargetOutcome; enabled?: boolean; browserUnavailable?: () => string | null } = {}) {
   const tokens = createTabToolsMcpTokenStore();
   const calls: Array<{ sessionId: string; req: Record<string, unknown>; waitMs: number }> = [];
   const targets: unknown[] = [];
@@ -47,6 +47,7 @@ function setup(opts: { outcome?: TabOpenOutcome; target?: TabTargetOutcome; enab
     },
     enabled: (tool) => (typeof enabled === "function" ? enabled(tool) : enabled),
     ...otherTools(others),
+    ...(opts.browserUnavailable ? { browserUnavailable: opts.browserUnavailable } : {}),
     resolveTarget: async (input, binding) => {
       expect(binding).toEqual({ sessionId: "s1", projectPath: "/proj", projectName: "demo" });
       targets.push(input);
@@ -64,6 +65,18 @@ function setup(opts: { outcome?: TabOpenOutcome; target?: TabTargetOutcome; enab
 }
 
 describe("tab tools MCP endpoint", () => {
+  it("offers the browser tools only while Settings → Web Browser lets AI chats drive it", async () => {
+    let off: string | null = "PPM's web browser is turned off (Settings → Web Browser), so nothing was done.";
+    const { rpc, call } = setup({ browserUnavailable: () => off });
+    const names = async () => ((await (await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" })).json()).result.tools as Array<{ name: string }>).map((t) => t.name);
+    expect((await names()).filter((n) => n.startsWith("browser_"))).toEqual([]);
+    const refused = await call("browser_open", { url: "https://example.com" });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0].text).toContain("turned off");
+    off = null;
+    expect((await names()).filter((n) => n.startsWith("browser_")).length).toBe(9);
+  });
+
   it("requires the session token and refuses browser requests", async () => {
     const { rpc, token } = setup();
     const ping = { jsonrpc: "2.0", id: 1, method: "ping" };

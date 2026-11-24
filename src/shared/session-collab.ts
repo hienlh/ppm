@@ -160,12 +160,24 @@ export interface SessionCollabScheduleApproval {
   summary: ApprovalSummary;
 }
 
+/**
+ * A chat's AI asks to drive PPM's own web browser (a Chrome on the host, shown in a PPM window);
+ * shown in the asking chat at its first browser call. Allowing for this chat lasts until PPM
+ * restarts; the user can take the browser back in its window at any time.
+ */
+export interface SessionCollabBrowserApproval {
+  kind: "browser";
+  /** The address the first call opens, when it opens one. */
+  url: string | null;
+}
+
 export type SessionCollabApprovalInput =
   | SessionCollabCreateApproval
   | SessionCollabPairLimitApproval
   | SessionCollabEscalationApproval
   | SessionCollabMessageApproval
-  | SessionCollabScheduleApproval;
+  | SessionCollabScheduleApproval
+  | SessionCollabBrowserApproval;
 
 /** The approval event held in the asking session's one approval slot. */
 export interface SessionCollabApprovalRequest {
@@ -196,7 +208,7 @@ export function sessionCollabApprovalInput(tool: string, input: unknown): Sessio
     return summary && typeof summary === "object" && typeof (summary as { headline?: unknown }).headline === "string"
       ? input as SessionCollabApprovalInput : null;
   }
-  return kind === "create" || kind === "pair_limit" || kind === "escalation" || kind === "message"
+  return kind === "create" || kind === "pair_limit" || kind === "escalation" || kind === "message" || kind === "browser"
     ? input as SessionCollabApprovalInput : null;
 }
 

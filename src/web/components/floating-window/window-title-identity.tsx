@@ -8,6 +8,8 @@
 
 import type { CSSProperties, ElementType } from "react";
 import { cn } from "@/lib/utils";
+import { FeatureBadge } from "@/components/ui/feature-badge";
+import type { FeatureBadgeId } from "@/lib/feature-badges";
 
 const TILE_SIZES = {
   sm: "size-4 rounded-[4px] [&_svg]:size-[11px]",
@@ -68,14 +70,17 @@ export interface WindowTitleTextProps {
   focused: boolean;
   /** Say "Idle" when nothing runs, for a window whose state is the point of it (the Assistant). */
   showIdle?: boolean;
+  /** The feature's "new" / "beta" tag, right after the title. */
+  badge?: FeatureBadgeId;
   className?: string;
 }
 
 /** Title, subtitle and the "Working" marker, in a row that truncates the subtitle first. */
-export function WindowTitleText({ title, subtitle, busy, focused, showIdle, className }: WindowTitleTextProps) {
+export function WindowTitleText({ title, subtitle, busy, focused, showIdle, badge, className }: WindowTitleTextProps) {
   return (
     <span className={cn("flex min-w-0 items-center gap-2", className)}>
       <span className={cn("truncate text-[13px] font-semibold", focused ? "text-text" : "text-text-2")}>{title}</span>
+      <FeatureBadge id={badge} className="shrink-0" />
       {subtitle && <span className="min-w-0 truncate text-[11px] text-text-3 @max-[560px]/window:hidden">{subtitle}</span>}
       {busy && (
         <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-success">

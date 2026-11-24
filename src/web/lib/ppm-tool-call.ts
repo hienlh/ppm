@@ -12,6 +12,7 @@
  */
 import { taskToolSummary } from "./ppm-tool-summaries-tasks";
 import { sessionToolSummary } from "./ppm-tool-summaries-sessions";
+import { browserToolSummary } from "./ppm-tool-summaries-browser";
 import { tabToolResultText } from "./tab-tool-call";
 import { isObj, jsonAnswer, oneLine, str, type Args, type PpmToolContext, type PpmToolSummary } from "./ppm-tool-summary-types";
 
@@ -84,7 +85,7 @@ export const PPM_TOOLS_NAMED_ONLY: Readonly<Record<string, string>> = {
 /** Whether a PPM tool has a line of its own read from its input and output. */
 export function ppmToolHasOwnLine(tool: string): boolean {
   const ctx: PpmToolContext = { tool, args: {}, text: "", isError: false, ok: false };
-  return (taskToolSummary(ctx) ?? sessionToolSummary(ctx)) !== null;
+  return (taskToolSummary(ctx) ?? sessionToolSummary(ctx) ?? browserToolSummary(ctx)) !== null;
 }
 
 /** Where the call stands. */
@@ -107,7 +108,7 @@ export function ppmToolSummary(toolName: string, input: unknown, state: PpmToolS
     const ctx: PpmToolContext = {
       tool: name.tool, args: ppmToolArgs(input), text, isError: state.isError, ok: state.output !== undefined && !state.isError,
     };
-    return taskToolSummary(ctx) ?? sessionToolSummary(ctx) ?? genericSummary(ctx);
+    return taskToolSummary(ctx) ?? sessionToolSummary(ctx) ?? browserToolSummary(ctx) ?? genericSummary(ctx);
   } catch {
     return { label: humanizeToolName(name.tool) };
   }
