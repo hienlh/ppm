@@ -27,7 +27,7 @@ describe("overdue cards", () => {
   it("fires once for a card still shown after the delay, with when it was shown", () => {
     const clock = fakeClock();
     const fired: Array<[string, string, number]> = [];
-    const t = createApprovalOverdueTimers({ delayMs: 180_000, ...clock, fire: (s, r, at) => fired.push([s, r, at]) });
+    const t = createApprovalOverdueTimers({ delayMs: () => 180_000, ...clock, fire: (s, r, at) => fired.push([s, r, at]) });
     clock.advance(5_000);
     t.arm("chat", "req");
     t.arm("chat", "req");
@@ -43,7 +43,7 @@ describe("overdue cards", () => {
   it("never fires for a card that left first", () => {
     const clock = fakeClock();
     const fired: string[] = [];
-    const t = createApprovalOverdueTimers({ delayMs: 180_000, ...clock, fire: (_s, r) => fired.push(r) });
+    const t = createApprovalOverdueTimers({ delayMs: () => 180_000, ...clock, fire: (_s, r) => fired.push(r) });
     t.arm("chat", "req");
     clock.advance(60_000);
     t.cancel("req");

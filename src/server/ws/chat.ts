@@ -85,7 +85,7 @@ import {
   effectivePermissionMode, targetChatMode, providerDefaultMode, type ChatDeliveryState,
 } from "./chat-deliver-user-message.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
-import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
+import { ASSISTANT_PROJECT_NAME, isAssistantProject } from "../../shared/assistant-project.ts";
 import { splitVoiceMessage } from "../../shared/voice-message.ts";
 import { collabCardForListeners, settleCollabApprovalFromServer } from "./chat-collab-approval-relay.ts";
 import { createApprovalOverdueTimers } from "./chat-approval-overdue.ts";
@@ -1142,9 +1142,12 @@ function liveApprovalCard(ev: PendingApprovalEvent): LiveApprovalCard {
   };
 }
 
-/** A card's request as remembered approvals see it; null for a chat with no project folder. */
+/**
+ * A card's request as remembered approvals see it; null for a chat with no project folder, and for
+ * the PPM Assistant's own sessions, whose requests are answered one at a time by design.
+ */
 function rememberRequest(entry: SessionEntry, tool: string, input: unknown): RememberRequest | null {
-  if (!entry.projectPath) return null;
+  if (!entry.projectPath || isAssistantProject(entry.projectName)) return null;
   return { tool, input, projectPath: entry.projectPath, projectName: entry.projectName ?? "" };
 }
 
@@ -1199,7 +1202,8 @@ function cardPlace(entry: SessionEntry): { projectName: string; providerId: stri
  * Telegram rings again). A schedule's turn counts as `scheduled`: nobody is at that chat.
  */
 const overdueCards = createApprovalOverdueTimers({
-  delayMs: APPROVAL_OVERDUE_MS,
+  // An end-to-end test shortens the wait (`PPM_APPROVAL_OVERDUE_MS`); nothing else sets it.
+  delayMs: () => (Number(process.env.PPM_APPROVAL_OVERDUE_MS) > 0 ? Number(process.env.PPM_APPROVAL_OVERDUE_MS) : APPROVAL_OVERDUE_MS),
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
   now: () => Date.now(),

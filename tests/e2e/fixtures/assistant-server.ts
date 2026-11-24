@@ -739,6 +739,14 @@ async function testRoute(req: Request, path: string): Promise<Response> {
   if (path.startsWith("/__assistant-test/collab-card/")) {
     return json({ outcome: collabCardOutcomes.get(path.slice("/__assistant-test/collab-card/".length)) ?? null });
   }
+  // Shortens how long a card waits before it counts as overdue (the product's is 3 minutes); read
+  // each time a card is shown, so only cards shown after it are affected.
+  if (path === "/__assistant-test/approval-overdue" && req.method === "POST") {
+    const { ms } = await req.json() as { ms: number | null };
+    if (ms) process.env.PPM_APPROVAL_OVERDUE_MS = String(ms);
+    else delete process.env.PPM_APPROVAL_OVERDUE_MS;
+    return json({ ok: true });
+  }
   // Shortens or restores the approval wait through the broker's own environment override; the
   // broker reads it each time it asks.
   if (path === "/__assistant-test/approval-timeout" && req.method === "POST") {

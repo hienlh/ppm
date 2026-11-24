@@ -1324,7 +1324,9 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   not at all for a project whose cards reach the phone by title only. Rules events become `rules_note` / `rules_change` cards, and the Assistant pausing its
   own messages a `budget` card (`assistant-event-cards.ts`). Every other chat of a project,
   watched or not, gets the same `approval` / `question` mirror (`ordinary-chat-cards.ts` says
-  which: not the Assistant's own, not a manager, not an extension's turn, not a Design chat),
+  which: not the Assistant's own, not a manager, not an extension's turn; a Design chat's card is
+  a link to its design, `payload.answerInPpm: "design"`, answered only beside the canvas; the chat's
+  project is found by its folder, not the spelling of its name),
   carrying `payload.chat` (its name and provider) and `payload.expiresAt` for a card that gives up
   by itself (a session tool's, after an hour): such a card used to wait only in its chat and run
   out while the user was away. A chat a manager opened, at any depth, is mirrored like any other:
@@ -1338,7 +1340,23 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   Telegram or from the mirror (origin `telegram` / `assistant_card`, once, never "for the
   session"; `chat-collab-approval-relay.ts`). A `db_execute` or vault card is only named
   (`ppm_only_card_shown`, `payload.answerInPpm`): no Allow or Deny anywhere but its chat, and no
-  Telegram copy beyond the notice `assistant-telegram-db-notices.ts` already sends. A turn another chat or PPM opened is one the user did not
+  Telegram copy beyond the notice `assistant-telegram-db-notices.ts` already sends. Every card a
+  chat waits on is mirrored, not only the one in front (`chat-waiting-card-signals.ts`): a card
+  queued behind another (`approval_queued`: a provider card in `approvalQueue`, or a session tool's
+  card held in its broker) gets a mirror with `payload.queued` and nothing to press (the answer
+  route refuses it with 409), and Telegram is sent nothing until it reaches the front, when the same
+  card is made answerable (change `shown`) and goes out as a new card would. A card left on a
+  chat's screen for `APPROVAL_OVERDUE_MS` (3 minutes; `chat-approval-overdue.ts`) is
+  `approval_overdue`: its mirror says "waiting since hh:mm" (`payload.waitingSince`), and Telegram
+  gets one more message with a sound whether or not the user is at PPM (`sink.overdue`), or the
+  card itself if it never went out. A turn a schedule started (`scheduledTurn`) rings through
+  quiet hours too, since nobody is at that chat and its schedule is stuck behind the card. An MCP
+  server connected at a chat's previous init that needs a sign-in at the next
+  (`mcp_sign_in_needed`, never one that needed it from the start) gets one link-only card per
+  project and server (`answerInPpm: "mcp_sign_in"`), settled when it is signed in to from any
+  screen. Every send to Telegram, and every silent skip in the relay, is logged, and the mirror
+  says whether it was sent, held for quiet hours or skipped (`card.outbound`). A schedule's
+  `ctx.ai.chat` answers `busy` with `waitingOn` when its chat is stopped on a card. A turn another chat or PPM opened is one the user did not
   watch, so the block PPM puts in every manager turn (`MANAGER_USER_ACTION_RULE` in
   `manager-context-entry.ts`) tells the manager to report anything that turn leaves the user to do
   or decide; nothing detects such a turn on its own, since every turn a child's progress message

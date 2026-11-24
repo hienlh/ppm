@@ -4,7 +4,8 @@
  * Kept apart from the socket layer so the timing is testable with a fake clock.
  */
 export interface OverdueTimerDeps {
-  delayMs: number;
+  /** Read at each arm, so a test can shorten it for the cards shown after. */
+  delayMs: () => number;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(handle: unknown): void;
   fire(sessionId: string, requestId: string, shownAt: number): void;
@@ -21,7 +22,7 @@ export function createApprovalOverdueTimers(deps: OverdueTimerDeps) {
       timers.set(requestId, deps.setTimer(() => {
         timers.delete(requestId);
         deps.fire(sessionId, requestId, shownAt);
-      }, deps.delayMs));
+      }, deps.delayMs()));
     },
     /** The card left the screen. */
     cancel(requestId: string): void {

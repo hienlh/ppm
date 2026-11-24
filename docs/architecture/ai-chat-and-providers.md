@@ -1240,6 +1240,48 @@ change tools that are on (`dbChangeHint`): with `db_execute` off it points at `o
 with both off it says changes are not possible. `ai-tab-tools-e2e.mjs` and `ai-db-tools-e2e.mjs`
 (which also drives the pane, desktop and phone) cover it.
 
+## Remembered approvals
+
+An approval card can offer **Allow & remember** (in the chat, on the PPM Assistant's mirror and
+on Telegram): it allows this request and makes PPM approve the same kind by itself from then on,
+in that project only (`src/services/remembered-approvals/`, migration 81). Off until the user
+answers the new-feature question or flips Settings → Approvals; turned off, no rule approves
+anything and no card offers it, but the rules are kept.
+
+- **What "the same kind" is** is worked out on the server from the request, never taken from a
+  screen or a Telegram button (`src/shared/remembered-approval-pattern.ts`): a shell command by
+  its first word, plus the next for tools with subcommands and for an interpreter's script
+  (`git status`, `bun test`, `bun run build`, `python scripts/x.py`; `grep` and `ls` by name
+  only); a file edit (Claude's Edit/Write, Codex's patch) by the project folder holding every
+  file; a read-only built-in tool (`Read`, `Grep`, `Agent`…) by name; an MCP tool by its full
+  name; a session tool opening a chat (`collab:create`) or the pair limit. Anything else has no
+  pattern, so it is never offered.
+- **The deny list** (`src/shared/remembered-approval-denylist.ts`, every entry walked by a test) is
+  checked again on every request, so a rule for `git status` never approves `git status; rm -rf
+  x`: joined, piped, redirected or substituted commands; deleting, moving, copying, permission and
+  process commands; the network, cloud and deploy tools, `gh`, tunnels; package installs and
+  publishes; git subcommands that rewrite history or reach a remote; `--force`-style flags;
+  inline code (`python -c`); in-place rewrites (`sed -i`); a command whose name says deploy,
+  publish, release or push; secrets and paths outside the project; MCP tools whose name acts on
+  the world; WebFetch, WebSearch, AskUserQuestion, ExitPlanMode; `db_execute`, the vault, an
+  escalation, a schedule and every card the PPM Assistant itself asks.
+- **Where it applies**: before a provider's `approval_request` is offered (`ws/chat.ts`; never in
+  an extension's turn, which answers its own cards) and before a session tool's card is shown
+  (`collabApprovalBroker`'s `autoApprove`). A match answers the provider at once and leaves an
+  `auto_approved` event in the chat ("Approved by your rule: …", buffered for replay), with the
+  rule's use count and time updated.
+- **Who makes a rule**: only a person's press. `answerApprovalCore` passes `remember` to
+  `rememberedApprovals.recordAnswer`, which takes origins `ws`, `assistant_card` and `telegram`
+  only; the WebSocket drops `remember` from a script's loopback socket; the Assistant's model
+  answering another chat's card (origin `assistant`) counts for nothing. No MCP endpoint or
+  Assistant tool can reach the store, the routes only list and remove rules
+  (`/api/approval-rules`), and `config set` refuses the switch; `remembered-approvals-guard.test.ts`
+  holds all of that.
+- **The suggestion**: every approval a person gives a card with a pattern is tallied
+  (`approval_pattern_tallies`); from the fourth card of a kind approved by hand
+  `REMEMBER_SUGGEST_AFTER` (3) times, the card's offer is marked `suggest` and says so. Nothing is
+  remembered from a tally.
+
 ## Processes a chat leaves running
 
 Settings → AI Provider → **Stop leftover processes after** (`ai.leftover_processes_idle_minutes`)

@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openTestDb, runMigrations, setDb } from "../../../src/services/db.service.ts";
+import { CURRENT_SCHEMA_VERSION, openTestDb, runMigrations, setDb } from "../../../src/services/db.service.ts";
 import { getSchedule, insertSchedule } from "../../../src/services/scheduler-db.service.ts";
 import { backfillScheduleCreators, bareToolName, createdScheduleOf } from "../../../src/services/schedule-creator-backfill.ts";
 
@@ -137,7 +137,7 @@ describe("migration 80", () => {
     file.exec("PRAGMA user_version = 79");
     runMigrations(file);
     expect(getSchedule(id)!.created_by_session_id).toBe("90412fcb-0000-4000-8000-000000000002");
-    expect((file.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(80);
+    expect((file.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(CURRENT_SCHEMA_VERSION);
     setDb(db);
     file.close();
   });

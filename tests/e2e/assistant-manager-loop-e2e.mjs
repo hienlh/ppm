@@ -27,6 +27,7 @@ import { step7 } from "./assistant-manager-loop/steps-rules.mjs";
 import { step8, step9 } from "./assistant-manager-loop/steps-limits.mjs";
 import { step10, step11 } from "./assistant-manager-loop/steps-digest-notebook.mjs";
 import { step12 } from "./assistant-manager-loop/steps-child-cards.mjs";
+import { step13, step14 } from "./assistant-manager-loop/steps-remembered-approvals.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-manager-loop-e2e-"));
 const shotsDir = resolve(process.env.PPM_MANAGER_LOOP_SHOTS ?? join(sandbox, "shots"));
@@ -121,7 +122,7 @@ try {
   await k.idle(aChat);
   const s = { alpha, beta, main, aChat, aTitle };
 
-  for (const [id, step] of [[1, step1], [2, step2], [3, step3], [4, step4], [5, step5], [6, step6], [7, step7], [8, step8], [9, step9], [10, step10], [11, step11], [12, step12]]) {
+  for (const [id, step] of [[1, step1], [2, step2], [3, step3], [4, step4], [5, step5], [6, step6], [7, step7], [8, step8], [9, step9], [10, step10], [11, step11], [12, step12], [13, step13], [14, step14]]) {
     try {
       await step(k, s);
     } catch (error) {
