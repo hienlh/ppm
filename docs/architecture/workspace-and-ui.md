@@ -1090,6 +1090,9 @@ setting `web_browser.enabled`); Settings → Web Browser holds every switch.
   `/api/tab-tools-mcp`, not a CDP endpoint: no cookie or storage reads, no arbitrary script, the guard
   still applies. A chat's first call shows a session-tools card of kind `browser` (once / this chat /
   deny); the window shows which chat acts and "Take back", and the person's own input takes it back too.
+  The tools are listed only while the browser and AI control are both on
+  (`web-browser/browser-tools-availability.ts`), and a chat lists its tools once, so switching them on
+  reaches the next chat; a chat that listed them before they went off is refused with the reason.
 
 ## OS File Explorer Window
 

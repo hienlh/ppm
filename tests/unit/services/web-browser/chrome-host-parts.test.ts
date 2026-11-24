@@ -115,11 +115,16 @@ import { DEFAULT_WEB_BROWSER_SETTINGS, parseWebBrowserSettings } from "../../../
 describe("egressOptionsFor", () => {
   test("defaults open localhost and the LAN, and always close PPM's ports and the DevTools port", () => {
     const o = egressOptionsFor(DEFAULT_WEB_BROWSER_SETTINGS, [3210], 51234);
-    expect(o).toEqual({ allowLocalhost: true, allowLan: true, blockedLocalPorts: [3210, 51234] });
+    expect(o).toEqual({ allowLocalhost: true, allowLan: true, blockedLocalPorts: [3210, 51234], blockedHostNames: [] });
   });
 
   test("the user's switches reach the guard as set", () => {
     const o = egressOptionsFor(parseWebBrowserSettings({ allowLocalhost: false, allowLan: false }), [3210]);
-    expect(o).toEqual({ allowLocalhost: false, allowLan: false, blockedLocalPorts: [3210] });
+    expect(o).toEqual({ allowLocalhost: false, allowLan: false, blockedLocalPorts: [3210], blockedHostNames: [] });
+  });
+
+  test("PPM's own forwarded host names reach the guard", () => {
+    const o = egressOptionsFor(DEFAULT_WEB_BROWSER_SETTINGS, [3210], undefined, ["ppm.example.com"]);
+    expect(o.blockedHostNames).toEqual(["ppm.example.com"]);
   });
 });

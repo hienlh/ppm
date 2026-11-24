@@ -13,23 +13,16 @@ import { webBrowserHost } from "../web-browser/browser-host.ts";
 import { viewerHub } from "../web-browser/viewer-hub.ts";
 import { aiControlLock } from "../web-browser/ai-control/ai-control-lock.ts";
 import { AiBrowserError, createAiBrowserActions } from "../web-browser/ai-control/ai-browser-actions.ts";
-import { isWebBrowserAllowedByEnv } from "../web-browser/web-browser-flag.ts";
+import { browserToolsUnavailable } from "../web-browser/browser-tools-availability.ts";
 import { collabApprovalBroker } from "../session-collab/collab-approval-broker.ts";
 import type { BrowserTool } from "../../shared/web-browser-tools.ts";
 
 export { BROWSER_TOOLS, isBrowserTool } from "../../shared/web-browser-tools.ts";
 export { BROWSER_TOOL_DEFINITIONS } from "./browser-tool-definitions.ts";
+export { browserToolsUnavailable };
 
 const str = (v: unknown, max = 8192): string | undefined => (typeof v === "string" && v.length <= max ? v : undefined);
 
-/** Why the browser tools do nothing right now, or null when they may act. */
-export function browserToolsUnavailable(): string | null {
-  if (!isWebBrowserAllowedByEnv()) return "PPM's web browser is disabled on this host.";
-  const s = webBrowserHost.settings();
-  if (s.enabled !== true) return "PPM's web browser is turned off (Settings → Web Browser), so nothing was done.";
-  if (!s.aiControl) return "The user does not let AI chats drive PPM's browser (Settings → Web Browser), so nothing was done.";
-  return null;
-}
 
 const actions = createAiBrowserActions(webBrowserHost, viewerHub);
 
