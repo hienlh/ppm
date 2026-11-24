@@ -25,9 +25,11 @@ installGlobal("requestAnimationFrame", (cb: () => void) => frames.push(cb));
 installGlobal("cancelAnimationFrame", () => {});
 const { ScrollAnchorPin, PIN_OFFSET_PX } = await import("../../../src/web/hooks/use-scroll-anchor-pin");
 afterAll(() => uninstallDom());
+/** Past the pin's window in which a scroll is still the reader's own. */
+const INTENT_WAIT_MS = 320;
 
 /** A scroll container 600 px tall whose row (300 px tall) sits `rowTop` px into the content. */
-function scene(onHold?: () => void, options?: { readingAnchor?: boolean }) {
+function scene(onHold?: () => void, options?: { readingAnchor?: boolean | (() => boolean); onLayoutTookOver?: () => void }) {
   const el = document.createElement("div");
   const content = document.createElement("div");
   const row = document.createElement("div");
@@ -35,8 +37,9 @@ function scene(onHold?: () => void, options?: { readingAnchor?: boolean }) {
   content.appendChild(row);
   el.appendChild(content);
   document.body.appendChild(el);
-  const g = { height: 600, scrollTop: 0, rowTop: 2000 };
+  const g = { height: 600, scrollTop: 0, rowTop: 2000, contentHeight: 6000 };
   Object.defineProperty(el, "clientHeight", { get: () => g.height });
+  Object.defineProperty(el, "scrollHeight", { get: () => g.contentHeight });
   Object.defineProperty(el, "scrollTop", { get: () => g.scrollTop, set: (v: number) => { g.scrollTop = Math.max(0, v); } });
   el.getBoundingClientRect = () => ({ top: 100 } as DOMRect);
   row.getBoundingClientRect = () => ({ top: 100 + g.rowTop - g.scrollTop, bottom: 400 + g.rowTop - g.scrollTop } as DOMRect);
@@ -224,6 +227,65 @@ describe("ScrollAnchorPin", () => {
       s.g.rowTop += 340;
       s.layout();
       expect(s.g.scrollTop).toBe(1880);
+    });
+  });
+
+  describe("a list that follows its bottom", () => {
+    /** The follower's own flag, as use-stick-to-bottom keeps it; the anchor holds only while it is off. */
+    function followingScene() {
+      const follow = { at: true };
+      const tookOver: number[] = [];
+      const s = scene(undefined, {
+        readingAnchor: () => !follow.at,
+        onLayoutTookOver: () => { tookOver.push(1); follow.at = false; },
+      });
+      return { ...s, follow, tookOver };
+    }
+    /** The reader wheels up: the follower lets go a moment later, and the pin looks after it. */
+    async function readerScrollsUpTo(s: ReturnType<typeof followingScene>, at: number) {
+      s.el.dispatchEvent(new window.Event("wheel"));
+      s.g.scrollTop = s.g.rowTop - at;
+      s.scrollEvent();
+      s.follow.at = false;
+      await Bun.sleep(10);
+    }
+
+    it("keeps no place while following, and keeps it once the reader is away", async () => {
+      const s = followingScene();
+      s.g.scrollTop = s.g.rowTop - 120;
+      s.scrollEvent();
+      await Bun.sleep(10);
+      s.g.rowTop += 300;
+      s.layout();
+      expect(s.offset()).toBe(420); // following: the follower owns the position, nothing is held
+      await readerScrollsUpTo(s, 120);
+      s.g.rowTop += 340;
+      s.layout();
+      expect(s.offset()).toBe(120);
+    });
+
+    it("hands the position back when a layout, not the reader, made the follower take over", async () => {
+      const s = followingScene();
+      await readerScrollsUpTo(s, 120);
+      await Bun.sleep(INTENT_WAIT_MS);
+      // Content below got shorter, the view landed at the bottom, and the follower took over.
+      s.follow.at = true;
+      s.g.rowTop += 250;
+      s.layout();
+      expect(s.tookOver).toEqual([1]);
+      expect(s.offset()).toBe(120);
+    });
+
+    it("lets the place go when the reader asks to follow (the bottom button)", async () => {
+      const s = followingScene();
+      await readerScrollsUpTo(s, 120);
+      await Bun.sleep(INTENT_WAIT_MS);
+      s.pin.follow();
+      s.follow.at = true;
+      s.g.rowTop += 250;
+      s.layout();
+      expect(s.tookOver).toEqual([]);
+      expect(s.offset()).toBe(370);
     });
   });
 
