@@ -69,7 +69,7 @@ it("treats an empty list as no references, and acks the stored text to the sende
   await until(() => received.length === 1, "the provider call");
   expect(live.messages.some((m) => m.type === "message_rejected")).toBe(false);
   expect(received[0]).toBe("plain");
-  expect(live.messages.find((m) => m.type === "message_accepted")).toEqual({ type: "message_accepted", clientMessageId: "c-empty", content: "plain" });
+  expect(live.messages.find((m) => m.type === "message_accepted")).toEqual({ type: "message_accepted", clientMessageId: "c-empty", content: "plain", serverTime: expect.any(Number) });
   expect(turnGrantsFor(session.id)).toEqual([]);
 });
 
@@ -84,7 +84,7 @@ it("carries a reply and turn references in one message, in their fixed order, an
   expect(decoded).toEqual({ content: "compare these", replyTo: reply, turnRefs: [ref], taskRefs: null, fromSession: null, provenance: null, userWords: null, scheduleRun: null });
   expect(received[0]).toBe(encodeMessageBlocks("compare these", { turnRefs: [ref], replyTo: reply }));
   const ack = live.messages.find((m) => m.type === "message_accepted");
-  expect(ack).toEqual({ type: "message_accepted", clientMessageId: "c-both", content: received[0] });
+  expect(ack).toEqual({ type: "message_accepted", clientMessageId: "c-both", content: received[0], serverTime: expect.any(Number) });
   expect(turnGrantsFor(session.id).map((g) => g.turnId)).toEqual([ref.turnId]);
 });
 
