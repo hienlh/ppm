@@ -36,7 +36,8 @@ const DATA_PREFIX = "Hints (JSON): ";
 const LINE_BREAKS = new RegExp(`[\\u0000-\\u001f\\u007f${String.fromCharCode(0x2028, 0x2029)}]`);
 const JSON_UNSAFE = new RegExp(`[<>&${String.fromCharCode(0x2028, 0x2029)}]`, "g");
 
-const isWord = (v: unknown): v is string =>
+/** A word a hints block may carry: trimmed, non-empty, one line, at most 60 characters. */
+export const isHintWord = (v: unknown): v is string =>
   typeof v === "string" && v.trim() === v && v !== "" && Array.from(v).length <= VOICE_HINTS_LIMITS.chars && !LINE_BREAKS.test(v);
 
 /** A hints value checked field by field, or null. Empty hints (nothing to say) are null too. */
@@ -50,10 +51,10 @@ export function validateVoiceHints(value: unknown): VoiceHints | null {
   for (const item of v.misheard) {
     const pair = item as Record<string, unknown> | null;
     if (!pair || typeof pair !== "object" || Object.keys(pair).some((k) => k !== "heard" && k !== "meant")) return null;
-    if (!isWord(pair.heard) || !isWord(pair.meant)) return null;
+    if (!isHintWord(pair.heard) || !isHintWord(pair.meant)) return null;
     misheard.push({ heard: pair.heard, meant: pair.meant });
   }
-  if (!v.close.every(isWord)) return null;
+  if (!v.close.every(isHintWord)) return null;
   if (!misheard.length && !v.close.length) return null;
   return { version: 1, misheard, close: [...(v.close as string[])] };
 }

@@ -58,6 +58,32 @@ describe("voiceHintsFor", () => {
     expect(hintsFor("hôm nay trời đẹp")).toBeNull();
   });
 
+  it("finds nothing in ordinary Vietnamese, whatever plain English words the project picked up", () => {
+    const plain = ["main", "cron", "test", "data", "code", "chat", "node", "hono", "team", "done"]
+      .map((term) => ({ term, score: 1, strong: false }));
+    const typed = normalizeVoiceConfig({ enabled: true, self_learning: true, words: [], projects: { ppm: { words: ["Bun", "Hono"], learned: [] } } });
+    for (const sentence of [
+      "mai anh làm tiếp, hơn nữa con cần xem lại",
+      "tết này về quê ăn tết",
+      "đa ta có để ý không",
+      "đi ăn bún chả rồi về",
+      "cho đẹp hơn rồi gửi anh xem",
+      "con nốt đó đâu rồi",
+    ]) {
+      expect(voiceHintsFor({ config: typed, project: "ppm", transcript: sentence, auto: plain, nowMs: NOW })).toBeNull();
+    }
+  });
+
+  it("leaves out a word no hints block may carry instead of failing the send", () => {
+    // Settings clean the lists, but a row edited by hand or an older build may hold anything.
+    const raw = config();
+    raw.projects.ppm!.learned.push({ word: "P\u0001M", from: "BPM", at: daysAgo(1), source: "edit" });
+    raw.projects.ppm!.words.push("Telegr\u0007am");
+    const out = voiceHintsFor({ config: raw, project: "ppm", transcript: "sửa BPM qua telegram", auto: [], nowMs: NOW });
+    expect(out?.misheard).toEqual([{ heard: "BPM", meant: "PPM" }]);
+    expect(out?.close ?? []).not.toContain("Telegr\u0007am");
+  });
+
   it("without self-learning keeps the user's own corrections and drops what the clean-up taught", () => {
     const out = hintsFor("sửa cái BPM rồi báo scale", { self_learning: false });
     expect(out?.misheard).toEqual([{ heard: "scale", meant: "Slack" }]);

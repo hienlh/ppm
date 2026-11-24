@@ -102,11 +102,16 @@ export function supportsCarryPrompt(binary: string): Promise<boolean> {
     known = (async () => {
       try {
         const proc = Bun.spawn({ cmd: [binary, "--help"], stdout: "pipe", stderr: "pipe", stdin: "ignore", windowsHide: true });
-        const timer = setTimeout(() => proc.kill(), 10_000);
+        const timer = setTimeout(() => proc.kill(), 3_000);
         const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
         clearTimeout(timer);
-        return out.includes(CARRY_FLAG) || err.includes(CARRY_FLAG);
+        const known = out.includes(CARRY_FLAG) || err.includes(CARRY_FLAG);
+        // Only a yes is kept: a failed or slow `--help` is asked again next time, and a reinstall
+        // at the same path that adds the flag is noticed then.
+        if (!known) carrySupport.delete(binary);
+        return known;
       } catch {
+        carrySupport.delete(binary);
         return false;
       }
     })();

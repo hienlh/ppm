@@ -66,6 +66,6 @@ export const defaultTelegramVoiceDeps: TelegramVoiceDeps = {
   },
   async learn(input) {
     const { learnFromEdit } = await import("../voice-message/voice-message.service.ts");
-    return learnFromEdit({ ...input, surface: "telegram" });
+    return learnFromEdit(input);
   },
 };

@@ -80,12 +80,14 @@ describe("processVoiceMessage", () => {
     expect(seen.transcribe[0]!.prompt).toBe("Hono");
   });
 
-  it("learns nothing, and asks nothing, with the chat box set to hints and self-learning not chosen", async () => {
-    updateVoiceSettings({ transcriptFix: { composer: "hints" } });
+  it("learns from an edit of Whisper's own text too, with the chat box set to hints and self-learning not chosen", async () => {
+    // The edit is what fills the hints' misheard list; it is asked after the message went, so it costs no wait.
+    updateVoiceSettings({ transcriptFix: { composer: "hints", telegram: "hints" } });
     let asks = 0;
-    const learned = await learnFromEdit({ project: "demo", before: "sửa hô nô", after: "sửa Hono" }, async () => { asks++; return '{"pairs":[{"from":"hô nô","to":"Hono"}]}'; });
-    expect(learned).toEqual([]);
-    expect(asks).toBe(0);
+    const before = "anh muốn em mở cái route hô nô rồi sửa middleware cho đúng với phần đăng nhập";
+    const learned = await learnFromEdit({ project: "demo", before, after: before.replace("hô nô", "Hono") }, async () => { asks++; return '{"pairs":[{"from":"hô nô","to":"Hono"}]}'; });
+    expect(learned.map((l) => [l.from, l.word])).toEqual([["hô nô", "Hono"]]);
+    expect(asks).toBe(1);
   });
 
   it("keeps the raw transcript with the reason when the clean-up fails", async () => {

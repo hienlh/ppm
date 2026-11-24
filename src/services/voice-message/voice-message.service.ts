@@ -202,8 +202,6 @@ export async function processVoiceMessage(
 
 export interface LearnFromEditInput {
   project: string;
-  /** Where the transcript was recorded; the chat box when left out. */
-  surface?: VoiceSurface;
   /** The transcript as PPM produced it (cleaned, or raw when the clean-up failed). */
   before: string;
   /** The transcript as the user sent it. */
@@ -217,9 +215,9 @@ export interface LearnFromEditInput {
 export async function learnFromEdit(input: LearnFromEditInput, ask: VoiceAsk = askClaudeHaiku): Promise<LearnedWord[]> {
   requireProject(input.project);
   const settings = readVoiceSettings();
-  // Learning asks Haiku once, after the message went. A surface set to hints keeps Haiku off its
-  // messages unless self-learning was chosen, which is what asks for learning.
-  if (transcriptFixFor(settings, input.surface ?? "composer") !== "haiku" && !selfLearningOn(settings)) return [];
+  // Learning asks Haiku once, after the message went, so it costs no wait whichever way the
+  // surface treats misheard words — and an edit of Whisper's own text is the clearest lesson there
+  // is: the corrections it learns are what the hints name next time.
   const known = vocabularyOf(settings, input.project);
   let learned: LearnedWord[];
   try {

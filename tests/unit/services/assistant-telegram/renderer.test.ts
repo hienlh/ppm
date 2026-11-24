@@ -4,6 +4,8 @@ import {
   LONG_TURN_MS, MOVED_BELOW, PLACEHOLDER, shortToolName, TurnRenderer,
 } from "../../../../src/services/assistant-telegram/assistant-telegram-turn-renderer.ts";
 import { mirroredLine, turnFooter, WATCH_NEWS_LINE } from "../../../../src/services/assistant-telegram/assistant-telegram-mirror.ts";
+import { encodeMessageBlocks } from "../../../../src/shared/chat-message-blocks.ts";
+import { encodeVoicePart } from "../../../../src/shared/voice-message.ts";
 import { redactForTelegram } from "../../../../src/services/telegram/telegram-html-format.ts";
 import type { ChatMessageOrigin } from "../../../../src/services/chat-control/chat-control.ts";
 
@@ -134,6 +136,15 @@ describe("lines for what did not come from Telegram", () => {
     expect(line!.startsWith("🖥 <i>(PPM)</i> &lt;b&gt;")).toBe(true);
     expect(line!.length).toBeLessThan(1100);
     expect(line).toEndWith("[+2 images]");
+  });
+
+  it("mirrors the words alone: no voice marker with its path, no PPM block", () => {
+    const stored = encodeMessageBlocks(
+      `Xem giúp\n\n${encodeVoicePart({ path: "C:/Users/me/.ppm/uploads/a1-voice.webm", durationSec: 4, transcript: "sửa cái BPM" })}`,
+      { voiceHints: { version: 1, misheard: [{ heard: "BPM", meant: "PPM" }], close: [] } },
+    );
+    const line = mirroredLine("ws", stored, 0)!;
+    expect(line).toBe("🖥 <i>(PPM)</i> Xem giúp\n\nsửa cái BPM");
   });
 
   it("names a watch report without quoting it, and says nothing for Telegram's own messages", () => {

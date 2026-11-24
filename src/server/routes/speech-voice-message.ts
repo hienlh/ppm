@@ -181,7 +181,7 @@ export function registerVoiceMessageRoutes(routes: Hono, deps: VoiceRouteDeps): 
     if (typeof before !== "string" || typeof after !== "string") return fail(c, 400, "before and after must be text");
     if (before.length > MAX_TEXT_CHARS || after.length > MAX_TEXT_CHARS) return fail(c, 400, "The text is too long");
     try {
-      return c.json(ok({ learned: await deps.learn({ project, surface: "composer", before, after }) }));
+      return c.json(ok({ learned: await deps.learn({ project, before, after }) }));
     } catch (e) {
       if (e instanceof VoiceMessageError) return fail(c, STATUS[e.code], e.message, e.code);
       return fail(c, 500, (e as Error)?.message || "Learning failed");

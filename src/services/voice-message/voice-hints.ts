@@ -6,11 +6,15 @@
  * may have got wrong, and a project's list stays out of every message that does not need it.
  *
  * No model call: everything is string comparison. Words are compared by a sound-ish key — no
- * case, no Vietnamese marks, no spaces or punctuation — so "hồ nô" and "Hono" share a key; one
- * letter apart is close for a word of four letters or more, nothing but the same key below that.
+ * case, no Vietnamese marks, no spaces or punctuation — so "hồ nô" and "Hono" share a key. Only
+ * the names-and-identifiers list Whisper is given is compared, never the plain English words the
+ * clean-up reads: Vietnamese syllables stripped of their marks are two to four letters, and two of
+ * them side by side spell "data", "code" or "test" all day long. Below four letters nothing is
+ * close (those are left to the learned corrections), below six only the same key is, and one
+ * letter off counts from six letters up.
  */
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
-import { VOICE_HINTS_LIMITS, type VoiceHintPair, type VoiceHints } from "../../shared/chat-voice-hints.ts";
+import { isHintWord, validateVoiceHints, VOICE_HINTS_LIMITS, type VoiceHintPair, type VoiceHints } from "../../shared/chat-voice-hints.ts";
 import { splitVoiceMessage, type LearnedWord, type VoiceMessageConfig, type VoiceSurface } from "../../shared/voice-message.ts";
 import { createLogger } from "../logger.ts";
 import type { RankedTerm } from "./voice-auto-vocabulary.ts";
@@ -31,8 +35,12 @@ export function soundKey(text: string): string {
   return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/[đĐ]/g, "d").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 }
 
+/** Shortest key compared at all, and shortest that may be one letter off. */
+const MIN_KEY = 4;
+const MIN_KEY_FOR_ONE_EDIT = 6;
+
 /** Edits a key this long may be away from a transcript word and still count as close. */
-const allowedEdits = (keyLength: number) => (keyLength <= 3 ? 0 : 1);
+const allowedEdits = (keyLength: number) => (keyLength < MIN_KEY_FOR_ONE_EDIT ? 0 : 1);
 
 /** Whether two keys are at most one insertion, deletion or substitution apart. */
 function withinOneEdit(a: string, b: string): boolean {
@@ -75,7 +83,6 @@ function closeness(key: string, keys: Map<number, Set<string>>): number | null {
 /** Most-seen first, then newest. */
 const byUse = (a: LearnedWord, b: LearnedWord) => (b.hits ?? 1) - (a.hits ?? 1) || b.at.localeCompare(a.at);
 
-const fits = (word: string) => !!word && Array.from(word).length <= VOICE_HINTS_LIMITS.chars && !/[\r\n]/.test(word);
 
 export interface VoiceHintsInput {
   config: VoiceMessageConfig;
@@ -104,19 +111,19 @@ export function voiceHintsFor(input: VoiceHintsInput): VoiceHints | null {
     if (misheard.length >= VOICE_HINTS_LIMITS.misheard) break;
     const meant = l.word.trim();
     const heard = l.from.trim();
-    if (!fits(meant) || !fits(heard) || named.has(meant.toLowerCase())) continue;
+    if (!isHintWord(meant) || !isHintWord(heard) || named.has(meant.toLowerCase())) continue;
     if (!wordUsedIn(transcript, heard) || wordUsedIn(transcript, meant)) continue;
     named.add(meant.toLowerCase());
     misheard.push({ heard, meant });
   }
 
   const keys = transcriptKeys(transcript);
-  const words = composeVoiceWords(config, project, { selfLearning, auto: input.auto, nowMs }).cleanup.slice(0, MAX_COMPARED_WORDS);
+  const words = composeVoiceWords(config, project, { selfLearning, auto: input.auto, nowMs }).whisper.slice(0, MAX_COMPARED_WORDS);
   const found: Array<{ word: string; edits: number; order: number }> = [];
   words.forEach((raw, order) => {
     const word = raw.trim();
     const key = soundKey(word);
-    if (key.length < 3 || !fits(word) || named.has(word.toLowerCase())) return;
+    if (key.length < MIN_KEY || !isHintWord(word) || named.has(word.toLowerCase())) return;
     const edits = closeness(key, keys);
     // Spelled right already: nothing to hint. Asked last, since it builds a regex per word.
     if (edits === null || wordUsedIn(transcript, word)) return;
@@ -126,7 +133,9 @@ export function voiceHintsFor(input: VoiceHintsInput): VoiceHints | null {
   // The same word said differently first ("hồ nô" → Hono), then one letter off, each in list order.
   const close = found.sort((a, b) => a.edits - b.edits || a.order - b.order).slice(0, VOICE_HINTS_LIMITS.close).map((f) => f.word);
 
-  return misheard.length || close.length ? { version: 1, misheard, close } : null;
+  // Checked as the block's decoder checks it, so a word that slipped past the lists' own cleaning
+  // drops the hints rather than failing the send.
+  return misheard.length || close.length ? validateVoiceHints({ version: 1, misheard, close }) : null;
 }
 
 export interface MessageVoiceHintsDeps {

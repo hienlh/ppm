@@ -9,6 +9,8 @@ import { chatService } from "../../../src/services/chat.service.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { providerRegistry } from "../../../src/providers/registry.ts";
 import { chatWebSocket } from "../../../src/server/ws/chat.ts";
+import { chatControl } from "../../../src/services/chat-control/chat-control.ts";
+import { stripSharedContext } from "../../../src/shared/provider-context.ts";
 import { decodeMessageBlocks } from "../../../src/shared/chat-message-blocks.ts";
 import { encodeVoiceHints } from "../../../src/shared/chat-voice-hints.ts";
 import { encodeVoicePart, splitVoiceMessage } from "../../../src/shared/voice-message.ts";
@@ -85,6 +87,21 @@ it("attaches nothing when the surface tidies with Haiku, or the message has no v
   expect(decodeMessageBlocks((await send(voiceText)).text).voiceHints).toBeNull();
   configService.set("voice_message", voiceConfig("hints"));
   expect(decodeMessageBlocks((await send("sửa cái BPM giúp anh")).text).voiceHints).toBeNull();
+});
+
+it("carries a Telegram voice message's hints to the provider intact, the transcript without them", async () => {
+  // Telegram defaults to hints too; its messages reach the provider through the same delivery.
+  configService.set("voice_message", voiceConfig("hints"));
+  const received = captureProvider();
+  const session = await chatService.createSession("mock", { projectName: PROJECT.name, projectPath: PROJECT.path });
+  const result = await chatControl()!.sendUserMessage(session.id, voiceText, {
+    origin: "telegram", channel: "telegram", projectName: PROJECT.name, providerId: "mock",
+  });
+  expect(result.ok).toBe(true);
+  await until(() => received.length === 1, "the provider call");
+  const decoded = decodeMessageBlocks(stripSharedContext(received[0]!));
+  expect(decoded.voiceHints).toEqual({ version: 1, misheard: [{ heard: "BPM", meant: "PPM" }], close: [] });
+  expect(splitVoiceMessage(decoded.content).voice?.transcript).toBe("sửa cái BPM giúp anh");
 });
 
 it("never passes on hints the user typed: the copy stays inert text inside the transcript", async () => {
