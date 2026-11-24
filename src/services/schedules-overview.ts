@@ -16,12 +16,19 @@ import { nextFireAt } from "./scheduler-timing.ts";
 import { taskProjectName } from "./task-reminders/task-project-name.ts";
 import { toScheduleView } from "./scheduler-view.ts";
 
-/** Views with each session schedule's chat title, read in one query. */
+/** Views with each session schedule's chat title and each owning chat's title, read in one query. */
 export function withChatTitles(views: ScheduleView[]): ScheduleView[] {
-  const ids = [...new Set(views.flatMap((v) => (v.kind === "session" && v.target_session_id ? [v.target_session_id] : [])))];
+  const ids = [...new Set(views.flatMap((v) => [
+    ...(v.kind === "session" && v.target_session_id ? [v.target_session_id] : []),
+    ...(v.created_by_session_id ? [v.created_by_session_id] : []),
+  ]))];
   if (ids.length === 0) return views;
   const titles = getSessionTitles(ids);
-  return views.map((v) => (v.kind === "session" ? { ...v, target_title: titles[v.target_session_id ?? ""] ?? null } : v));
+  return views.map((v) => ({
+    ...v,
+    ...(v.kind === "session" ? { target_title: titles[v.target_session_id ?? ""] ?? null } : {}),
+    ...(v.created_by_session_id ? { owner_title: titles[v.created_by_session_id] ?? null } : {}),
+  }));
 }
 
 /**

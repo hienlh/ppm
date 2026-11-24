@@ -28,6 +28,7 @@ import { liveScript } from "../../services/schedule-script/instance-guard.ts";
 import { removeRunDir } from "../../services/schedule-script/script-files.ts";
 import { dropLogRing } from "../../services/schedule-script/script-log.ts";
 import { editErrorResponse, scheduleScriptRoutes } from "./schedules-script.ts";
+import { scheduleOwnerRoutes } from "./schedules-owners.ts";
 
 export const schedulesRoutes = new Hono();
 
@@ -183,4 +184,5 @@ schedulesRoutes.get("/:id{[0-9]+}/runs", (c) => {
   return c.json(ok(listScheduleRuns(id, limit)));
 });
 
+schedulesRoutes.route("/", scheduleOwnerRoutes);
 schedulesRoutes.route("/", scheduleScriptRoutes);

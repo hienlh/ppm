@@ -10,6 +10,7 @@ import type { ScheduleView } from "../../../../types/scheduler";
 import { Field, ScheduleKindFields, Segmented } from "./schedule-kind-fields";
 import { ScheduleSheet } from "./schedule-sheet";
 import { SessionChatPicker, SessionTimingFields } from "./schedule-session-fields";
+import { ScheduleOwnerField } from "./schedule-owner-field";
 
 const PERMISSION_MODES = ["bypassPermissions", "acceptEdits", "default", "plan"];
 
@@ -104,6 +105,14 @@ export function ScheduleForm({
             </SelectContent>
           </Select>
         </Field>
+        {schedule && !isSession && (
+          <ScheduleOwnerField
+            scheduleId={schedule.id}
+            projectName={projects.find((p) => p.path === schedule.project_path)?.name}
+            ownerId={schedule.created_by_session_id}
+            ownerTitle={schedule.owner_title}
+          />
+        )}
         {isSession && (
           <SessionChatPicker
             projectName={projectName}

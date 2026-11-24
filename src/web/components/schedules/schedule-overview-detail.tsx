@@ -12,6 +12,7 @@ import { parseStamp, scheduleAttention } from "../../../shared/schedule-attentio
 import { clockLabel, isBypass, KIND_LABELS, projectLabel, zoneCity } from "@/lib/schedules/schedules-view";
 import type { ScheduleOverview } from "../../../types/scheduler";
 import { ScheduleRecentRuns } from "./schedule-recent-runs";
+import { ScheduleOwnerField } from "../settings/schedules/schedule-owner-field";
 import { ICON_BUTTON, KindIcon, PRIMARY_BUTTON, ProjectTag, TEXT_BUTTON } from "./schedules-ui";
 import type { ScheduleActions } from "./use-schedule-actions";
 
@@ -90,6 +91,19 @@ export function ScheduleOverviewDetail({ schedule: s, now, actions, onEdit, onOp
             <dt className="text-text-3">Next</dt><dd>{upcoming.length ? upcoming.join(" · ") : "—"}</dd>
             {s.target_title !== undefined && s.kind === "session" && (<><dt className="text-text-3">Sends to</dt><dd className="truncate">{s.target_title ?? "its chat"}</dd></>)}
           </dl>
+        </Card>
+      )}
+
+      {s.kind !== "session" && (
+        <Card title="Owned by chat">
+          <ScheduleOwnerField
+            compact
+            scheduleId={s.id}
+            projectName={s.project_name ?? undefined}
+            ownerId={s.created_by_session_id}
+            ownerTitle={s.owner_title}
+          />
+          <p className="mt-1 text-[11px] text-text-3">Its footer lists this schedule. Nothing else changes.</p>
         </Card>
       )}
 

@@ -253,10 +253,20 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   included: `schedules.created_by_session_id` (migration 80) is set by the session tools
   (`session_schedule_create`, `session_schedule_propose_script`) and by the PPM Assistant's
   `schedule_save` / `schedule_propose_script`, which pass it in the route body. A schedule a person
-  makes in Settings or the CLI has none. Migration 80 fills it for older script and prompt
-  schedules from `session-trace.db` where the trace names the schedule's id and name within 15
-  minutes of its creation (`schedule-creator-backfill.ts`); older than the trace's retention, a
-  schedule stays unlinked.
+  makes in Settings or the CLI has none. For older script and prompt schedules it is read back
+  from `session-trace.db` where the trace names the schedule's id and name within 15 minutes of
+  its creation (`schedule-creator-backfill.ts`; migration 80, then 83, because 80 read Claude's
+  answers — stored as the MCP content array `[{"type":"text","text":"{…}"}]` — as the array and
+  linked nothing). When the schedule's inputs name exactly one other chat of its project (the
+  chat a watch reports to, `schedule-delivery-chat.ts`), that chat owns it rather than the one
+  that proposed it. Only rows with no owner change, one log line each. `ppm schedule owners
+  [--dry-run]` runs the same read through the server (`GET`/`POST /api/schedules/owners`).
+  A person moves or clears an owner in Settings → Schedules or on the Schedules window's card
+  ("Owned by chat", `PATCH /api/schedules/:id/owner`, refused for a chat of another project or a
+  session schedule); a chat takes one nobody owns with `session_schedule_claim`, which never
+  touches a schedule another chat owns (`collab-schedule-claim.ts`). Owning lists the schedule in
+  the chip and gives the chat nothing else, which is why neither needs a card. Older than the
+  trace's retention, a schedule stays unlinked until someone sets it.
 - **A prompt that is a slash command.** A scheduled `/skill args` goes through the same alias
   rewrite as a typed one. In a Claude chat it then stays the message's first characters, since
   Claude Code runs a leading `/name` as that command or skill: the block goes after it

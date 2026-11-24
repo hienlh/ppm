@@ -16,7 +16,7 @@ import { Field } from "./schedule-kind-fields";
 /** How many of the project's chats the picker offers: the most recent ones, pinned first. */
 const CHAT_LIMIT = 50;
 
-interface ChatOption { id: string; title: string }
+export interface ChatOption { id: string; title: string }
 
 /** The chats a schedule may go into: a design's chat is left out, the server refuses it anyway. */
 export function chatOptions(sessions: SessionInfo[]): ChatOption[] {
@@ -25,14 +25,8 @@ export function chatOptions(sessions: SessionInfo[]): ChatOption[] {
     .map((s) => ({ id: s.id, title: s.title?.trim() || "Untitled chat" }));
 }
 
-export function SessionChatPicker({ projectName, value, onChange, disabled, currentTitle }: {
-  projectName: string | undefined;
-  value: string;
-  onChange: (sessionId: string) => void;
-  disabled?: boolean;
-  /** The saved schedule's chat title, for a chat no longer among the recent ones. */
-  currentTitle?: string | null;
-}) {
+/** The project's recent chats a schedule may name (null while loading); none without a project. */
+export function useProjectChatOptions(projectName: string | undefined): ChatOption[] | null {
   const [chats, setChats] = useState<ChatOption[] | null>(null);
 
   useEffect(() => {
@@ -45,6 +39,18 @@ export function SessionChatPicker({ projectName, value, onChange, disabled, curr
       .catch(() => { if (live) setChats([]); });
     return () => { live = false; };
   }, [projectName]);
+  return chats;
+}
+
+export function SessionChatPicker({ projectName, value, onChange, disabled, currentTitle }: {
+  projectName: string | undefined;
+  value: string;
+  onChange: (sessionId: string) => void;
+  disabled?: boolean;
+  /** The saved schedule's chat title, for a chat no longer among the recent ones. */
+  currentTitle?: string | null;
+}) {
+  const chats = useProjectChatOptions(projectName);
 
   const options = chats ?? [];
   const missing = value && !options.some((c) => c.id === value);

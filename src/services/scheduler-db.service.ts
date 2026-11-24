@@ -150,6 +150,18 @@ export function listSchedulesCreatedBy(sessionId: string): Schedule[] {
   ).all(sessionId) as Schedule[];
 }
 
+/**
+ * Make `sessionId` the chat that owns a script or prompt schedule (its footer chip lists it), or
+ * clear the owner with null. With `onlyIfUnowned` a schedule that already has an owner is left as it
+ * is, in the same statement, so two chats claiming at once cannot both win. Answers whether the row
+ * changed. A session schedule is never touched: its chat is `target_session_id`.
+ */
+export function setScheduleOwner(id: number, sessionId: string | null, opts: { onlyIfUnowned?: boolean } = {}): boolean {
+  const sql = `UPDATE schedules SET created_by_session_id = ?, updated_at = datetime('now')
+    WHERE id = ? AND kind IN ('script', 'prompt')${opts.onlyIfUnowned ? " AND created_by_session_id IS NULL" : ""}`;
+  return getDb().query(sql).run(sessionId, id).changes > 0;
+}
+
 /** How many session schedules are aimed at one chat, on or off. */
 export function countSessionSchedules(sessionId: string): number {
   return (getDb().query(

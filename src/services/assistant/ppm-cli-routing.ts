@@ -17,7 +17,7 @@ const SERVER = [
   "config set",
   "projects add", "projects remove", "projects rename", "projects move", "projects color", "projects icon",
   "projects reorder", "projects clone", "projects settings get", "projects settings set",
-  "schedule run-now", "schedule export", "schedule import", "schedule state", "schedule set-state",
+  "schedule run-now", "schedule export", "schedule import", "schedule state", "schedule set-state", "schedule owners",
   "chat create", "chat rename", "chat pin", "chat unpin", "chat tag", "chat untag", "chat read", "chat unread",
   "chat stop", "chat delete", "chat fork", "chat account", "chat cleanup",
   "chat changes list", "chat changes diff", "chat changes keep", "chat changes reopen", "chat changes revert",

@@ -7,6 +7,7 @@ import { Command } from "commander";
 import type { ScheduleView } from "../../types/scheduler.ts";
 import { api, C, fail, serverApi, statusText } from "./schedule-cmd-api.ts";
 import { registerScheduleTemplateCommands } from "./schedule-cmd-template.ts";
+import { registerScheduleOwnerCommands } from "./schedule-cmd-owners.ts";
 import { directPatch, refuseScheduleWriteInAiChat, registerScheduleWriteCommands, scheduleWrite } from "./schedule-cmd-write.ts";
 
 async function loadDeps() {
@@ -116,4 +117,5 @@ export function registerScheduleCommands(program: Command): void {
     });
 
   registerScheduleTemplateCommands(schedule, loadDeps);
+  registerScheduleOwnerCommands(schedule);
 }
