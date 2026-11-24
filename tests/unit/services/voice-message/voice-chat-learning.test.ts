@@ -211,4 +211,28 @@ describe("what it says became of each pair", () => {
     expect(learnFromUnderstood(PROJECT, "mở BPM", [{ heard: "BPM", meant: "PPM" }], new Date(clock), "c2"))
       .toEqual([{ from: "BPM", to: "PPM", status: "skipped", reason: "undone" }]);
   });
+
+  it("puts a stopped pair back to be counted on Restore, where it left off, without learning it", async () => {
+    const { learnFromUnderstood } = await import("../../../../src/services/voice-message/voice-chat-learning.ts");
+    learnFromUnderstood(PROJECT, "mở BPM", [{ heard: "BPM", meant: "PPM" }], new Date(clock), "c1");
+    learnFromUnderstood(PROJECT, "mở BPM", [{ heard: "BPM", meant: "PPM" }], new Date(clock), "c2");
+    updateVoiceSettings({ project: PROJECT, skipLearning: ["PPM"] });
+    updateVoiceSettings({ project: PROJECT, restoreBlocked: ["ppm"] });
+    const own = readVoiceSettings().projects[PROJECT]!;
+    expect(own.blocked ?? []).toEqual([]);
+    expect(own.learned).toEqual([]);
+    expect(candidates()).toMatchObject([{ from: "BPM", to: "PPM", hits: 2, source: "chat", chats: ["c1", "c2"] }]);
+    // The count goes on from two: a third chat learns it.
+    expect(learnFromUnderstood(PROJECT, "mở BPM", [{ heard: "BPM", meant: "PPM" }], new Date(clock), "c3"))
+      .toEqual([{ from: "BPM", to: "PPM", status: "learned", hits: 3 }]);
+  });
+
+  it("still brings an undone learned word back learned", async () => {
+    const { learnFromUnderstood } = await import("../../../../src/services/voice-message/voice-chat-learning.ts");
+    for (const chat of ["c1", "c2", "c3"]) learnFromUnderstood(PROJECT, "mở BPM", [{ heard: "BPM", meant: "PPM" }], new Date(clock), chat);
+    updateVoiceSettings({ project: PROJECT, removeLearned: ["PPM"] });
+    updateVoiceSettings({ project: PROJECT, restoreBlocked: ["PPM"] });
+    expect(readVoiceSettings().projects[PROJECT]!.learned).toMatchObject([{ word: "PPM", from: "BPM" }]);
+    expect(candidates()).toEqual([]);
+  });
 });

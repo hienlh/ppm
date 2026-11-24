@@ -56,7 +56,14 @@ export interface VoiceCandidate {
  * A learned word the user undid: never learned again from the clean-up, until restored. `at` is
  * when it was undone; the rest is the learned entry as it was, so Restore brings it back unchanged.
  */
-export interface BlockedWord { word: string; from: string; at: string; source?: LearnedSource; hits?: number; kind?: "term" | "phrase" }
+export interface BlockedWord {
+  word: string; from: string; at: string; source?: LearnedSource; hits?: number; kind?: "term" | "phrase";
+  /**
+   * Set when the word was still being learned and the user chose "Don't learn": its candidates as
+   * they were, so Restore puts them back to be counted rather than making the word learned.
+   */
+  learning?: VoiceCandidate[];
+}
 
 /** Why a heard → meant pair was not counted toward a learned word. */
 export type LearnSkipReason =

@@ -115,6 +115,10 @@ describe("/voice-settings", () => {
     expect(skipped.projectLearning.map((c: { to: string }) => c.to)).toEqual(["Slack"]);
     expect(skipped.projectBlocked).toMatchObject([{ word: "PPM", from: "BPM", source: "chat" }]);
     expect((await put({ skipLearning: ["PPM"] })).status).toBe(400);
+    const restored = (await json(await put({ project: "demo", restoreBlocked: ["PPM"] }))).data;
+    expect(restored.projectBlocked).toEqual([]);
+    expect(restored.projectLearned).toEqual([]);
+    expect(restored.projectLearning.map((c: { to: string; chats: number }) => [c.to, c.chats])).toEqual([["Slack", 0], ["PPM", 1]]);
   });
 
   it("saves the Haiku clean-up switch and refuses a value that is not a boolean", async () => {

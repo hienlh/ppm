@@ -121,6 +121,26 @@ export function candidateKey(c: Pick<VoiceCandidate, "from" | "to" | "source">):
   return `${c.source === "chat" ? "chat\u0000" : ""}${c.from.toLowerCase()}\u0000${c.to.toLowerCase()}`;
 }
 
+/**
+ * The undone entries for words the user said not to learn while they were still being counted:
+ * one per word, even when the clean-up and the chat both counted it, keeping every candidate so
+ * Restore can put the count back as it was.
+ */
+function skippedWords(candidates: readonly VoiceCandidate[], skip: ReadonlySet<string>, at: string): BlockedWord[] {
+  const byWord = new Map<string, VoiceCandidate[]>();
+  for (const c of candidates) {
+    const key = c.to.toLowerCase();
+    if (skip.has(key)) byWord.set(key, [...(byWord.get(key) ?? []), c]);
+  }
+  return [...byWord.values()].map((group): BlockedWord => {
+    const newest = group.reduce((a, b) => (b.at > a.at ? b : a));
+    return {
+      word: newest.to, from: newest.from, at, source: newest.source === "chat" ? "chat" : "cleanup",
+      hits: Math.max(...group.map((c) => c.hits)), learning: group,
+    };
+  });
+}
+
 /** Valid undone words, each once (the newest wins), the newest {@link VOICE_LIMITS.blocked}. */
 export function cleanBlockedList(raw: unknown): BlockedWord[] {
   if (!Array.isArray(raw)) return [];
@@ -136,6 +156,8 @@ export function cleanBlockedList(raw: unknown): BlockedWord[] {
     const hits = hitsOf(item.hits);
     if (hits) entry.hits = hits;
     if (item.kind === "term" || item.kind === "phrase") entry.kind = item.kind;
+    const learning = cleanCandidateList(item.learning);
+    if (learning.length) entry.learning = learning;
     byWord.delete(word.toLowerCase());
     byWord.set(word.toLowerCase(), entry);
   }
@@ -303,15 +325,19 @@ export function updateVoiceSettings(patch: VoiceSettingsPatch, now = new Date())
     const blocked = [
       ...(own.blocked ?? []).filter((b) => !restore.has(b.word.toLowerCase())),
       ...undone.map((l): BlockedWord => ({ ...l, at })),
-      // One undone entry per word, even when the clean-up and the chat both counted it.
-      ...[...new Map((own.candidates ?? []).filter((c) => skip.has(c.to.toLowerCase())).map((c) => [c.to.toLowerCase(), c])).values()]
-        .map((c): BlockedWord => ({ word: c.to, from: c.from, at, source: c.source === "chat" ? "chat" : "cleanup", hits: c.hits })),
+      ...skippedWords(own.candidates ?? [], skip, at),
     ];
-    const restored = (own.blocked ?? []).filter((b) => restore.has(b.word.toLowerCase()))
-      .map((b): LearnedWord => ({ ...b, at }));
+    const restoring = (own.blocked ?? []).filter((b) => restore.has(b.word.toLowerCase()));
+    // A word stopped while it was being learned goes back to being counted, where it left off; a
+    // learned word that was undone comes back learned.
+    const restored = restoring.filter((b) => !b.learning?.length)
+      .map(({ learning: _, ...b }): LearnedWord => ({ ...b, at }));
     const learned = [...own.learned.filter((l) => !drop.has(l.word.toLowerCase())), ...restored];
     // An undone correction stops being counted too, or the next message would learn it straight back.
-    const candidates = (own.candidates ?? []).filter((c) => !drop.has(c.to.toLowerCase()) && !skip.has(c.to.toLowerCase()));
+    const candidates = [
+      ...(own.candidates ?? []).filter((c) => !drop.has(c.to.toLowerCase()) && !skip.has(c.to.toLowerCase())),
+      ...restoring.flatMap((b) => b.learning ?? []),
+    ];
     config.projects = { ...config.projects, [project]: { ...own, words, learned, candidates, blocked } };
   }
   return writeVoiceSettings(config);

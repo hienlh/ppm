@@ -118,7 +118,8 @@ export function VoiceLearnedWordsList({ learned, blocked, learning, busy, onUndo
         blocked.length === 0 ? <Empty>Nothing undone. A word you undo stays here, and is never learned again until you restore it.</Empty> : (
           <ul>
             {[...blocked].sort((a, b) => b.at.localeCompare(a.at)).map((b) => (
-              <Row key={`blocked-${b.word}`} word={b.word} heard={b.from} badge="undone · never again" when={{ text: `undone ${learnedWhen(b.at, now)}`, title: "" }} dim>
+              <Row key={`blocked-${b.word}`} word={b.word} heard={b.from} badge={b.learning?.length ? "not learned · Restore counts it again" : "undone · never again"}
+                when={{ text: `${b.learning?.length ? "stopped" : "undone"} ${learnedWhen(b.at, now)}`, title: "" }} dim>
                 <Button variant="outline" size="sm" disabled={busy} onClick={() => onRestore(b.word)} className="h-11 md:h-[30px]">Restore</Button>
               </Row>
             ))}
