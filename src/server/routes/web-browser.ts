@@ -9,6 +9,9 @@ import { findBrowsers, installHint } from "../../services/web-browser/chrome-loc
 import { webBrowserHost, WebBrowserUnavailableError } from "../../services/web-browser/browser-host.ts";
 import { viewerHub } from "../../services/web-browser/viewer-hub.ts";
 import { isWebBrowserAllowedByEnv } from "../../services/web-browser/web-browser-flag.ts";
+import { configService } from "../../services/config.service.ts";
+import { parseWebBrowserSettings } from "../../shared/web-browser-settings.ts";
+import { settleWebBrowserIntro } from "../../services/web-browser/web-browser-intro.ts";
 
 export const webBrowserRoutes = new Hono();
 
@@ -31,6 +34,35 @@ webBrowserRoutes.get("/capabilities", async (c) => {
     state: webBrowserHost.state,
     settings,
   }));
+});
+
+/**
+ * Save Settings → Web Browser. Over a public link the reach switches and the browser path
+ * cannot change: one request with the token must not be able to widen what the browser can
+ * reach from the Internet. `browserPath` must be one of the browsers PPM found, since it names a
+ * program PPM will run.
+ */
+webBrowserRoutes.put("/settings", async (c) => {
+  const rejected = refuse(c, { requireEnabled: false });
+  if (rejected) return rejected;
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json(err("expected JSON"), 400); }
+  const current = webBrowserHost.settings();
+  const next = parseWebBrowserSettings(body);
+  if (isPublicRequest(c.req.raw)) {
+    const guarded = ["allowLocalhost", "allowLan", "allowPublicTunnel", "aiControl", "browserPath"] as const;
+    if (guarded.some((k) => next[k] !== current[k])) {
+      return c.json({ ...err("these settings can only be changed from the LAN or Tailscale"), code: "public-access" }, 403);
+    }
+  }
+  if (next.browserPath && !(await findBrowsers()).some((b) => b.path === next.browserPath)) {
+    return c.json(err("that browser was not found on this host"), 400);
+  }
+  configService.set("web_browser", next);
+  webBrowserHost.applySettings();
+  if (next.enabled === false && webBrowserHost.state !== "stopped") await webBrowserHost.stop();
+  settleWebBrowserIntro();
+  return c.json(ok(next));
 });
 
 webBrowserRoutes.post("/session", (c) => {

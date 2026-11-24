@@ -11,6 +11,7 @@ const base = (id: string) => `/api/feature-intros/${encodeURIComponent(id)}`;
 
 const KNOWN_SETTINGS: readonly FeatureIntroSetting[] = [
   "assistant_permission_mode", "voice_messages", "voice_self_learning", "assistant_settings_tools", "remembered_approvals",
+  "web_browser",
 ];
 const isKnownSetting = (value: unknown): value is FeatureIntroSetting =>
   typeof value === "string" && (KNOWN_SETTINGS as readonly string[]).includes(value);
@@ -19,8 +20,9 @@ const isKnownSetting = (value: unknown): value is FeatureIntroSetting =>
  * Where a feature's own switch lives in Settings, for the step's "decide there instead" link. A
  * feature made of tool switches is decided in Tools; a feature that is one setting, on its pane.
  */
-export function featureIntroSettingsLink(intro: Pick<FeatureIntro, "setting">): { category: "tools" | "assistant" | "voice" | "approvals"; label: string; assistantTab?: "changes" } {
+export function featureIntroSettingsLink(intro: Pick<FeatureIntro, "setting">): { category: "tools" | "assistant" | "voice" | "approvals" | "web-browser"; label: string; assistantTab?: "changes" } {
   if (intro.setting === "remembered_approvals") return { category: "approvals", label: "Choose in Settings → Approvals instead" };
+  if (intro.setting === "web_browser") return { category: "web-browser", label: "Choose in Settings → Web Browser instead" };
   if (intro.setting === "voice_messages" || intro.setting === "voice_self_learning") {
     return { category: "voice", label: "Choose in Settings → Voice Input instead" };
   }

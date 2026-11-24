@@ -10,7 +10,7 @@
 
 import { createElement, useSyncExternalStore, type ElementType } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { Activity, CalendarClock, FolderOpen, History, Monitor, ScrollText, Settings, Users } from "@/lib/icons";
+import { Activity, CalendarClock, FolderOpen, Globe, History, Monitor, ScrollText, Settings, Users } from "@/lib/icons";
 import { getTabTypeIcon } from "@/lib/tab-type-icons";
 import { tabSessionId } from "@/lib/tab-session-id";
 import { usePanelStore } from "@/stores/panel-store";
@@ -72,6 +72,7 @@ const KIND_META: Record<Exclude<WindowKind, "tab-host">, { icon: ElementType; to
   logs: { icon: ScrollText, tone: tone("text-2"), label: "Logs" },
   "release-notes": { icon: History, tone: tone("accent"), label: "Release notes" },
   schedules: { icon: CalendarClock, tone: tone("primary"), label: "Schedules" },
+  "web-browser": { icon: Globe, tone: tone("info"), label: "Browser" },
 };
 
 const TAB_LABELS: Partial<Record<TabType, string>> = {
@@ -86,6 +87,7 @@ const TAB_LABELS: Partial<Record<TabType, string>> = {
   database: "Database",
   sqlite: "Database",
   "web-preview": "Preview",
+  "web-browser": "Browser",
   android: "Android",
   extension: "Extension",
   "extension-webview": "Extension",

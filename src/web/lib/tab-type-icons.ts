@@ -45,6 +45,7 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   design: Palette,
   android: Smartphone,
   "web-preview": Globe,
+  "web-browser": Globe,
   logs: ScrollText,
   schedules: CalendarClock,
   assistant: BotMessageSquare,

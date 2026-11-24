@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
-import { Settings, Cloud, FolderTree, MonitorSmartphone, ScrollText, Smartphone, CalendarClock } from "@/lib/icons";
+import { Settings, Cloud, FolderTree, Globe, MonitorSmartphone, ScrollText, Smartphone, CalendarClock } from "@/lib/icons";
 import { AssistantBotIcon } from "@/components/assistant/assistant-bot-icon";
 import { toggleAssistant } from "@/components/assistant/open-assistant";
 import { useAssistantWindowShown } from "@/components/assistant/use-assistant-window-shown";
@@ -8,6 +8,8 @@ import { useAssistantWaitingTotal } from "@/stores/assistant-waiting-store";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
 import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";
+import { useWebBrowserAvailable } from "@/components/web-browser/use-web-browser-available";
+import { openWebBrowser } from "@/components/web-browser/open-web-browser";
 import { useOpenAndroid } from "@/components/android/open-android";
 import { useAndroidAvailable } from "@/components/android/use-android-available";
 import { openSettings } from "@/components/settings/open-settings";
@@ -196,6 +198,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
   const openAndroid = useOpenAndroid();
   const { available: androidAvailable } = useAndroidAvailable();
   const { available: remoteDesktopAvailable } = useRemoteDesktopAvailable();
+  const webBrowserAvailable = useWebBrowserAvailable();
 
   const likelyBugs = useLogsBadgeCount();
   const logsOpen = useWindowStore((s) => Object.values(s.windows).some((w) => w.kind === "logs" && w.state !== "minimized"));
@@ -269,6 +272,9 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
         <FooterUtil icon={FolderTree} label="File Explorer" onClick={() => void openExplorer()} />
         {remoteDesktopAvailable && (
           <FooterUtil icon={MonitorSmartphone} label="Remote Desktop" featureBadge="remote-desktop" onClick={openRemoteDesktop} />
+        )}
+        {webBrowserAvailable && (
+          <FooterUtil icon={Globe} label="Browser" onClick={openWebBrowser} />
         )}
         {androidAvailable && (
           <FooterUtil icon={Smartphone} label="Android" featureBadge="android" onClick={openAndroid} />

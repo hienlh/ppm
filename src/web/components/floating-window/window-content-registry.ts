@@ -27,6 +27,7 @@ export const WINDOW_CONTENT: Record<WindowKind, PreloadableComponent<WindowConte
   logs: lazyWithPreload(() => import("@/components/logs/logs-window-content")),
   schedules: lazyWithPreload(() => import("@/components/schedules/schedules-window-content")),
   "release-notes": lazyWithPreload(() => import("@/components/release-notes/release-notes-window-content")),
+  "web-browser": lazyWithPreload(() => import("@/components/web-browser/web-browser-window-content")),
 };
 
 /** Titlebar text for a window. Falls back to the kind's generic name. */
@@ -42,6 +43,7 @@ export function windowTitle(kind: WindowKind, payload?: Record<string, unknown>)
   if (kind === "logs") return "Logs";
   if (kind === "schedules") return "Schedules";
   if (kind === "release-notes") return "Release notes";
+  if (kind === "web-browser") return "Browser";
   // A detached tab carries its title in the payload; the generic name only shows for a
   // window whose tab has not been resolved yet (restore before the layout is loaded).
   if (kind === "tab-host") return "Tab";

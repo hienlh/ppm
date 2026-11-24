@@ -15,7 +15,6 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { CdpConnection } from "./cdp-connection.ts";
 import { pipeTransport, webSocketTransport } from "./cdp-transports.ts";
@@ -67,13 +66,21 @@ export async function killOrphanChrome(): Promise<void> {
   try { rmSync(webBrowserPaths.pidFile(), { force: true }); } catch {}
 }
 
-async function readDevtoolsPath(profileDir: string, deadline: number): Promise<string> {
+/**
+ * The browser's DevTools WebSocket URL, asked from `/json/version` on the loopback port. Chrome
+ * writes `DevToolsActivePort` only when it picked the port itself (`=0`), and PPM names the port
+ * up front so the egress guard can block it before Chrome starts.
+ */
+async function readDevtoolsUrl(port: number, deadline: number): Promise<string> {
   while (Date.now() < deadline) {
     try {
-      const [port, path] = readFileSync(join(profileDir, "DevToolsActivePort"), "utf8").split(/\r?\n/);
-      if (port && path) return `ws://127.0.0.1:${port}${path}`;
+      const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) });
+      if (res.ok) {
+        const url = ((await res.json()) as { webSocketDebuggerUrl?: string }).webSocketDebuggerUrl;
+        if (url?.startsWith(`ws://127.0.0.1:${port}/`)) return url;
+      }
     } catch {}
-    await Bun.sleep(100);
+    await Bun.sleep(150);
   }
   throw new Error("Chrome did not open its DevTools port");
 }
@@ -81,8 +88,6 @@ async function readDevtoolsPath(profileDir: string, deadline: number): Promise<s
 export async function startChrome(input: StartChromeInput): Promise<RunningChrome> {
   const profileDir = webBrowserPaths.profile();
   mkdirSync(profileDir, { recursive: true });
-  // A stale file from a crashed run would point at a port nobody listens on any more.
-  try { rmSync(join(profileDir, "DevToolsActivePort"), { force: true }); } catch {}
   const args = chromeLaunchArgs({ profileDir, ...input });
   const stdio = input.transport === "pipe"
     ? (["ignore", "ignore", "ignore", "pipe", "pipe"] as const)
@@ -98,7 +103,7 @@ export async function startChrome(input: StartChromeInput): Promise<RunningChrom
   try {
     const transport = input.transport === "pipe"
       ? pipeTransport(child.stdio[3] as Writable, child.stdio[4] as Readable)
-      : await webSocketTransport(await readDevtoolsPath(profileDir, Date.now() + 15_000));
+      : await webSocketTransport(await readDevtoolsUrl(input.devtoolsPort!, Date.now() + 15_000));
     const cdp = new CdpConnection(transport);
     await Promise.race([
       cdp.send("Browser.getVersion"),
