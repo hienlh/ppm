@@ -276,6 +276,22 @@ describe("ScrollAnchorPin", () => {
       expect(s.offset()).toBe(120);
     });
 
+    it("follows a reader whose fling ends at the bottom, though a fling sends no touch event", async () => {
+      const s = followingScene();
+      await readerScrollsUpTo(s, 120);
+      await Bun.sleep(INTENT_WAIT_MS);
+      // The fling carries on after the finger lifted: scroll events only, down to the bottom.
+      s.g.scrollTop += 900;
+      s.scrollEvent();
+      s.follow.at = true; // the follower sees the reader back at the bottom
+      s.g.rowTop += 250;  // and the answer keeps growing
+      s.layout();
+      await Bun.sleep(10);
+      s.layout();
+      expect(s.tookOver).toEqual([]);
+      expect(s.follow.at).toBe(true);
+    });
+
     it("lets the place go when the reader asks to follow (the bottom button)", async () => {
       const s = followingScene();
       await readerScrollsUpTo(s, 120);

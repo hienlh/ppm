@@ -73,6 +73,12 @@ const HOLD_AFTER_SCROLL_MS = 2;
 /** A wheel, touch or scroll key this recent means a scroll is the reader's. */
 const INTENT_MS = 300;
 
+/** How long after the pin moved the offset a scroll at that offset is still the pin's own. */
+const OWN_WRITE_MS = 100;
+
+/** A scroll toward the bottom this recent is what a follower taking over in a layout obeyed. */
+const RECENT_SCROLL_MS = 50;
+
 /** Keys typed into a field are text, not scrolling, even when the field sits inside the container. */
 function isEditable(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -99,6 +105,12 @@ export class ScrollAnchorPin {
   private readingWasOn = false;
   /** When the reader last wheeled, touched, pressed a scroll key or the scrollbar. */
   private lastIntentAt = Number.NEGATIVE_INFINITY;
+  /** When and where this pin last moved the offset to put a place back. */
+  private ownWriteAt = Number.NEGATIVE_INFINITY;
+  private ownWriteTop = 0;
+  /** The offset at the last scroll event, and when the last scroll toward the bottom that was not the pin's own happened. */
+  private lastScrollTop: number;
+  private lastDownScrollAt = Number.NEGATIVE_INFINITY;
 
   constructor(
     private readonly el: HTMLElement,
@@ -108,6 +120,7 @@ export class ScrollAnchorPin {
     private readonly options: ScrollAnchorPinOptions = {},
   ) {
     this.hidden = el.clientHeight === 0;
+    this.lastScrollTop = el.scrollTop;
     this.ro = new ResizeObserver(this.onResize);
     this.ro.observe(el);
     // The content wrapper is what grows when something above the row changes height; the
@@ -191,15 +204,26 @@ export class ScrollAnchorPin {
     return performance.now() - this.lastIntentAt <= INTENT_MS;
   }
 
+  /** The offset is the one this pin just wrote: a scroll it caused, not anybody's request. */
+  private ownWriteShowing(): boolean {
+    return performance.now() - this.ownWriteAt <= OWN_WRITE_MS && Math.abs(this.el.scrollTop - this.ownWriteTop) <= OWN_WRITE_TOLERANCE_PX;
+  }
+
   /**
-   * Whether a place is kept now. A follower that took over while one was kept, with nothing from
-   * the reader to ask for it (the view landed at the bottom because content below got shorter, and
-   * the follower reads either that or the offset fitted afterwards as the reader returning), is
-   * handed back the position first.
+   * Whether a place is kept now. A follower that took over while one was kept is handed back the
+   * position first when that was a layout's doing, not the reader's: in a layout change (`layout`:
+   * content below got shorter, the view landed at the bottom, and the follower read that as the
+   * reader returning), or in the scroll this pin's own restore made. Never for any other scroll: a
+   * fling that carries on after the finger lifts sends no touch event, and a reader returning to
+   * the bottom that way must be followed again.
    */
-  private keepingPlace(): boolean {
+  private keepingPlace(layout: boolean): boolean {
     let on = this.readingOn();
-    if (!on && this.readingWasOn && this.reading && !this.readerJustActed() && this.options.onLayoutTookOver) {
+    // A layout change right after a scroll toward the bottom (a fling landing there, the owner
+    // following on request) is the follower obeying that scroll, not the layout taking over.
+    const scrolledDown = performance.now() - this.lastDownScrollAt <= RECENT_SCROLL_MS;
+    const layoutsDoing = (layout && !scrolledDown) || this.ownWriteShowing();
+    if (!on && layoutsDoing && this.readingWasOn && this.reading && !this.readerJustActed() && this.options.onLayoutTookOver) {
       this.options.onLayoutTookOver();
       on = this.readingOn();
     }
@@ -212,7 +236,7 @@ export class ScrollAnchorPin {
     if (this.target || this.suspended()) return;
     // While the list follows its bottom the follower owns the position; a place kept from before
     // would pull the reader back up the first time it is restored.
-    if (!this.keepingPlace()) { this.reading = null; return; }
+    if (!this.keepingPlace(false)) { this.reading = null; return; }
     // The browser fitting the offset into shorter content is not the reader moving: the place
     // kept stays, so it can be put back once the content is long enough again.
     if (this.reading && this.atEdge() && !this.readerJustActed()) return;
@@ -222,9 +246,11 @@ export class ScrollAnchorPin {
   /** Puts the row being read back where the reader left it after a layout change. */
   private restoreReading(): void {
     if (this.target || !this.reading) return;
-    if (!this.keepingPlace()) { this.reading = null; return; }
+    if (!this.keepingPlace(true)) { this.reading = null; return; }
     // A place no longer drawn at all (a page dropped from the window) leaves the position as it is.
+    const before = this.el.scrollTop;
     restoreReadingAnchor(this.el, this.reading);
+    if (this.el.scrollTop !== before) { this.ownWriteAt = performance.now(); this.ownWriteTop = this.el.scrollTop; }
     // Not fully back (the content is still too short to reach it): keep the place as it was.
     if (!this.atEdge()) this.reading = readingAnchorAt(this.el);
   }
@@ -265,6 +291,9 @@ export class ScrollAnchorPin {
   };
 
   private readonly onScroll = (): void => {
+    const top = this.el.scrollTop;
+    if (top > this.lastScrollTop && !this.ownWriteShowing()) this.lastDownScrollAt = performance.now();
+    this.lastScrollTop = top;
     if (typeof this.options.readingAnchor === "function") {
       // A container that follows its bottom: its follower judges a scroll a moment after the event
       // (it waits 1 ms), and only once it has let go is there a place to keep. Looked at after that,

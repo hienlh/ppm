@@ -359,7 +359,9 @@ export function MessageList({
     /** The container's height at the last scroll event, for a clamp seen before the resize. */
     let heightAtScroll = el.clientHeight;
     let relockUntil = 0;
-    const relock = () => setTimeout(() => scrollToBottom({ animation: "instant" }), RELOCK_AFTER_SCROLL_MS);
+    // Following again on the reader's behalf: the place the pin may have taken from the clamp goes.
+    const follow = () => { livePinRef.current?.follow(); scrollToBottom({ animation: "instant" }); };
+    const relock = () => setTimeout(follow, RELOCK_AFTER_SCROLL_MS);
     const onScroll = () => {
       const h = el.clientHeight;
       const grewFirst = heightAtScroll > 0 && h > heightAtScroll && followIntentRef.current;
@@ -384,7 +386,7 @@ export function MessageList({
       if (grew && heightAtScroll < h) relockUntil = performance.now() + RELOCK_WINDOW_MS;
       heightAtScroll = h;
       if (grew) relock();
-      else scrollToBottom({ animation: "instant" });
+      else follow();
     });
     el.addEventListener("scroll", onScroll, { passive: true });
     ro.observe(el);
