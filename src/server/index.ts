@@ -819,12 +819,9 @@ export async function startServer(options: {
       // The PID comes back through a file: a pipe would be inherited by the supervisor and keep
       // this command waiting for as long as PPM runs (`windows-detached-start.ts`).
       const { startDetachedOnWindows } = await import("../services/windows-detached-start.ts");
-      const started = startDetachedOnWindows({
-        exe: process.execPath,
-        args: winArgs,
-        stdoutPath: logFile.replace(/\.log$/, ".out.log"),
-        stderrPath: logFile.replace(/\.log$/, ".err.log"),
-      });
+      const outLog = logFile.replace(/\.log$/, ".out.log");
+      const errLog = logFile.replace(/\.log$/, ".err.log");
+      const started = startDetachedOnWindows({ exe: process.execPath, args: winArgs, stdoutPath: outLog, stderrPath: errLog });
       if ("error" in started) {
         console.error("  ✗  Failed to start supervisor on Windows.");
         console.error(`     ${started.error}`);

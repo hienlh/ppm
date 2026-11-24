@@ -10,23 +10,28 @@ import { resolve } from "node:path";
  * ppm.log it erased every line since the last rotation on each start — a day
  * and a half of log, including the window a chat outage happened in.
  *
- * Both call sites build the command inline (one inside a generated worker
- * script), so the guard reads the source for the redirect targets.
+ * `ppm start` hands its targets to `startDetachedOnWindows` (`stdoutPath`), the restart worker
+ * builds the command inline in a generated script, so the guard reads the source for the
+ * redirect targets in whichever form the call site uses.
  */
-const SOURCES = [
-  "src/server/index.ts",
-  "src/cli/commands/restart.ts",
+const SOURCES: { rel: string; target: RegExp }[] = [
+  { rel: "src/server/index.ts", target: /stdoutPath: (\w+)/g },
+  { rel: "src/cli/commands/restart.ts", target: /-RedirectStandardOutput '["\s+]*\$?\{?(\w+)/g },
 ];
 
 describe("Windows detached launch never redirects into ppm.log", () => {
-  for (const rel of SOURCES) {
+  it("the shared helper passes the caller's stdout target to -RedirectStandardOutput", () => {
+    const src = readFileSync(resolve(import.meta.dir, "../../..", "src/services/windows-detached-start.ts"), "utf-8");
+    expect(src).toContain("-RedirectStandardOutput ${psQuote(opts.stdoutPath)}");
+  });
+
+  for (const { rel, target } of SOURCES) {
     it(`${rel} redirects stdout away from ppm.log`, () => {
       const src = readFileSync(resolve(import.meta.dir, "../../..", rel), "utf-8");
-      expect(src).toContain("-RedirectStandardOutput");
 
-      // Every variable handed to -RedirectStandardOutput must be derived from
+      // Every variable handed over as the stdout target must be derived from
       // an .out.log path, never from ppm.log itself.
-      const targets = [...src.matchAll(/-RedirectStandardOutput '["\s+]*\$?\{?(\w+)/g)].map((m) => m[1]);
+      const targets = [...src.matchAll(target)].map((m) => m[1]);
       expect(targets.length).toBeGreaterThan(0);
       for (const name of targets) {
         const decl = src.match(new RegExp(`const ${name} = ([^\\n]+)`));
