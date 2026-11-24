@@ -100,6 +100,12 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `GET    /api/antigravity-accounts/login/:id/status`
 - `DELETE /api/antigravity-accounts/login/:id`
 
+## /api/approval-rules
+
+- `GET    /api/approval-rules`
+- `PUT    /api/approval-rules/enabled`
+- `DELETE /api/approval-rules/:id`
+
 ## /api/assistant
 
 - `GET    /api/assistant/settings`
@@ -673,6 +679,9 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `DELETE /api/schedules/:id{[0-9]+}`
 - `POST   /api/schedules/:id{[0-9]+}/run-now`
 - `GET    /api/schedules/:id{[0-9]+}/runs`
+- `GET    /api/schedules/owners`
+- `POST   /api/schedules/owners`
+- `PATCH  /api/schedules/:id{[0-9]+}/owner`
 - `GET    /api/schedules/:id{[0-9]+}/logs`
 - `GET    /api/schedules/:id{[0-9]+}/state`
 - `PUT    /api/schedules/:id{[0-9]+}/state`
@@ -902,4 +911,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.32 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.33 -->

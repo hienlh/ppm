@@ -2008,6 +2008,13 @@ Replace a script schedule's state with a JSON file; the schedule must be off
 
 **Usage:** `ppm schedule set-state [options] <id> <file>`
 
+### `ppm schedule owners`
+
+Link schedules with no owning chat to the chat that made them, read from the session trace (through the running PPM)
+
+**Options:**
+- `--dry-run` — Only list what would be linked
+
 ## `ppm settings`
 
 PPM's file filters and how long it keeps its logs
