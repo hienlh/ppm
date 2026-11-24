@@ -134,3 +134,13 @@ it("adds no warning to ordinary text, tabs and newlines included", async () => {
   expect(view.container.querySelector("pre")!.textContent).toBe(sql);
   expect(view.container.textContent).not.toContain("text-direction characters");
 });
+
+it("draws Allow and Deny at the button standard: 28px, 26px on a phone, no 44px touch size", async () => {
+  view = await mount(<ApprovalCard approval={{ requestId: "r9", tool: "Bash", input: { command: "ls" } }} onRespond={() => {}} />);
+  const buttons = [...view.container.querySelectorAll("button")].filter((b) => b.textContent === "Allow" || b.textContent === "Deny");
+  expect(buttons.length).toBe(2);
+  for (const b of buttons) {
+    expect(b.className.split(" ")).toEqual(expect.arrayContaining(["h-7", "max-md:h-[26px]", "rounded-full"]));
+    expect(b.className).not.toMatch(/min-h-11|\bh-11\b/);
+  }
+});

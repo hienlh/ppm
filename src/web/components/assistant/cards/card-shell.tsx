@@ -15,6 +15,7 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { ChevronDown } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { TEXT_BUTTON } from "@/lib/control-size";
 import { CHAT_MESSAGE_TEXT } from "@/lib/chat-message-text";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardMenu } from "./card-menu";
@@ -87,8 +88,11 @@ export function CardButton({ children, onClick, variant = "default", disabled, s
       onClick={onClick}
       title={title}
       className={cn(
-        "inline-flex h-[26px] w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-[13px] font-medium transition-colors disabled:opacity-50 md:h-8 md:w-auto md:rounded-md md:text-xs",
-        secondary && "text-[13px] text-text-secondary md:px-2",
+        // The app's button standard (docs/design-guidelines.md rule 3): 28px, 26px on a phone, where
+        // a card's buttons share the row's width.
+        "inline-flex w-full items-center justify-center whitespace-nowrap font-medium transition-colors disabled:opacity-50 md:w-auto",
+        TEXT_BUTTON,
+        secondary && "text-text-secondary",
         variant === "primary" && "bg-primary text-primary-foreground shadow-sm can-hover:hover:bg-primary/90",
         variant === "default" && "border border-border bg-surface text-text-primary can-hover:hover:bg-surface-elevated",
         variant === "danger" && "border border-error/40 text-error can-hover:hover:bg-error/10",

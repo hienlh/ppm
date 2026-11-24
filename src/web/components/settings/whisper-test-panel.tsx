@@ -10,6 +10,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic, Play, Square } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
+import { TEXT_BUTTON } from "@/lib/control-size";
+import { cn } from "@/lib/utils";
 import { useVoiceMessageRecorder } from "@/hooks/use-voice-message-recorder";
 import { recordingToWav } from "@/lib/voice-wav";
 import {
@@ -101,19 +103,21 @@ export function WhisperTestPanel({ status }: { status: SpeechStatus }) {
         </p>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-2">
+      {/* Buttons at the app's standard (design-guidelines rule 3): 28px, 26px on a phone, sized by
+          their text — no taller variant for touch. */}
+      <div className="flex flex-wrap gap-2">
         {micOk && (recorder.recording ? (
-          <Button onClick={recorder.stop} className="min-h-11 sm:min-h-9 flex-1 gap-2 cursor-pointer">
-            <Square className="size-4" />
+          <Button onClick={recorder.stop} className={cn(TEXT_BUTTON, "cursor-pointer")}>
+            <Square className="size-3.5" />
             Stop · {elapsed}s / {TEST_MAX_SECONDS}s
           </Button>
         ) : (
           <Button
             onClick={() => void recorder.start()}
             disabled={busy !== null}
-            className="min-h-11 sm:min-h-9 flex-1 gap-2 cursor-pointer"
+            className={cn(TEXT_BUTTON, "cursor-pointer")}
           >
-            <Mic className="size-4" />
+            <Mic className="size-3.5" />
             Record a test
           </Button>
         ))}
@@ -121,9 +125,9 @@ export function WhisperTestPanel({ status }: { status: SpeechStatus }) {
           variant="outline"
           onClick={() => void runSample()}
           disabled={busy !== null || recorder.recording}
-          className="min-h-11 sm:min-h-9 flex-1 gap-2 cursor-pointer"
+          className={cn(TEXT_BUTTON, "cursor-pointer")}
         >
-          <Play className="size-4" />
+          <Play className="size-3.5" />
           Use the sample (11 s, English)
         </Button>
       </div>
@@ -155,10 +159,9 @@ export function WhisperTestPanel({ status }: { status: SpeechStatus }) {
           {gpuRun && !cpu && (
             <Button
               variant="outline"
-              size="sm"
               onClick={() => void compare()}
               disabled={busy !== null}
-              className="min-h-11 sm:min-h-8 gap-2 cursor-pointer"
+              className={cn(TEXT_BUTTON, "cursor-pointer")}
             >
               {busy === "comparing" && <Loader2 className="size-3.5 animate-spin" />}
               {busy === "comparing" ? "Running on the CPU…" : "Compare with the CPU"}

@@ -15,7 +15,7 @@ import {
   sessionCollabAnswersFor, type SessionCollabAnswer, type SessionCollabApprovalInput,
 } from "../../../shared/session-collab";
 import { ProviderBadge } from "./provider-selector";
-import { SummaryBody } from "./approval-card";
+import { APPROVAL_BUTTON, SummaryBody } from "./approval-card";
 import { RememberApprovalControl } from "./remember-approval-control";
 import type { CardRememberOffer } from "../../../shared/remembered-approvals";
 
@@ -106,7 +106,7 @@ export function CollabApprovalCard({ requestId, input, remember }: {
             disabled={busy}
             onClick={() => void answer(choice)}
             className={cn(
-              "h-11 md:h-8 px-4 rounded text-xs font-medium transition-colors disabled:opacity-50",
+              APPROVAL_BUTTON,
               choice === "deny"
                 ? "border border-border text-text-primary can-hover:hover:bg-panel-2"
                 : choice === "allow_once"

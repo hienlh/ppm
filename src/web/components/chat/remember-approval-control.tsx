@@ -10,6 +10,7 @@
  */
 import { Lightbulb, ShieldCheck } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { TEXT_BUTTON } from "@/lib/control-size";
 import { REMEMBER_SUGGEST_AFTER, type CardRememberOffer } from "../../../shared/remembered-approvals";
 
 export function RememberApprovalControl({ offer, disabled, onRemember, className }: {
@@ -35,7 +36,8 @@ export function RememberApprovalControl({ offer, disabled, onRemember, className
           disabled={disabled}
           onClick={onRemember}
           className={cn(
-            "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 self-start whitespace-nowrap rounded-full px-2.5 text-[11.5px] font-medium transition-colors disabled:opacity-50 max-md:h-[26px] max-md:px-[5px] [&_svg]:size-3.5",
+            "inline-flex shrink-0 items-center justify-center self-start whitespace-nowrap font-medium transition-colors disabled:opacity-50 [&_svg]:size-3.5",
+            TEXT_BUTTON,
             offer.suggest ? "bg-primary text-white can-hover:hover:bg-primary/80" : "border border-success/60 text-success can-hover:hover:bg-success/10",
           )}
         >
