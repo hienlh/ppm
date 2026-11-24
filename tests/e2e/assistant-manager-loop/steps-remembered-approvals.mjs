@@ -15,6 +15,16 @@ const QUEUED_TITLE = "Debug the pension import";
 
 const rules = async (k) => (await k.fx.api("/api/approval-rules")).data;
 
+/**
+ * A button's drawn height: the chat footer's chip size for a button with text (28px desktop, 26px
+ * phone) and its icon-button size (24 / 22px), design guidelines, Mobile-First rule 3.
+ */
+async function assertHeight(locator, px, what) {
+  const box = await locator.boundingBox();
+  assert.ok(box, `${what} is drawn`);
+  assert.equal(Math.round(box.height), px, `${what} is ${px}px tall`);
+}
+
 /** Opens a chat of project alpha by its id (its name changes once its first message names it). */
 async function openChat(k, sessionId) {
   await k.page.goto(`${k.web}/project/alpha/chat/claude/${sessionId}`);
@@ -56,11 +66,13 @@ export async function step13(k, s) {
   await overdue.locator("[data-card-waiting-since]").waitFor({ timeout: 15000 });
   await k.body().locator("[data-card-queued]").first().waitFor({ timeout: 15000 });
   await overdue.scrollIntoViewIfNeeded();
+  await assertHeight(overdue.getByRole("button", { name: "Allow & remember" }), 28, "Allow & remember on a desktop");
   await k.shot("18-waiting-queued-overdue-1440");
   await k.page.setViewportSize({ width: 390, height: 844 });
   await k.page.waitForTimeout(600);
   const onPhone = k.page.locator(`[data-assistant-card="approval"]:visible`, { hasText: "git status" }).last();
   await onPhone.scrollIntoViewIfNeeded();
+  await assertHeight(onPhone.getByRole("button", { name: "Allow & remember" }), 26, "Allow & remember on a phone");
   await k.shot("19-waiting-queued-overdue-390");
   await onPhone.getByRole("button", { name: "Allow & remember" }).click();
   await k.page.setViewportSize({ width: 1440, height: 900 });
@@ -116,11 +128,13 @@ export async function step14(k, s) {
   await offer.waitFor({ timeout: 30000 });
   assert.match(await offer.innerText(), /You have allowed this 3 times/);
   await offer.scrollIntoViewIfNeeded();
+  await assertHeight(offer.getByRole("button", { name: "Allow & remember" }), 28, "Allow & remember in the chat on a desktop");
   await k.shot("21-chat-card-suggest-1440");
   await k.page.setViewportSize({ width: 390, height: 844 });
   await k.page.waitForTimeout(600);
   const phoneOffer = k.page.locator('[data-remember-offer="suggest"]:visible').last();
   await phoneOffer.scrollIntoViewIfNeeded();
+  await assertHeight(phoneOffer.getByRole("button", { name: "Allow & remember" }), 26, "Allow & remember in the chat on a phone");
   await k.shot("22-chat-card-suggest-390");
   await phoneOffer.getByRole("button", { name: "Allow & remember" }).click();
   await k.page.setViewportSize({ width: 1440, height: 900 });
@@ -134,11 +148,13 @@ export async function step14(k, s) {
   const pane = k.page.locator('[data-testid="remembered-approvals-section"]:visible').first();
   await pane.waitFor({ timeout: 30000 });
   await pane.locator(`[data-rule-id="${made.id}"]`).waitFor({ timeout: 15000 });
+  await assertHeight(pane.locator(`[data-rule-id="${made.id}"]`).getByRole("button", { name: /Remove/ }), 24, "a rule's Remove on a desktop");
   await k.shot("23-settings-approvals-1440");
   // A phone opens Settings as a tab of its own, not a window: opened again at that width.
   await k.page.setViewportSize({ width: 390, height: 844 });
   await k.page.goto(`${k.web}/project/alpha?openSettings=approvals`);
   await k.page.locator(`[data-testid="remembered-approvals-section"]:visible [data-rule-id="${made.id}"]`).waitFor({ timeout: 30000 });
+  await assertHeight(k.page.locator(`[data-rule-id="${made.id}"]:visible`).getByRole("button", { name: /Remove/ }), 22, "a rule's Remove on a phone");
   await k.shot("24-settings-approvals-390");
   await k.page.setViewportSize({ width: 1440, height: 900 });
   await k.page.locator(`[data-rule-id="${made.id}"]:visible`).getByRole("button", { name: /Remove/ }).click();

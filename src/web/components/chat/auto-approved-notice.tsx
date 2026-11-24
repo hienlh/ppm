@@ -16,8 +16,7 @@ export function AutoApprovedNotice({ event }: { event: AutoApprovedEvent }) {
         <button
           type="button"
           onClick={() => openSettings("approvals")}
-          // A 44px target on touch without stretching the line it sits in.
-          className="whitespace-nowrap font-medium text-primary max-md:-my-3.5 max-md:py-3.5"
+          className="whitespace-nowrap font-medium text-primary"
         >
           Review rules
         </button>

@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
 import { ShieldCheck, Trash2 } from "@/lib/icons";
-import { IconButton, SectionHeader, SwitchRow } from "./settings-rows";
+import { SectionHeader, SwitchRow } from "./settings-rows";
 import {
   REMEMBER_SUGGEST_AFTER, REMEMBERED_APPROVALS_CHANGED_EVENT, type RememberedApprovalRule, type RememberedApprovalsState,
 } from "../../../shared/remembered-approvals";
@@ -97,9 +97,17 @@ export function RememberedApprovalsSection() {
                     Remembered {VIA[rule.createdVia] ?? ""} {dayTime(rule.createdAt)} · {ruleUseLine(rule)}
                   </p>
                 </div>
-                <IconButton label={`Remove “${rule.label}”`} danger disabled={busy} onClick={() => void run(() => api.del(`/api/approval-rules/${rule.id}`))}>
-                  <Trash2 className="size-4" />
-                </IconButton>
+                {/* An icon button: 24px on desktop, 22px on a phone (design guidelines, Mobile-First rule 3). */}
+                <button
+                  type="button"
+                  aria-label={`Remove “${rule.label}”`}
+                  title={`Remove “${rule.label}”`}
+                  disabled={busy}
+                  onClick={() => void run(() => api.del(`/api/approval-rules/${rule.id}`))}
+                  className="inline-flex h-6 min-w-[26px] shrink-0 items-center justify-center rounded-full text-error transition-colors disabled:opacity-50 can-hover:hover:bg-surface-hover max-md:h-[22px] max-md:min-w-[22px] [&_svg]:size-3.5"
+                >
+                  <Trash2 />
+                </button>
               </li>
             ))}
           </ul>

@@ -4,6 +4,9 @@
  * worked out by the server and is said on the button's line, so the user knows exactly what they
  * agree to. After the user allowed the same kind by hand enough times, the card suggests it — and
  * still remembers nothing until it is pressed.
+ *
+ * The button is a button with text, so it takes the chat footer's chip size (design guidelines,
+ * Mobile-First rule 3): 28px on desktop, 26px on a phone, with no taller variant for touch.
  */
 import { Lightbulb, ShieldCheck } from "@/lib/icons";
 import { cn } from "@/lib/utils";
@@ -32,11 +35,11 @@ export function RememberApprovalControl({ offer, disabled, onRemember, className
           disabled={disabled}
           onClick={onRemember}
           className={cn(
-            "inline-flex h-11 shrink-0 items-center justify-center gap-1.5 rounded px-3 text-xs font-medium transition-colors disabled:opacity-50 md:h-8",
+            "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 self-start whitespace-nowrap rounded-full px-2.5 text-[11.5px] font-medium transition-colors disabled:opacity-50 max-md:h-[26px] max-md:px-[5px] [&_svg]:size-3.5",
             offer.suggest ? "bg-primary text-white can-hover:hover:bg-primary/80" : "border border-success/60 text-success can-hover:hover:bg-success/10",
           )}
         >
-          <ShieldCheck className="size-3.5" />Allow &amp; remember
+          <ShieldCheck />Allow &amp; remember
         </button>
         <p className="min-w-0 break-words text-xs text-text-secondary">
           Next time PPM approves this by itself, in this project: <b className="font-medium text-text-primary">{offer.label}</b>
