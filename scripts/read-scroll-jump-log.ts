@@ -11,8 +11,10 @@
  *   bun scripts/read-scroll-jump-log.ts --db <path>     # another trace file (default: $PPM_HOME or ~/.ppm)
  *
  * A move that ends at the bottom (`distFromBottom` after it under 80 px) is the browser fitting the
- * offset to content that got shorter while the view followed the bottom: nothing the reader sees
- * jump. Those are hidden unless `--all` is given; the rest are the jumps that were reported.
+ * offset to content that got shorter while the view followed the bottom, and a move written by the
+ * reading anchor (`restoreRow` in its stack) is the reader's place being put back after content
+ * above it changed: neither is anything the reader sees jump. Both are hidden unless `--all` is
+ * given; the rest are the jumps that were reported.
  */
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
@@ -57,8 +59,10 @@ function parse(row: { ts: number; ref_id: string | null; payload_json: string })
 
 const parsed = rows.map(parse);
 const leftUp = (p: Parsed) => (p.record?.distFromBottom?.[1] ?? Infinity) > 80;
-const shown = flag("--all") ? parsed : parsed.filter((p) => !p.record || leftUp(p));
-console.error(`${rows.length} record(s) in the last ${days} day(s) from ${dbPath}; ${parsed.filter(leftUp).length} left the view away from the bottom; showing ${shown.length}.`);
+/** The reading anchor putting the reader's place back after content above it changed: nothing seen to move. */
+const keptPlace = (p: Parsed) => (p.record?.write?.stack ?? []).some((f: string) => /restoreRow|restoreReading/.test(f));
+const shown = flag("--all") ? parsed : parsed.filter((p) => !p.record || (leftUp(p) && !keptPlace(p)));
+console.error(`${rows.length} record(s) in the last ${days} day(s) from ${dbPath}; ${parsed.filter((p) => leftUp(p) && !keptPlace(p)).length} left the view away from the bottom unasked; ${parsed.filter(keptPlace).length} were the reading anchor keeping the place; showing ${shown.length}.`);
 
 for (const p of shown) {
   if (flag("--json")) { console.log(JSON.stringify({ ts: p.ts, refId: p.refId, ...(p.record ?? { unreadable: p.raw }) })); continue; }

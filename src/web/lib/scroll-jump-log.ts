@@ -22,8 +22,12 @@ export const MIN_DROP_PX = 40;
 export const INTENT_WINDOW_MS = 300;
 /** Scroll events this close together are one fling: the first being the reader's makes all of them. */
 export const FLING_GAP_MS = 50;
-/** A write to the offset this close before the move is taken to be what made it. */
-export const WRITE_WINDOW_MS = 50;
+/**
+ * A write to the offset this close before the move is taken to be what made it. The scroll event a
+ * write causes comes with the next frame, which a busy main thread (a long render) delays well
+ * past one frame's length.
+ */
+export const WRITE_WINDOW_MS = 300;
 /** Records per minute per page, so a tab stuck in a loop costs a counter and not the trace. */
 export const MAX_RECORDS_PER_MINUTE = 20;
 /** Frames of a stack kept: enough to name the caller, short enough to stay under one entry. */

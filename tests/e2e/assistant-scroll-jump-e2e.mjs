@@ -87,9 +87,13 @@ async function startSampling(page, prompt) {
           items: el.querySelectorAll("[data-timeline-item]").length,
         });
       }
-      requestAnimationFrame(tick);
+      next();
     };
-    requestAnimationFrame(tick);
+    // Measured after the frame is painted (a task queued from the frame's callback), not inside
+    // it: reading layout from requestAnimationFrame forces a layout before the ResizeObserver
+    // callbacks run, and records a state the reading anchor corrects before anything is drawn.
+    const next = () => requestAnimationFrame(() => setTimeout(tick, 0));
+    next();
   }, { scroller: SCROLLER, prompt });
 }
 const mark = (page, name) => page.evaluate((name) => { window.__assistantScroll.marks[name] = performance.now(); }, name);
