@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.26.34] - 2026-11-25
+
+### Added
+
+- **A web browser inside PPM (BETA)**: PPM runs the host's Chrome or Edge with a profile of its own and shows it in a window (a tab on a phone), with sound, dialogs, uploads, downloads and clipboard; off until you choose, switches in Settings → Web Browser.
+- **AI chats can drive that browser** through PPM tools after you allow each chat once; you watch it in the Browser window and can take it back at any time.
+
+### Security
+
+- **The browser's traffic goes through PPM's own proxy**, which refuses DNS rebinding and PPM's own addresses; reaching this machine and your network is a switch.
+
 ## [0.26.33] - 2026-11-25
 
 ### Added
