@@ -7,6 +7,7 @@ import type { FeatureIntroStates } from "../shared/feature-intros.ts";
 import { DEFAULT_TRANSCRIPT_FIX, type VoiceMessageConfig } from "../shared/voice-message.ts";
 import type { SessionCollabSettings } from "../shared/session-collab-settings.ts";
 import { isValidLeftoverIdleMinutes } from "../shared/leftover-processes.ts";
+import { DEFAULT_WEB_BROWSER_SETTINGS, type WebBrowserSettings } from "../shared/web-browser-settings.ts";
 
 export interface TelegramConfig {
   bot_token: string;
@@ -102,6 +103,12 @@ export interface PpmConfig {
    * `readVoiceSettings` (`services/voice-message/voice-settings.ts`), which validates the shape.
    */
   voice_message?: VoiceMessageConfig;
+  /**
+   * PPM's own web browser (a Chrome on this host, streamed into a window or a phone tab). Read
+   * through `parseWebBrowserSettings` (`shared/web-browser-settings.ts`); `enabled` stays absent
+   * until the user decides, which is how the tour tells "never asked" from "turned off".
+   */
+  web_browser?: WebBrowserSettings;
 }
 
 /**
@@ -319,6 +326,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
     review_before_send: true, transcript_fix: { ...DEFAULT_TRANSCRIPT_FIX }, learn_auto_vocabulary: true, learn_from_cleanup: true, learn_from_chat: true,
     weekly_summary: true, vietnamese_fixes: true, words: [], projects: {},
   },
+  web_browser: { ...DEFAULT_WEB_BROWSER_SETTINGS },
 };
 
 const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;
