@@ -92,6 +92,7 @@ describe("remoteDesktopReadiness", () => {
     const readyHost = {
       session: () => ({ sessionId: 1, state: "active" as const, isConsole: true }),
       displays: () => [{ id: "\\\\.\\DISPLAY1", label: "Display 1", primary: true, x: 0, y: 0, width: 1920, height: 1080, captureIndex: 0 }],
+      helper: async () => ({ usable: false }),
     };
     const r = await remoteDesktopReadiness("win32", null, readyHost);
     expect(r.platformSupported).toBe(true);

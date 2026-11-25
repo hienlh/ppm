@@ -16,7 +16,16 @@ export type RequirementAction =
   | { kind: "terminal"; label: string; command: string }
   | { kind: "install"; label: string }
   | { kind: "link"; label: string; url: string }
-  | { kind: "host"; label: string; action: "request" | "open-settings" };
+  | { kind: "host"; label: string; action: HostAction };
+
+/** Mirrors the server's `HostAction`: `reattach` runs the Windows helper's fixed task. */
+export type HostAction = "request" | "open-settings" | "reattach";
+
+/** What a host action reports back; `message` only for actions with a real outcome to tell. */
+export interface HostActionResult {
+  ok: boolean;
+  message?: string;
+}
 
 export interface RemoteDesktopRequirement {
   id: string;
@@ -131,7 +140,7 @@ export function useRemoteDesktopReadiness(poll: boolean): {
   /** 404 (feature flag off) or network failure — treat as "not available". */
   failed: boolean;
   refresh: () => void;
-  runHostAction: (id: string, action: "request" | "open-settings") => Promise<void>;
+  runHostAction: (id: string, action: HostAction) => Promise<HostActionResult | null>;
 } {
   const minimalMode = useSettingsStore((s) => s.minimalMode);
   const [caps, setCaps] = useState<RemoteDesktopCapabilities | null>(null);
@@ -158,9 +167,16 @@ export function useRemoteDesktopReadiness(poll: boolean): {
     return () => clearInterval(timer);
   }, [poll, ready, refresh, minimalMode]);
 
-  const runHostAction = useCallback(async (id: string, action: "request" | "open-settings") => {
-    try { await api.post(`/api/remote-desktop/requirements/${encodeURIComponent(id)}/${action}`); } catch { /* panel shows state on next poll */ }
+  const runHostAction = useCallback(async (id: string, action: HostAction): Promise<HostActionResult | null> => {
+    let result: HostActionResult | null = null;
+    try {
+      result = await api.post<HostActionResult>(`/api/remote-desktop/requirements/${encodeURIComponent(id)}/${action}`);
+    } catch (e) {
+      // The panel also shows the state on the next poll; the message says why this one failed.
+      result = { ok: false, message: e instanceof Error ? e.message : String(e) };
+    }
     refresh();
+    return result;
   }, [refresh]);
 
   return { caps, failed, refresh, runHostAction };

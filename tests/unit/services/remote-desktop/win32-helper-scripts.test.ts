@@ -1,0 +1,179 @@
+import { describe, expect, it } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  encodePowerShell, isAscii, isUserSid, parseWhoamiUserCsv, psQuote,
+} from "../../../../src/services/remote-desktop/win32-helper/powershell-text.ts";
+import {
+  buildHelperScript, REATTACH_ACTION, WTS_SESSION_LOOKUP,
+} from "../../../../src/services/remote-desktop/win32-helper/helper-script.ts";
+import { readWindowsSession } from "../../../../src/services/remote-desktop/remote-desktop-win32-session.ts";
+import { whoamiExe } from "../../../../src/services/remote-desktop/win32-helper/helper-paths.ts";
+import {
+  buildBootstrap, buildElevationLauncher, buildInstallScript, buildUninstallScript,
+} from "../../../../src/services/remote-desktop/win32-helper/install-script.ts";
+
+const SID = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+const HASH = "a".repeat(64);
+
+describe("PowerShell text helpers", () => {
+  it("doubles every kind of single quote PowerShell honours", () => {
+    expect(psQuote("C:\\Users\\O'Brien")).toBe("'C:\\Users\\O''Brien'");
+    expect(psQuote("O\u2019Brien")).toBe("'O\u2019\u2019Brien'");
+  });
+
+  it("accepts only interactive account SIDs", () => {
+    expect(isUserSid(SID)).toBe(true);
+    expect(isUserSid("S-1-5-18")).toBe(false);
+    expect(isUserSid("S-1-5-32-544")).toBe(false);
+    expect(isUserSid(`${SID}'; Remove-Item C:\\ -Recurse; '`)).toBe(false);
+  });
+
+  it("reads the SID from whoami's header-less CSV, whatever the display language", () => {
+    expect(parseWhoamiUserCsv(`"hien-pc\\pc","${SID}"\r\n`)).toBe(SID);
+    expect(parseWhoamiUserCsv('"nt authority\\system","S-1-5-18"')).toBeNull();
+    expect(parseWhoamiUserCsv("")).toBeNull();
+  });
+});
+
+describe("helper.ps1", () => {
+  const script = buildHelperScript(SID, [REATTACH_ACTION]);
+
+  it("is ASCII, so PowerShell 5.1 reads exactly the bytes that were hashed", () => {
+    expect(isAscii(script)).toBe(true);
+  });
+
+  it("takes one parameter restricted to the known actions, and nothing else", () => {
+    expect(script).toContain("[ValidateSet('Reattach')]");
+    expect(script).not.toMatch(/\$args\b/);
+    expect(script).not.toMatch(/\$input\b/i);
+    expect((script.match(/param\(/g) ?? []).length).toBe(1);
+  });
+
+  it("acts only on the user whose SID was written in, found through WTS rather than quser", () => {
+    expect(script).toContain(`$UserSid = '${SID}'`);
+    expect(script).toContain("WTSEnumerateSessionsW");
+    expect(script).not.toMatch(/\bquser\b|\bqwinsta\b|query session/i);
+    expect(script).toContain("if ($sid -eq $UserSid)");
+  });
+
+  it("moves a session only when exactly one disconnected session of that user exists", () => {
+    expect(script).toContain("$_.State -eq 4");
+    expect(script).toContain("$disconnected.Count -gt 1");
+    expect(script).toContain("& $tscon $id /dest:console");
+  });
+
+  it("writes only inside its own state folder and never through a reparse point", () => {
+    const writes = script.match(/WriteAllText\(\$\w+/g) ?? [];
+    expect(writes).toEqual(["WriteAllText($tmp"]);
+    expect(script).toContain("Assert-NotReparse $target");
+    expect(script).toContain("$StateDir = Join-Path $PSScriptRoot 'state'");
+  });
+
+  it("refuses to be built for anything but a user SID", () => {
+    expect(() => buildHelperScript("S-1-5-18", [REATTACH_ACTION])).toThrow();
+  });
+});
+
+describe("install.ps1 / uninstall.ps1", () => {
+  const install = buildInstallScript({ userSid: SID, actions: ["Reattach"] });
+
+  it("gives the task to SYSTEM and lets only the PPM user read and start it", () => {
+    expect(install).toContain(`'D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;${SID})'`);
+    expect(install).toContain("-UserId 'S-1-5-18'");
+    expect(install).toContain("-MultipleInstances IgnoreNew");
+  });
+
+  it("runs PowerShell by absolute path with a fixed command line", () => {
+    expect(install).toContain("Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'");
+    expect(install).toContain("'\" -Action ' + $action");
+    expect(install).toContain("foreach ($action in @('Reattach'))");
+  });
+
+  it("locks the folder down by group SID, never by a translated group name", () => {
+    expect(install).toContain("/inheritance:r");
+    expect(install).toContain("'*S-1-5-32-545:(OI)(CI)RX'");
+    expect(install).not.toMatch(/\b(Administrators|Users|SYSTEM):/);
+  });
+
+  it("writes the helper from the verified bytes, not from the staged file", () => {
+    expect(install).toContain("[IO.File]::WriteAllBytes($HelperPath, $HelperBytes)");
+  });
+
+  it("uninstall removes every task and the folder", () => {
+    const un = buildUninstallScript({ actions: ["Reattach"] });
+    expect(un).toContain("Unregister-ScheduledTask -TaskName $action -TaskPath $TaskPath");
+    expect(un).toContain("Remove-Item -LiteralPath $InstallDir -Recurse -Force");
+    expect(isAscii(un) && isAscii(install)).toBe(true);
+  });
+});
+
+describe("bootstrap and elevation launcher", () => {
+  const staged = { variable: "HelperBytes", path: "C:\\Users\\O'Brien\\.ppm\\remote-desktop-helper\\helper.ps1", sha256: HASH };
+  const script = { variable: "ScriptBytes", path: "C:\\x\\install.ps1", sha256: "b".repeat(64) };
+
+  it("verifies each payload's hash on the bytes it then uses", () => {
+    const boot = buildBootstrap([staged], script);
+    expect(boot).toContain(`$HelperBytes = Read-Verified 'C:\\Users\\O''Brien\\.ppm\\remote-desktop-helper\\helper.ps1' '${HASH}'`);
+    expect(boot).toContain("GetString($ScriptBytes)");
+    expect(boot).not.toMatch(/-File\b|Get-Content/);
+  });
+
+  it("rejects a malformed hash or variable instead of building a script around it", () => {
+    expect(() => buildBootstrap([{ ...staged, sha256: "zz" }], script)).toThrow();
+    expect(() => buildBootstrap([{ ...staged, variable: "x; rm" }], script)).toThrow();
+  });
+
+  it("fits the Windows command line with a full-size installer", () => {
+    const boot = buildBootstrap([staged, { ...staged, variable: "VddZipBytes" }], script);
+    const launcher = buildElevationLauncher("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", encodePowerShell(boot));
+    expect(encodePowerShell(launcher).length).toBeLessThan(30_000);
+    expect(() => buildElevationLauncher("x", "not base64!")).toThrow();
+  });
+});
+
+/** Parse every generated script with PowerShell's own parser (read-only: nothing runs). Only on
+ *  Windows, where PowerShell 5.1 — the version the tasks use — is present. */
+describe.if(process.platform === "win32")("generated scripts parse in Windows PowerShell", () => {
+  it("has no syntax errors", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ppm-helper-parse-"));
+    const files = {
+      "helper.ps1": buildHelperScript(SID, [REATTACH_ACTION]),
+      "install.ps1": buildInstallScript({ userSid: SID, actions: ["Reattach"] }),
+      "uninstall.ps1": buildUninstallScript({ actions: ["Reattach"] }),
+      "bootstrap.ps1": buildBootstrap([{ variable: "HelperBytes", path: "C:\\a", sha256: HASH }], { variable: "ScriptBytes", path: "C:\\b", sha256: HASH }),
+    };
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+    const check = `$bad = 0; foreach ($f in Get-ChildItem -LiteralPath ${psQuote(dir)} -Filter *.ps1) {
+  $tokens = $null; $errors = $null
+  [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errors)
+  foreach ($e in $errors) { $bad++; Write-Output ($f.Name + ': ' + $e.Message) } }
+exit $bad`;
+    const proc = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(check)], { stdout: "pipe", stderr: "pipe" });
+    const out = await new Response(proc.stdout).text();
+    expect(out.trim()).toBe("");
+    expect(await proc.exited).toBe(0);
+  }, 60_000);
+
+  // Runs the same WTS lookup the SYSTEM task uses, as this (unelevated) user, with this user's
+  // SID: listing sessions changes nothing, and it proves the C# compiles and the SID matching
+  // finds this process's own session.
+  it("the session lookup finds this user's own session", async () => {
+    // By absolute path, as the service does: Git Bash puts an unrelated `whoami` first on PATH.
+    const who = Bun.spawnSync([whoamiExe(), "/user", "/fo", "csv", "/nh"]);
+    const sid = parseWhoamiUserCsv(who.stdout.toString());
+    if (!sid) return; // a runner signed in with a non-user account has nothing to look up
+    const mine = readWindowsSession();
+    const probe = `$ErrorActionPreference = 'Stop'
+$UserSid = ${psQuote(sid)}
+${WTS_SESSION_LOOKUP}
+(Get-UserSessions | ForEach-Object { [string]$_.Id + ':' + [string]$_.State }) -join ','`;
+    const proc = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(probe)], { stdout: "pipe", stderr: "pipe" });
+    const out = (await new Response(proc.stdout).text()).trim();
+    expect(await proc.exited).toBe(0);
+    const sessions = out.split(",").filter(Boolean).map((s) => s.split(":").map(Number));
+    expect(sessions.length).toBeGreaterThan(0);
+    if (mine) expect(sessions.map(([id]) => id)).toContain(mine.sessionId);
+  }, 60_000);
+});

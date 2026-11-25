@@ -14,6 +14,7 @@ import { Monitor, Loader2, Download, Trash2, Check } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { api } from "@/lib/api-client";
+import { HeadlessHelperSection } from "./remote-desktop-headless-helper";
 
 interface RelayJob {
   receivedBytes: number;
@@ -171,6 +172,8 @@ export function RemoteDesktopSettingsSection() {
           <li>Video leaves this host on its own UDP port, protected by per-session credentials.</li>
         </ul>
       </section>
+
+      <HeadlessHelperSection />
     </div>
   );
 }

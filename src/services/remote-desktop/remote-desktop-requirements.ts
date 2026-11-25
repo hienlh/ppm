@@ -18,8 +18,9 @@ import { detectLinuxSession, type LinuxSession } from "./remote-desktop-linux-se
 import { gstElements, type GstElements } from "./remote-desktop-capture-wayland.ts";
 import { getX11 } from "./remote-desktop-x11.ts";
 import {
-  realWindowsHost, snapshotWindowsHost, windowsHostRequirements, type WindowsHostApi,
+  realWindowsHost, snapshotWindowsHost, windowsHostRequirements, WIN_SESSION_ID, type WindowsHostApi,
 } from "./remote-desktop-win32-host.ts";
+import { runHelperAction } from "./win32-helper/helper-service.ts";
 import {
   MAC_PERMISSION_SETTINGS_URL,
   macPermissionStatus,
@@ -27,7 +28,10 @@ import {
   type MacPermissionId,
 } from "./remote-desktop-macos-permissions.ts";
 
-export type HostAction = "request" | "open-settings";
+/** `reattach`: run the Windows helper's fixed task that moves PPM's disconnected session back
+ *  to the console (`win32-helper/`). */
+export type HostAction = "request" | "open-settings" | "reattach";
+export const HOST_ACTIONS: readonly HostAction[] = ["request", "open-settings", "reattach"];
 
 export type RequirementAction =
   /** Type `command` into a PPM terminal — that shell runs on the host, so this works from a phone. */
@@ -295,7 +299,7 @@ export async function remoteDesktopReadiness(
       requirements.push(macPermissionRequirement("accessibility", status.accessibility));
     }
     if (platform === "linux" && linuxSession) requirements.push(...await linuxRequirements(linuxSession));
-    if (platform === "win32") requirements.push(...windowsHostRequirements(snapshotWindowsHost(windowsHost)));
+    if (platform === "win32") requirements.push(...windowsHostRequirements(await snapshotWindowsHost(windowsHost)));
   }
   const inputSupported = getInputBackend(platform, linuxSession) !== null;
   return {
@@ -311,14 +315,22 @@ export async function remoteDesktopReadiness(
   };
 }
 
+export interface HostActionResult {
+  ok: boolean;
+  /** What happened, for actions whose outcome is not just the next poll (the Windows helper). */
+  message?: string;
+}
+
 /** Run a `host` action. Returns the requirement's `ok` afterwards, or null when the pair has
  *  no host path (caller answers 404). `open-settings` returns the current state — the grant
  *  lands later, the UI keeps polling. */
-export async function runHostAction(id: string, action: HostAction): Promise<boolean | null> {
+export async function runHostAction(id: string, action: HostAction): Promise<HostActionResult | null> {
+  if (id === WIN_SESSION_ID && action === "reattach") return runHelperAction("Reattach");
   if (id !== "screen-recording" && id !== "accessibility") return null;
-  if (action === "request") return requestMacPermission(id);
+  if (action !== "request" && action !== "open-settings") return null;
+  if (action === "request") return { ok: await requestMacPermission(id) };
   if (process.platform === "darwin") {
     Bun.spawn(["open", MAC_PERMISSION_SETTINGS_URL[id]], { stdout: "ignore", stderr: "ignore" });
   }
-  return (await macPermissionStatus())[id];
+  return { ok: (await macPermissionStatus())[id] };
 }

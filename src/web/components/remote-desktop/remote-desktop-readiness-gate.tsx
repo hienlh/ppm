@@ -14,7 +14,10 @@ import { AlertTriangle, CheckCircle2, Circle, ExternalLink, Loader2, MonitorSmar
 import { TEXT_BUTTON } from "@/lib/control-size";
 import { FfmpegInstallButton } from "./ffmpeg-install-button";
 import { runInTerminal } from "@/lib/run-in-terminal";
-import { useRemoteDesktopReadiness, type RemoteDesktopRequirement, type RequirementAction } from "./use-remote-desktop-readiness";
+import { HostActionButton } from "./remote-desktop-host-action-button";
+import {
+  useRemoteDesktopReadiness, type HostAction, type HostActionResult, type RemoteDesktopRequirement, type RequirementAction,
+} from "./use-remote-desktop-readiness";
 
 /** Every button on this surface: the standard text-button size over this gate's own colours. */
 export const GATE_BUTTON = `inline-flex items-center justify-center ${TEXT_BUTTON}`;
@@ -82,7 +85,7 @@ export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktop
 }
 
 interface ActionHandlers {
-  onHostAction: (id: string, a: "request" | "open-settings") => Promise<void>;
+  onHostAction: (id: string, a: HostAction) => Promise<HostActionResult | null>;
   onTerminal: (command: string) => void;
 }
 
@@ -136,9 +139,5 @@ function ActionButton({ action, reqId, onHostAction, onTerminal }: { action: Req
       </a>
     );
   }
-  return (
-    <button type="button" className={cls} onClick={() => void onHostAction(reqId, action.action)}>
-      {action.label}
-    </button>
-  );
+  return <HostActionButton className={cls} label={action.label} run={() => onHostAction(reqId, action.action)} />;
 }

@@ -15,7 +15,8 @@ import { getFfmpegCapabilities, workingEncoders } from "../../services/media-tra
 import { isRemoteDesktopEnabled } from "../../services/remote-desktop/remote-desktop-flag.ts";
 import { mintRemoteDesktopNonce } from "../../services/remote-desktop/remote-desktop-nonce.ts";
 import { listDisplays } from "../../services/remote-desktop/remote-desktop-displays.ts";
-import { remoteDesktopReadiness, runHostAction } from "../../services/remote-desktop/remote-desktop-requirements.ts";
+import { HOST_ACTIONS, remoteDesktopReadiness, runHostAction } from "../../services/remote-desktop/remote-desktop-requirements.ts";
+import { getHelperStatus, startHelperJob } from "../../services/remote-desktop/win32-helper/helper-service.ts";
 import { resolveWhepTarget } from "../../services/remote-desktop/remote-desktop-whep-registry.ts";
 import {
   relayStatus, startMediamtxInstall, uninstallMediamtx,
@@ -96,11 +97,31 @@ remoteDesktopRoutes.post("/requirements/ffmpeg/install", (c) => {
 remoteDesktopRoutes.post("/requirements/:id/:action", async (c) => {
   const rejected = assertSessionAllowed(c);
   if (rejected) return rejected;
-  const action = c.req.param("action");
-  if (action !== "request" && action !== "open-settings") return c.json(err("unknown action"), 404);
-  const okNow = await runHostAction(c.req.param("id"), action);
-  if (okNow === null) return c.json(err("this requirement has no host action"), 404);
-  return c.json(ok({ ok: okNow }));
+  const action = HOST_ACTIONS.find((a) => a === c.req.param("action"));
+  if (!action) return c.json(err("unknown action"), 404);
+  const result = await runHostAction(c.req.param("id"), action);
+  if (result === null) return c.json(err("this requirement has no host action"), 404);
+  return c.json(ok(result));
+});
+
+/** The Windows headless helper (`win32-helper/`): status, and install/uninstall through one
+ *  administrator prompt on the host. Host control, so the same guards as `/session`. */
+remoteDesktopRoutes.get("/headless-helper", async (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  return c.json(ok(await getHelperStatus()));
+});
+
+remoteDesktopRoutes.post("/headless-helper/:kind", (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  const kind = c.req.param("kind");
+  if (kind !== "install" && kind !== "uninstall") return c.json(err("unknown helper action"), 404);
+  try {
+    return c.json(ok(startHelperJob(kind)), 202);
+  } catch (error) {
+    return c.json(err(error instanceof Error ? error.message : String(error)), 400);
+  }
 });
 
 remoteDesktopRoutes.post("/session", (c) => {
