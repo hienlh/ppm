@@ -74,7 +74,9 @@ it; `instance-guard.ts` makes sure there is never a second one.
   then delete the row.** While it stops, any other route's `rearm()` runs `sync()`, which sees an
   enabled schedule and turns the stop into a restart.
 - **A script tick keeps a run row only when it logged or failed**, and never a `skipped` row: a
-  5-second tick would bury the history. Prompt schedules keep both, as before.
+  5-second tick would bury the history. Prompt schedules keep both, as before. The exception is
+  the first quiet tick after a failed one: without its row the failure stayed the newest run, and
+  the Schedules window kept flagging "Last run failed" on a schedule that had long recovered.
 - **Every `/api/schedules` answer goes through `toScheduleView` (`scheduler-view.ts`)**: a raw
   row carries `secrets_enc` and `state_json`, and the state can hold a token. The route test
   scans every GET for the secret, its ciphertext and both keys; a new route must answer a view.

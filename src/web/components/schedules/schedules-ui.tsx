@@ -68,7 +68,7 @@ const TONE_ICON: Partial<Record<RunTone, ElementType>> = {
 export function RunStatusLine({ tone, text, when, className }: { tone: RunTone; text: string; when?: string; className?: string }) {
   const Icon = TONE_ICON[tone];
   return (
-    <span className={cn("inline-flex min-w-0 items-center gap-1 text-[11.5px]", TONE_CLASS[tone], className)}>
+    <span className={cn("inline-flex min-w-0 max-w-full items-center gap-1 text-[11.5px]", TONE_CLASS[tone], className)}>
       {Icon && <Icon aria-hidden className={cn("size-3.5 shrink-0", tone === "running" && "animate-spin")} />}
       <span className="truncate">{text}</span>
       {when && <span className="shrink-0 text-text-3">· {when}</span>}

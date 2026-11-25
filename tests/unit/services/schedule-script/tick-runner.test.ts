@@ -85,6 +85,17 @@ describe("runScriptTick", () => {
     expect(getSchedule(s.id)!.state_json).toBe('{"done":["NX-1"]}');
   });
 
+  it("keeps a row for a quiet tick that follows a failed one, so the failure does not outlive the recovery", async () => {
+    const s = schedule(`export default async (ctx) => {
+      ctx.state.n = (ctx.state.n ?? 0) + 1;
+      if (ctx.state.n === 1) throw new Error("network down");
+    }`);
+    await runScriptTick(s);
+    await runScriptTick(getSchedule(s.id)!);
+    await runScriptTick(getSchedule(s.id)!);
+    expect(listScheduleRuns(s.id).map((r) => r.status)).toEqual(["done", "error"]);
+  });
+
   it("cuts a line printed without end, and masks the secret the cut went through", async () => {
     // 624 whole tokens fit in the 65,536 characters kept, then 16 characters of the next one.
     const token = `xoxp-${"0123456789".repeat(10)}`;
