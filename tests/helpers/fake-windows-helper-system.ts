@@ -55,6 +55,10 @@ export function createFakeWindows(): FakeWindows {
     readText: (path) => fake.files.get(path) ?? null,
     writeText: (path, text) => { fake.files.set(path, text); },
     exists: (path) => fake.files.has(path),
+    download: async (url, dest, sha256) => {
+      fake.calls.push(["download", url, dest, sha256]);
+      fake.files.set(dest, "zip bytes");
+    },
     now: () => clock,
     sleep: async (ms) => { clock += ms; },
   };

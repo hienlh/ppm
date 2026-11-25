@@ -32,6 +32,14 @@ describe("windowsHostRequirements with the headless helper", () => {
     expect(row.warning).toContain("unlocked");
   });
 
+  it("offers the virtual display when the helper has it and no monitor is there", async () => {
+    const { host } = fakeHost({ sessionId: 1, state: "active", isConsole: true }, [], true);
+    host.helper = async () => ({ usable: true, virtualDisplay: true });
+    const row = windowsHostRequirements(await snapshotWindowsHost(host)).find((r) => r.id === WIN_DISPLAY_ID)!;
+    expect(row.actions).toEqual([{ kind: "host", label: "Turn on virtual display", action: "display-on" }]);
+    expect(row.detail).toContain("turns it off again when the session ends");
+  });
+
   it("without the helper there is no button, only the way to set it up", async () => {
     const { host } = fakeHost({ sessionId: 2, state: "disconnected", isConsole: false }, [], false);
     const row = windowsHostRequirements(await snapshotWindowsHost(host))[0]!;

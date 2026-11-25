@@ -18,9 +18,10 @@ import { detectLinuxSession, type LinuxSession } from "./remote-desktop-linux-se
 import { gstElements, type GstElements } from "./remote-desktop-capture-wayland.ts";
 import { getX11 } from "./remote-desktop-x11.ts";
 import {
-  realWindowsHost, snapshotWindowsHost, windowsHostRequirements, WIN_SESSION_ID, type WindowsHostApi,
+  realWindowsHost, snapshotWindowsHost, windowsHostRequirements, WIN_DISPLAY_ID, WIN_SESSION_ID, type WindowsHostApi,
 } from "./remote-desktop-win32-host.ts";
 import { runHelperAction } from "./win32-helper/helper-service.ts";
+import { virtualDisplayLease } from "./win32-helper/virtual-display-lease.ts";
 import {
   MAC_PERMISSION_SETTINGS_URL,
   macPermissionStatus,
@@ -29,9 +30,10 @@ import {
 } from "./remote-desktop-macos-permissions.ts";
 
 /** `reattach`: run the Windows helper's fixed task that moves PPM's disconnected session back
- *  to the console (`win32-helper/`). */
-export type HostAction = "request" | "open-settings" | "reattach";
-export const HOST_ACTIONS: readonly HostAction[] = ["request", "open-settings", "reattach"];
+ *  to the console. `display-on`: its task that enables the virtual display, which PPM turns off
+ *  again when no session needs it (`win32-helper/`). */
+export type HostAction = "request" | "open-settings" | "reattach" | "display-on";
+export const HOST_ACTIONS: readonly HostAction[] = ["request", "open-settings", "reattach", "display-on"];
 
 export type RequirementAction =
   /** Type `command` into a PPM terminal — that shell runs on the host, so this works from a phone. */
@@ -326,6 +328,7 @@ export interface HostActionResult {
  *  lands later, the UI keeps polling. */
 export async function runHostAction(id: string, action: HostAction): Promise<HostActionResult | null> {
   if (id === WIN_SESSION_ID && action === "reattach") return runHelperAction("Reattach");
+  if (id === WIN_DISPLAY_ID && action === "display-on") return virtualDisplayLease.turnOn();
   if (id !== "screen-recording" && id !== "accessibility") return null;
   if (action !== "request" && action !== "open-settings") return null;
   if (action === "request") return { ok: await requestMacPermission(id) };

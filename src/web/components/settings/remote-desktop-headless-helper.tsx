@@ -32,7 +32,11 @@ export function describeHelper(status: HeadlessHelperStatus): string {
   }
   if (status.otherUser) return "Installed for another Windows user. Reinstall to use it from this account.";
   if (status.outdated) return "Installed by an older PPM. Reinstall to update it.";
-  if (status.usable) return "Set up. PPM can bring your session back from the Remote Desktop checklist.";
+  if (status.usable) {
+    return status.virtualDisplay
+      ? "Set up. From the Remote Desktop checklist PPM can bring your session back and turn on a virtual display."
+      : "Set up. PPM can bring your session back from the Remote Desktop checklist.";
+  }
   if (status.installed) return "Installed, but its tasks are missing. Reinstall to repair it.";
   return "Not set up.";
 }
@@ -74,9 +78,9 @@ export function HeadlessHelperSection() {
         <h3 className="text-sm font-medium">Run without a monitor (Windows)</h3>
         <p className="text-xs leading-relaxed text-muted-foreground">
           When a Remote Desktop (RDP) window closes, Windows leaves your session disconnected and draws nothing,
-          so there is no picture to capture. This helper lets PPM bring the session back to this PC&apos;s own
-          screen from the Remote Desktop checklist, without TeamViewer. Setting it up needs one administrator
-          prompt on the PC.
+          so there is no picture to capture; with no monitor plugged in there is no screen at all. This helper lets
+          PPM bring the session back to this PC&apos;s own screen and turn on a virtual display for the session, from
+          the Remote Desktop checklist, without TeamViewer. Setting it up needs one administrator prompt on the PC.
         </p>
       </div>
       <p className="flex items-center gap-2 text-xs" data-testid="headless-helper-status">

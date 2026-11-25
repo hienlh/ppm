@@ -15,6 +15,8 @@ import { getHelperStatus } from "./win32-helper/helper-service.ts";
 export interface WindowsHelperView {
   /** Installed for this user, current, every task present. */
   usable: boolean;
+  /** The install includes the virtual display driver and its on/off tasks. */
+  virtualDisplay?: boolean;
 }
 
 export interface WindowsHostApi {
@@ -86,14 +88,19 @@ export function windowsHostRequirements(snapshot: WindowsHostSnapshot): RemoteDe
     actions: helper ? [{ kind: "host", label: "Bring session back", action: "reattach" }] : [],
   }];
   if (disconnected) return rows;
+  const virtualDisplay = helper && !!snapshot.helper.virtualDisplay;
   rows.push({
     id: WIN_DISPLAY_ID,
     ok: snapshot.displayCount > 0,
     gates: "video",
     title: "A display to capture",
     detail: "Windows reports no display on this PC (no monitor is plugged in), so there is nothing "
-      + "to capture. Plug in a monitor or an HDMI/DisplayPort dummy plug.",
-    actions: [],
+      + "to capture. "
+      + (virtualDisplay
+        ? "PPM can turn on a virtual display for this session; it turns it off again when the session ends."
+        : "Plug in a monitor or an HDMI/DisplayPort dummy plug, or set up the headless helper in "
+          + "Settings → Remote Desktop, which adds a virtual display PPM turns on only while you are connected."),
+    actions: virtualDisplay ? [{ kind: "host", label: "Turn on virtual display", action: "display-on" }] : [],
   });
   return rows;
 }

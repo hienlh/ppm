@@ -20,6 +20,9 @@ export function HeadlessHelperConfirm({ onConfirm, onCancel }: { onConfirm: () =
         <li>A small script in <code>Program Files\PPM\RemoteDesktopHelper</code> that only administrators can change.</li>
         <li>Scheduled tasks under <code>\PPM\RemoteDesktop</code> that run that script as SYSTEM. They take no input,
           only your Windows user can start them, and they only ever act on your own session.</li>
+        <li>A virtual display driver (Virtual Display Driver 25.7.23, MIT, signed by SignPath Foundation). PPM checks its
+          signature and the hash of every file before installing it, leaves it off, and turns it on only while a Remote
+          Desktop session needs a screen. Windows may ask once more whether to trust the publisher.</li>
       </ul>
       <p className="flex gap-2 rounded-md bg-amber-500/10 px-3 py-2 text-xs leading-relaxed">
         <AlertTriangle className="mt-px size-3.5 shrink-0 text-amber-500" />

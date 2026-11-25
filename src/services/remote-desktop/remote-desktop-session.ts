@@ -30,6 +30,7 @@ import {
 } from "./remote-desktop-quality.ts";
 import { createLogger } from "../logger.ts";
 import { explainCaptureFailure } from "./remote-desktop-capture-error.ts";
+import { virtualDisplayLease } from "./win32-helper/virtual-display-lease.ts";
 
 const log = createLogger("remote-desktop");
 
@@ -160,8 +161,22 @@ export class RemoteDesktopSession {
   }
 
   async start(): Promise<void> {
-    await this.beginCapture("start");
+    // A virtual display PPM turned on stays on while any session runs (`virtual-display-lease.ts`).
+    if (process.platform === "win32") { virtualDisplayLease.acquire(); this.holdsDisplayLease = true; }
+    try {
+      await this.beginCapture("start");
+    } catch (e) {
+      this.releaseDisplayLease();
+      throw e;
+    }
     this.heartbeatTimer = setInterval(() => this.onHeartbeatTick(), HEARTBEAT_INTERVAL_MS);
+  }
+
+  private holdsDisplayLease = false;
+  private releaseDisplayLease(): void {
+    if (!this.holdsDisplayLease) return;
+    this.holdsDisplayLease = false;
+    virtualDisplayLease.release();
   }
 
   /** Spawn ffmpeg for the current preset. Also used by `applyPreset`, which is why the config
@@ -690,6 +705,7 @@ export class RemoteDesktopSession {
     log.info(`session closed reason=${reason} duration=${Math.round((Date.now() - this.startedAt) / 1000)}s`);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.capture?.stop();
+    this.releaseDisplayLease();
     // Relay after capture: the publisher should go first so MediaMTX sees a clean disconnect.
     this.relay?.stop();
     this.relay = null;
@@ -855,6 +871,10 @@ export function registerRemoteDesktopExitSweep(): void {
   if (sweepRegistered) return;
   sweepRegistered = true;
   const sweep = () => { for (const s of [...activeSessions]) s.close("shutdown"); };
+  // A virtual display a previous run turned on and never turned off (it died mid-session).
+  if (process.platform === "win32") {
+    void virtualDisplayLease.sweepOnStartup().catch((e) => log.warn(`virtual display sweep failed: ${(e as Error).message}`));
+  }
   process.on("exit", sweep);
   process.on("SIGINT", sweep);
   process.on("SIGTERM", sweep);

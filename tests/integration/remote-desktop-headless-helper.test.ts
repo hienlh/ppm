@@ -9,7 +9,8 @@ import { remoteDesktopRoutes } from "../../src/server/routes/remote-desktop.ts";
 import { configService } from "../../src/services/config.service.ts";
 import { setHelperSystem } from "../../src/services/remote-desktop/win32-helper/helper-system.ts";
 import { resetHelperServiceForTests } from "../../src/services/remote-desktop/win32-helper/helper-service.ts";
-import { helperPaths, HELPER_VERSION, taskName } from "../../src/services/remote-desktop/win32-helper/helper-paths.ts";
+import { HELPER_ACTIONS, helperPaths, HELPER_VERSION, taskName } from "../../src/services/remote-desktop/win32-helper/helper-paths.ts";
+import { VDD_ZIP_SHA256, VDD_ZIP_URL } from "../../src/services/remote-desktop/win32-helper/vdd-catalog.ts";
 import { bootstrapOf, createFakeWindows, FAKE_SID, type FakeWindows } from "../helpers/fake-windows-helper-system.ts";
 
 const originalFlag = process.env.REMOTE_DESKTOP_ENABLED;
@@ -24,8 +25,16 @@ function auth(enabled: boolean) {
 function markInstalled(sid = FAKE_SID, version = HELPER_VERSION) {
   const p = helperPaths();
   win.files.set(p.helperScript, "# helper");
-  win.files.set(p.installRecord, JSON.stringify({ version, userSid: sid, actions: ["Reattach"] }));
-  win.tasks.add(taskName("Reattach"));
+  win.files.set(p.installRecord, JSON.stringify({ version, userSid: sid, actions: ["Reattach", "DisplayOn", "DisplayOff"] }));
+  for (const action of HELPER_ACTIONS) win.tasks.add(taskName(action));
+}
+
+/** The helper's answer, stamped "now" on the pretend clock, for whichever task was started. */
+function answer(ok: boolean, message: string) {
+  win.onTaskRun = (task) => {
+    const action = task.split("\\").pop();
+    win.files.set(helperPaths().lastRun, JSON.stringify({ action, ok, message, at: new Date(win.now()).toISOString() }));
+  };
 }
 
 async function waitForJob(): Promise<{ state: string; message: string | null }> {
@@ -100,6 +109,26 @@ describe("headless helper: install", () => {
     const launches = win.calls.filter((c) => c[0]!.toLowerCase().endsWith("powershell.exe"));
     expect(launches).toHaveLength(1);
     expect(launches[0]![0]).toMatch(/System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/i);
+  });
+
+  it("downloads the pinned driver and has the admin side check it against the pinned hash", async () => {
+    auth(true);
+    await remoteDesktopRoutes.request("http://localhost/headless-helper/install", { method: "POST" });
+    expect((await waitForJob()).state).toBe("done");
+    const download = win.calls.find((c) => c[0] === "download")!;
+    expect(download[1]).toBe(VDD_ZIP_URL);
+    expect(download[3]).toBe(VDD_ZIP_SHA256);
+    expect(bootstrapOf(win.lastLauncher ?? "")).toContain(`$VddZipBytes = Read-Verified '${download[2]}' '${VDD_ZIP_SHA256}'`);
+  });
+
+  it("does not ask for elevation when the driver cannot be downloaded", async () => {
+    auth(true);
+    win.download = async () => { throw new Error("sha256 mismatch"); };
+    await remoteDesktopRoutes.request("http://localhost/headless-helper/install", { method: "POST" });
+    const job = await waitForJob();
+    expect(job.state).toBe("error");
+    expect(job.message).toContain("virtual display driver");
+    expect(win.calls.some((c) => c[0]!.toLowerCase().endsWith("powershell.exe"))).toBe(false);
   });
 
   it("says plainly when the administrator prompt was declined or could not be shown", async () => {
@@ -177,6 +206,25 @@ describe("headless helper: bring the session back", () => {
     win.files.set(helperPaths().lastRun, JSON.stringify({ action: "Reattach", ok: true, message: "old", at: "2020-01-01T00:00:00Z" }));
     const res = await remoteDesktopRoutes.request("http://localhost/requirements/win-session/reattach", { method: "POST" });
     expect(await res.json()).toMatchObject({ data: { ok: false, message: expect.stringContaining("did not answer") } });
+  });
+
+  it("turns on the virtual display through its own fixed task and remembers PPM did it", async () => {
+    auth(true);
+    markInstalled();
+    answer(true, "The virtual display is on.");
+    const res = await remoteDesktopRoutes.request("http://localhost/requirements/win-display/display-on", { method: "POST" });
+    expect(await res.json()).toMatchObject({ data: { ok: true } });
+    const runs = win.calls.filter((c) => c[1] === "/run");
+    expect(runs.map((c) => c[3])).toEqual(["\\PPM\\RemoteDesktop\\DisplayOn"]);
+    const marker = [...win.files.entries()].find(([k]) => k.endsWith("virtual-display-on.json"));
+    expect(JSON.parse(marker![1]).on).toBe(true);
+  });
+
+  it("the display action belongs to the display row only", async () => {
+    auth(true);
+    markInstalled();
+    expect((await remoteDesktopRoutes.request("http://localhost/requirements/win-session/display-on", { method: "POST" })).status).toBe(404);
+    expect((await remoteDesktopRoutes.request("http://localhost/requirements/win-display/reattach", { method: "POST" })).status).toBe(404);
   });
 
   it("does not try when the helper is not set up", async () => {

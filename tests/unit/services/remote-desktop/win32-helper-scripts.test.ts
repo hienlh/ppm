@@ -10,6 +10,8 @@ import {
 } from "../../../../src/services/remote-desktop/win32-helper/helper-script.ts";
 import { readWindowsSession } from "../../../../src/services/remote-desktop/remote-desktop-win32-session.ts";
 import { whoamiExe } from "../../../../src/services/remote-desktop/win32-helper/helper-paths.ts";
+import { helperInstallPlan } from "../../../../src/services/remote-desktop/win32-helper/helper-install-plan.ts";
+import { CREATE_DEVICE_TYPE } from "../../../../src/services/remote-desktop/win32-helper/vdd-scripts.ts";
 import {
   buildBootstrap, buildElevationLauncher, buildInstallScript, buildUninstallScript,
 } from "../../../../src/services/remote-desktop/win32-helper/install-script.ts";
@@ -138,10 +140,12 @@ describe("bootstrap and elevation launcher", () => {
 describe.if(process.platform === "win32")("generated scripts parse in Windows PowerShell", () => {
   it("has no syntax errors", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ppm-helper-parse-"));
+    // The full install as shipped: all three actions plus the driver steps.
+    const plan = helperInstallPlan();
     const files = {
-      "helper.ps1": buildHelperScript(SID, [REATTACH_ACTION]),
-      "install.ps1": buildInstallScript({ userSid: SID, actions: ["Reattach"] }),
-      "uninstall.ps1": buildUninstallScript({ actions: ["Reattach"] }),
+      "helper.ps1": plan.buildHelper(SID),
+      "install.ps1": buildInstallScript({ userSid: SID, actions: plan.actions, extraSteps: plan.installSteps }),
+      "uninstall.ps1": buildUninstallScript({ actions: plan.actions, extraSteps: plan.uninstallSteps }),
       "bootstrap.ps1": buildBootstrap([{ variable: "HelperBytes", path: "C:\\a", sha256: HASH }], { variable: "ScriptBytes", path: "C:\\b", sha256: HASH }),
     };
     for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
@@ -154,6 +158,18 @@ exit $bad`;
     const out = await new Response(proc.stdout).text();
     expect(out.trim()).toBe("");
     expect(await proc.exited).toBe(0);
+  }, 60_000);
+
+  // Compiles the device-creation C# exactly as the installer embeds it. Add-Type only compiles;
+  // nothing is called, so no device is created.
+  it("the device-creation C# compiles", async () => {
+    const probe = `$ErrorActionPreference = 'Stop'
+${CREATE_DEVICE_TYPE}
+[bool]('PpmRootDevice' -as [type])`;
+    const proc = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(probe)], { stdout: "pipe", stderr: "pipe" });
+    const out = (await new Response(proc.stdout).text()).trim();
+    expect(await proc.exited).toBe(0);
+    expect(out).toBe("True");
   }, 60_000);
 
   // Runs the same WTS lookup the SYSTEM task uses, as this (unelevated) user, with this user's

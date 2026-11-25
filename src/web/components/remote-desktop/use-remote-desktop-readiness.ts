@@ -18,8 +18,9 @@ export type RequirementAction =
   | { kind: "link"; label: string; url: string }
   | { kind: "host"; label: string; action: HostAction };
 
-/** Mirrors the server's `HostAction`: `reattach` runs the Windows helper's fixed task. */
-export type HostAction = "request" | "open-settings" | "reattach";
+/** Mirrors the server's `HostAction`: `reattach` and `display-on` run the Windows helper's
+ *  fixed tasks. */
+export type HostAction = "request" | "open-settings" | "reattach" | "display-on";
 
 /** What a host action reports back; `message` only for actions with a real outcome to tell. */
 export interface HostActionResult {

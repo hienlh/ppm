@@ -9,6 +9,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { downloadVerified } from "../../speech-to-text/whisper-download.ts";
 
 export interface CommandResult {
   /** null when the process was killed by the timeout or could not start. */
@@ -24,6 +25,8 @@ export interface HelperSystem {
   /** Staging only: PPM's own folder. The admin side never reads anything it did not hash. */
   writeText(path: string, text: string): void;
   exists(path: string): boolean;
+  /** Fetch `url` to `dest`, refusing (and deleting) anything whose SHA-256 is not `sha256`. */
+  download(url: string, dest: string, sha256: string): Promise<void>;
   now(): number;
   sleep(ms: number): Promise<void>;
 }
@@ -58,6 +61,7 @@ export const realHelperSystem: HelperSystem = {
     writeFileSync(path, text, "utf8");
   },
   exists: (path) => existsSync(path),
+  download: (url, dest, sha256) => downloadVerified({ url, dest, sha256 }),
   now: () => Date.now(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
