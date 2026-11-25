@@ -5,8 +5,12 @@
  * bytes: the server checks them and stores its own copy (it never takes a path from here).
  *
  * Typing or attaching makes this the card's answer, in place of a tile; clearing both takes it back.
+ *
+ * The mic answers by voice through the chat composer's voice flow: the transcript lands in the
+ * field to be read and edited, and the reply goes as a voice message (`value.voice`). With "Read the
+ * transcript before sending" off, a tidied transcript sends this card at once (`onSendNow`).
  */
-import { useRef, useState, type ClipboardEvent, type KeyboardEvent, type RefObject } from "react";
+import { useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Paperclip, X } from "@/lib/icons";
 import { cn, randomId } from "@/lib/utils";
 import { downscaleImage } from "@/lib/image-resize";
@@ -14,10 +18,14 @@ import { MAX_REPLY_IMAGES, type ReplyImage } from "@/lib/decision-set/decision-s
 import { INLINE_IMAGE_LIMITS } from "@/lib/image-resize-limits";
 import { QuestionOtherRow, questionInputClass, type QuestionTone } from "@/components/chat/question-form-parts";
 import { SET_ICON_BUTTON } from "./decision-set-buttons";
+import type { HeldVoice } from "@/lib/card-voice-reply";
+import type { CardVoiceTarget } from "@/hooks/use-card-voice-reply";
+import { CardVoiceCapture, HeldVoiceChip } from "../card-voice-reply-parts";
 
 export interface ReplyValue {
   text: string;
   images: ReplyImage[];
+  voice?: HeldVoice;
 }
 
 /** File → base64 without the `data:` prefix. */
@@ -43,7 +51,7 @@ async function readPicture(file: File): Promise<ReplyImage | string> {
   return { id: randomId(), name: file.name || "pasted image", data, mediaType: scaled.file.type };
 }
 
-export function DecisionReplyField({ value, onChange, tone, focused, onFocus, inputRef, onKeyDown, placeholder, disabled }: {
+export function DecisionReplyField({ value, onChange, tone, focused, onFocus, inputRef, onKeyDown, placeholder, disabled, voiceTarget, onSendNow }: {
   value: ReplyValue;
   onChange: (next: ReplyValue) => void;
   tone: QuestionTone;
@@ -53,6 +61,10 @@ export function DecisionReplyField({ value, onChange, tone, focused, onFocus, in
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   placeholder: string;
   disabled?: boolean;
+  /** The card the words answer; with none, no mic. */
+  voiceTarget?: CardVoiceTarget | null;
+  /** Sends this card's answer at once (a spoken answer with review off). */
+  onSendNow?: (value: ReplyValue) => void;
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,15 +96,19 @@ export function DecisionReplyField({ value, onChange, tone, focused, onFocus, in
   }
 
   const filled = value.text.trim().length > 0 || value.images.length > 0;
-  return (
+  const field = (mic: ReactNode, area: ReactNode) => (
     <QuestionOtherRow tone={tone} focused={focused} filled={filled}>
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        {value.voice && (
+          <HeldVoiceChip held={value.voice} projectName={voiceTarget?.projectName ?? null} disabled={disabled} onDrop={() => onChange({ text: value.text, images: value.images })} />
+        )}
         <div className="flex min-w-0 items-start gap-1.5">
           <textarea
             ref={inputRef}
             rows={1}
             value={value.text}
             disabled={disabled}
+            // Edited words keep their recording: reading and correcting the transcript is the review.
             onChange={(e) => onChange({ ...value, text: e.target.value })}
             onFocus={onFocus}
             onPaste={onPaste}
@@ -103,6 +119,7 @@ export function DecisionReplyField({ value, onChange, tone, focused, onFocus, in
             className={cn(questionInputClass(tone), "field-sizing-content max-h-36 min-h-7 resize-none leading-snug")}
             data-decision-reply=""
           />
+          {mic}
           <button
             type="button"
             onClick={() => fileInput.current?.click()}
@@ -140,8 +157,25 @@ export function DecisionReplyField({ value, onChange, tone, focused, onFocus, in
             ))}
           </ul>
         )}
+        {area}
         {error && <p className="text-[11px] text-error-ink" role="alert">{error}</p>}
       </div>
     </QuestionOtherRow>
+  );
+  if (!voiceTarget) return field(null, null);
+  return (
+    <CardVoiceCapture
+      target={voiceTarget}
+      typed={value.text}
+      hasImages={value.images.length > 0}
+      disabled={disabled}
+      onReady={({ text, ...held }, autoSend) => {
+        const next = { text, images: [], voice: held };
+        onChange(next);
+        if (autoSend) onSendNow?.(next);
+      }}
+    >
+      {({ mic, area }) => field(mic, area)}
+    </CardVoiceCapture>
   );
 }

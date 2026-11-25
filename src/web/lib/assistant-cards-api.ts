@@ -6,6 +6,7 @@
 import { api, ApiError } from "@/lib/api-client";
 import { getDeviceId } from "@/lib/device-id";
 import type { AssistantCard, AssistantCardsPage, AssistantWaiting } from "../../shared/assistant-cards";
+import type { CardVoiceReply } from "@/lib/card-voice-reply";
 
 export const ASSISTANT_CARD_EVENT = "assistant:card";
 export const ASSISTANT_WAITING_EVENT = "assistant:waiting_changed";
@@ -50,15 +51,18 @@ export const chooseAssistantCardOption = (id: string, optionId: string) =>
  * (it is sent even if the card closed meanwhile). `confirmAge` confirms only the card's age: a card
  * someone answered meanwhile is still refused, so a confirmed reply never becomes a second answer.
  * Pictures go as their bytes (base64): the server checks and stores them itself, and takes no path.
+ * A spoken reply names its recording with the upload route's receipt (`opts.voice`); `text` is
+ * then the transcript.
  */
 export const replyToAssistantCard = (
   id: string, text: string, force = false, images: ReadonlyArray<{ data: string; mediaType: string }> = [],
-  opts: { confirmAge?: boolean } = {},
+  opts: { confirmAge?: boolean; voice?: CardVoiceReply["voice"] } = {},
 ) =>
   api.post<{ card: AssistantCard; to: "manager" | "assistant"; projectName?: string }>(
     `/api/assistant/cards/${encodeURIComponent(id)}/reply`, {
       text, ...(force ? { force: true } : {}), ...(opts.confirmAge ? { confirmAge: true } : {}), deviceId: getDeviceId(),
       ...(images.length ? { images: images.map(({ data, mediaType }) => ({ data, mediaType })) } : {}),
+      ...(opts.voice ? { voice: opts.voice } : {}),
     });
 
 /** What a refused OK or reply said back: the card as it is now, and a question to ask the user. */

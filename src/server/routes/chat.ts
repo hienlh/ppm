@@ -4,6 +4,8 @@ import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
+import { mintVoiceUploadReceipt } from "../../services/voice-message/voice-upload-receipt.ts";
+import { isStoredVoicePath } from "../../shared/voice-message.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { createProjectChatSession } from "../../services/chat-session-create.ts";
 import { renameChatSession } from "../../services/chat-session-admin.ts";
@@ -980,7 +982,7 @@ chatRoutes.post("/upload", async (c) => {
 
     const uploadDir = ensureUploadsDir();
 
-    const results: Array<{ name: string; path: string; type: string; size: number }> = [];
+    const results: Array<{ name: string; path: string; type: string; size: number; voiceReceipt?: string }> = [];
     for (const entry of files) {
       if (!(entry instanceof File)) continue;
       const id = crypto.randomUUID().slice(0, 8);
@@ -988,7 +990,12 @@ chatRoutes.post("/upload", async (c) => {
       const dest = join(uploadDir, `${id}-${safeName}`);
       const buf = await entry.arrayBuffer();
       await Bun.write(dest, buf);
-      results.push({ name: entry.name, path: dest, type: entry.type, size: entry.size });
+      // A recording gets a receipt: the one thing a card reply from this screen can show to say
+      // its words were spoken (`voice-upload-receipt.ts`). Told by the name the composer gives a
+      // recording, not by `entry.type`: Bun types a part by its extension, and a `.webm` recording
+      // arrives as `video/webm`.
+      const voiceReceipt = safeName.startsWith("voice-") && isStoredVoicePath(dest) ? mintVoiceUploadReceipt(dest) : undefined;
+      results.push({ name: entry.name, path: dest, type: entry.type, size: entry.size, ...(voiceReceipt ? { voiceReceipt } : {}) });
     }
     return c.json(ok(results), 201);
   } catch (e) {

@@ -23,5 +23,8 @@ export const TEXT_BUTTON =
 /** The phone half of `TEXT_CONTROL_HEIGHT`. */
 export const PHONE_TEXT_CONTROL_HEIGHT = "max-md:h-[26px]";
 
+/** A small icon button: 24px tall and at least 26px wide, 22px square below `md` (`FOOTER_GHOST`'s size). */
+export const ICON_CONTROL_SIZE = "h-6 min-w-[26px] max-md:h-[22px] max-md:min-w-[22px]";
+
 /** The phone size of a small icon button: 22px square below `md` (24px on desktop). */
 export const PHONE_ICON_CONTROL_SIZE = "max-md:size-[22px]";

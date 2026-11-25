@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { Fragment, useState, useCallback, useMemo, useEffect, useRef, type ReactNode } from "react";
 import type { AnswersById, NormalizedQuestion, QuestionOption } from "../../../shared/approval-questions";
 import { QuestionOptionPreview, hasOptionPreviews, previewOptionIndex } from "./question-option-preview";
 import { QuestionOptionTile, QuestionOtherRow, QuestionTabStrip, questionFrameClass, questionInputClass } from "./question-form-parts";
@@ -14,6 +14,19 @@ interface QuestionCardProps {
   onSubmit: (answersById: AnswersById) => void;
   onSkip: () => void;
   autoFocus?: boolean;
+  /**
+   * Draws the typed-answer field with more around it (a card mirroring the question adds a mic):
+   * given the field, what is typed in it, how to replace that, and how to answer with it at once.
+   */
+  otherField?: (field: OtherFieldParts) => ReactNode;
+}
+
+export interface OtherFieldParts {
+  input: ReactNode;
+  typed: string;
+  setTyped: (text: string) => void;
+  /** Puts `text` in the field and submits, when every other question already has its answer. */
+  submitWith: (text: string) => void;
 }
 
 /* ── Hook: form state ── */
@@ -156,7 +169,7 @@ function useQuestionKeyboard(config: {
 }
 
 /* ── Component ── */
-export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: QuestionCardProps) {
+export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true, otherField }: QuestionCardProps) {
   const customInputRef = useRef<HTMLInputElement>(null);
   const form = useQuestionForm(questions);
   const currentQ = questions[form.activeTab];
@@ -173,6 +186,14 @@ export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: 
     questions.forEach((q, i) => { result[q.id] = form.getFinalAnswer(i); });
     onSubmit(result);
   }, [form.allAnswered, form.getFinalAnswer, questions, onSubmit]);
+
+  const submitWith = useCallback((text: string) => {
+    const tab = form.activeTab;
+    form.handleCustomInput(tab, text);
+    const result: AnswersById = {};
+    questions.forEach((q, i) => { result[q.id] = i === tab ? [text.trim()] : form.getFinalAnswer(i); });
+    if (Object.values(result).every((a) => a.length > 0 && a.some((x) => x.trim()))) onSubmit(result);
+  }, [form, questions, onSubmit]);
 
   const handleSelectOption = useCallback(
     (index: number) => {
@@ -263,6 +284,7 @@ export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: 
             {/* Other / custom input */}
             {hasCustom && (
               <QuestionOtherRow tone="question" focused={kb.focusedOption === totalOptions - 1}>
+                {(() => { const input = (
                 <input
                   ref={customInputRef}
                   // A secret (a token Codex asks for) is typed unseen, like any password field.
@@ -274,6 +296,13 @@ export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: 
                   onChange={(e) => form.handleCustomInput(form.activeTab, e.target.value)}
                   onFocus={() => kb.setFocusedOption(totalOptions - 1)}
                 />
+                );
+                // A secret is never spoken aloud, nor sent through a recording.
+                if (!otherField || currentQ.secret) return input;
+                const typed = form.customInputs[form.activeTab] || "";
+                const tab = form.activeTab;
+                return <Fragment key={tab}>{otherField({ input, typed, setTyped: (t) => form.handleCustomInput(tab, t), submitWith })}</Fragment>;
+                })()}
               </QuestionOtherRow>
             )}
           </div>

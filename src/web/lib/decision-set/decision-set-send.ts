@@ -12,12 +12,13 @@
  */
 import type { AssistantCard } from "../../../shared/assistant-cards";
 import type { DecisionAnswer, ReplyImage } from "./decision-set-model";
+import type { HeldVoice } from "../card-voice-reply";
 
 export interface DecisionSendApi {
   ok(cardId: string, draftSha256: string | null): Promise<{ card: AssistantCard }>;
   choose(cardId: string, optionId: string): Promise<{ card: AssistantCard }>;
-  /** `confirmAge`: the user confirmed the card's age (it must still wait). */
-  reply(cardId: string, text: string, confirmAge: boolean, images: readonly ReplyImage[]): Promise<{ card: AssistantCard }>;
+  /** `confirmAge`: the user confirmed the card's age (it must still wait). `voice`: the words were spoken. */
+  reply(cardId: string, text: string, confirmAge: boolean, images: readonly ReplyImage[], voice?: HeldVoice): Promise<{ card: AssistantCard }>;
   /** What a refused request said: the error, the question to ask, the card as it is now. */
   refusal(e: unknown): { error: string; question?: string; card?: AssistantCard };
 }
@@ -38,7 +39,7 @@ const CHANGED = /not the one this OK was given for|not one of this card's choice
 function call(card: AssistantCard, answer: DecisionAnswer, api: DecisionSendApi, confirmAge: boolean): Promise<{ card: AssistantCard }> {
   if (answer.kind === "ok") return api.ok(card.id, answer.draftSha256);
   if (answer.kind === "choose") return api.choose(card.id, answer.optionId);
-  return api.reply(card.id, answer.text, confirmAge, answer.images);
+  return api.reply(card.id, answer.text, confirmAge, answer.images, answer.voice);
 }
 
 /** Sends one card's answer and says how it went. Never throws. */

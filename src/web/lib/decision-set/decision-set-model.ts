@@ -10,6 +10,7 @@
 import { STALE_REPLY_MS } from "../../../shared/assistant-limits";
 import { escapeHiddenCharacters } from "../../../shared/reveal-hidden-characters";
 import type { AssistantCard } from "../../../shared/assistant-cards";
+import type { HeldVoice } from "../card-voice-reply";
 
 /** Most pictures one reply carries; the server refuses more. */
 export const MAX_REPLY_IMAGES = 5;
@@ -25,7 +26,8 @@ export interface ReplyImage {
 export type DecisionAnswer =
   | { kind: "ok"; draftSha256: string | null }
   | { kind: "choose"; optionId: string }
-  | { kind: "reply"; text: string; images: ReplyImage[] };
+  /** `voice`: the words are the transcript of a recording, sent as a voice message. */
+  | { kind: "reply"; text: string; images: ReplyImage[]; voice?: HeldVoice };
 
 export interface DecisionPick {
   answer: DecisionAnswer;
@@ -132,6 +134,7 @@ export function answerLabel(card: AssistantCard, answer: DecisionAnswer): string
   if (answer.kind === "ok") return card.payload.draft ? `OK — send the draft to ${escapeHiddenCharacters(card.payload.draft.to)}` : "OK — go ahead";
   const pictures = answer.images.length ? ` + ${answer.images.length} picture${answer.images.length === 1 ? "" : "s"}` : "";
   const text = answer.text.trim();
+  if (answer.voice) return `Voice reply: “${text}”`;
   return text ? `Reply: “${text}”${pictures}` : `Reply with ${answer.images.length} picture${answer.images.length === 1 ? "" : "s"}`;
 }
 

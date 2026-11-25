@@ -11,6 +11,7 @@ import { VoiceTimingLine } from "./voice-timing-line";
 import { originalToShow } from "@/lib/voice-message-timings";
 import type { VoiceDraft } from "@/hooks/use-voice-message-draft";
 import { cn } from "@/lib/utils";
+import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 
 interface VoiceTranscriptBlockProps {
   draft: VoiceDraft;
@@ -23,9 +24,11 @@ interface VoiceTranscriptBlockProps {
   disabled?: boolean;
   /** Send was pressed while it is being transcribed: it goes as soon as the text is there. */
   queued?: boolean;
+  /** Inside a card's answer field: no side margins, and Retry/Remove at the app's button height. */
+  compact?: boolean;
 }
 
-export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, onRetry, onRemove, onSubmit, disabled, queued }: VoiceTranscriptBlockProps) {
+export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, onRetry, onRemove, onSubmit, disabled, queued, compact }: VoiceTranscriptBlockProps) {
   const { transcript, upload } = draft;
   // "Use the original" puts Whisper's text in the box: a new editor key re-seeds the uncontrolled box.
   const [seed, setSeed] = useState<{ n: number; text: string } | null>(null);
@@ -33,7 +36,7 @@ export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, on
   return (
     <div
       data-voice-transcript=""
-      className="mx-3 mb-1 mt-2 flex flex-col gap-1 border-l-[3px] border-primary pl-2.5 md:mx-3.5"
+      className={cn("flex flex-col gap-1 border-l-[3px] border-primary pl-2.5", compact ? "my-1" : "mx-3 mb-1 mt-2 md:mx-3.5")}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex flex-wrap items-center gap-1 text-[10.5px] font-semibold tracking-wide text-primary">
@@ -56,9 +59,9 @@ export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, on
 
       {transcript.status === "error" && (transcript.interrupted ? (
         // Restored from the chat's draft with no transcript: the recording is uploaded, so it can run again.
-        <FailureNotice message={transcript.error ?? "Not transcribed yet."} retryLabel="Transcribe again" onRetry={onRetry} onRemove={onRemove} />
+        <FailureNotice message={transcript.error ?? "Not transcribed yet."} retryLabel="Transcribe again" onRetry={onRetry} onRemove={onRemove} compact={compact} />
       ) : (
-        <FailureNotice message={`Couldn't transcribe: ${transcript.error ?? "unknown error"}`} onRetry={onRetry} onRemove={onRemove} />
+        <FailureNotice message={`Couldn't transcribe: ${transcript.error ?? "unknown error"}`} onRetry={onRetry} onRemove={onRemove} compact={compact} />
       ))}
 
       {transcript.status === "ready" && (
@@ -67,7 +70,7 @@ export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, on
             <Notice>Couldn't tidy up: {transcript.cleanupError}. This is the raw transcript.</Notice>
           )}
           {upload.status === "error" && (
-            <FailureNotice message="The recording could not be uploaded, so it cannot be sent yet." onRetry={onRetry} onRemove={onRemove} />
+            <FailureNotice message="The recording could not be uploaded, so it cannot be sent yet." onRetry={onRetry} onRemove={onRemove} compact={compact} />
           )}
           <TranscriptEditor key={`${draft.id}:${seed?.n ?? 0}`} initial={seed?.text ?? transcript.initialText ?? transcript.shown} onChange={onTextChange} onSubmit={onSubmit} disabled={disabled} />
           <VoiceTimingLine
@@ -133,17 +136,18 @@ function Notice({ children, className }: { children: ReactNode; className?: stri
   );
 }
 
-function FailureNotice({ message, retryLabel = "Retry", onRetry, onRemove }: {
-  message: string; retryLabel?: string; onRetry: () => void; onRemove: () => void;
+function FailureNotice({ message, retryLabel = "Retry", onRetry, onRemove, compact }: {
+  message: string; retryLabel?: string; onRetry: () => void; onRemove: () => void; compact?: boolean;
 }) {
+  const size = compact ? TEXT_CONTROL_HEIGHT : "min-h-11 md:min-h-8";
   return (
     <Notice>
       <p>{message}</p>
       <div className="mt-1.5 flex gap-2">
-        <button type="button" onClick={onRetry} className="inline-flex min-h-11 items-center gap-1 rounded-md px-2 font-medium text-primary can-hover:hover:bg-surface-hover md:min-h-8">
+        <button type="button" onClick={onRetry} className={cn("inline-flex items-center gap-1 rounded-md px-2 font-medium text-primary can-hover:hover:bg-surface-hover", size)}>
           <RotateCw className="size-3.5" />{retryLabel}
         </button>
-        <button type="button" onClick={onRemove} className="inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-text-2 can-hover:hover:bg-surface-hover md:min-h-8">
+        <button type="button" onClick={onRemove} className={cn("inline-flex items-center gap-1 rounded-md px-2 text-text-2 can-hover:hover:bg-surface-hover", size)}>
           <Trash2 className="size-3.5" />Remove
         </button>
       </div>

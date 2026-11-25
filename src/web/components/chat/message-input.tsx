@@ -8,7 +8,8 @@ import { useVoiceMessageComposer } from "@/hooks/use-voice-message-composer";
 import { autoSendStep, composeVoiceContent } from "@/lib/voice-message-compose";
 import { toast } from "sonner";
 import { useSettingsStore } from "@/stores/settings-store";
-import { api, projectUrl, getAuthToken } from "@/lib/api-client";
+import { api } from "@/lib/api-client";
+import { discardChatUpload, uploadChatFile } from "@/lib/chat-upload-client";
 import { downscaleImage } from "@/lib/image-resize";
 import { INLINE_IMAGE_LIMITS } from "@/lib/image-resize-limits";
 import { randomId } from "@/lib/utils";
@@ -353,49 +354,13 @@ export const MessageInput = memo(function MessageInput({
 
   /** Delete an upload the user removed before sending. Best effort — nothing depends on it. */
   const discardUpload = useCallback(
-    async (serverPath: string) => {
-      if (!projectName) return;
-      const filename = serverPath.split(/[\\/]/).pop();
-      if (!filename) return;
-      try {
-        const headers: HeadersInit = {};
-        const token = getAuthToken();
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-        await fetch(`${projectUrl(projectName)}/chat/uploads/${encodeURIComponent(filename)}`, {
-          method: "DELETE",
-          headers,
-        });
-      } catch {
-        // An orphaned file is not worth surfacing to the user.
-      }
-    },
+    async (serverPath: string) => { if (projectName) await discardChatUpload(projectName, serverPath); },
     [projectName],
   );
 
   /** Upload a single file to the server, return server path */
   const uploadFile = useCallback(
-    async (file: File): Promise<string | null> => {
-      if (!projectName) return null;
-      try {
-        const form = new FormData();
-        form.append("files", file);
-        const headers: HeadersInit = {};
-        const token = getAuthToken();
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-        const res = await fetch(`${projectUrl(projectName)}/chat/upload`, {
-          method: "POST",
-          headers,
-          body: form,
-        });
-        const json = await res.json();
-        if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
-          return json.data[0].path as string;
-        }
-        return null;
-      } catch {
-        return null;
-      }
-    },
+    async (file: File): Promise<string | null> => (projectName ? (await uploadChatFile(projectName, file))?.path ?? null : null),
     [projectName],
   );
 

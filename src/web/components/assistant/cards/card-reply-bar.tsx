@@ -5,13 +5,19 @@
  * that card's manager chat word for word, not to the Assistant. Sending posts them to the card's manager chat, not to the Assistant;
  * a card that stopped waiting or is a day old asks "send anyway?" first. Closed by its X, Esc, a
  * sent reply, a project switch, or the Assistant view going away; never stored, so a reload ends it.
+ *
+ * The mic beside the field answers by voice, through the chat composer's own voice flow: the words
+ * reach the manager chat as a voice message (player, transcript), the server checking the
+ * recording's upload receipt before it calls them spoken.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Undo2, X } from "@/lib/icons";
 import { cardRefusal, replyToAssistantCard } from "@/lib/assistant-cards-api";
 import { useCardReplyStore, type CardReplyTarget } from "@/stores/assistant-card-reply-store";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
+import { useCardVoiceReply } from "@/hooks/use-card-voice-reply";
+import { CardVoiceDraftArea, CardVoiceMicButton } from "./card-voice-reply-parts";
 
 export const REPLY_PLACEHOLDER = "Your words go to the manager chat word for word…";
 export const REPLYING_TO_CARD = "Replying to card";
@@ -30,10 +36,20 @@ export function CardReplyBar(props: { target?: CardReplyTarget; onClose?: () => 
   const [error, setError] = useState<string | null>(null);
   const [question, setQuestion] = useState<string | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const textRef = useRef(text);
+  textRef.current = text;
+  const sendRef = useRef<(force: boolean) => Promise<void>>(async () => {});
+  const voiceTarget = useMemo(
+    () => (target ? { projectName: target.projectName, sessionId: target.sessionId ?? null, providerId: target.providerId } : null),
+    [target?.cardId, target?.projectName, target?.sessionId, target?.providerId],
+  );
+  const voice = useCardVoiceReply({ card: voiceTarget, getTyped: () => textRef.current, send: () => void sendRef.current(false), blocked: busy });
 
   // A new target starts fresh; the field takes the focus so the user can type at once.
   useEffect(() => {
     setText(""); setError(null); setQuestion(null);
+    // A recording made for another card never answers this one.
+    voice.remove();
     if (target) input.current?.focus();
   }, [target?.cardId]);
   // Leaving the Assistant view ends reply-to mode, and so does switching project.
@@ -47,10 +63,14 @@ export function CardReplyBar(props: { target?: CardReplyTarget; onClose?: () => 
   if (!target) return null;
 
   async function send(force: boolean) {
-    if (!target || !text.trim() || busy) return;
+    if (!target || busy) return;
+    // A recording is the whole reply: its transcript, sent as a voice message.
+    const spoken = voice.draft ? voice.reply() : null;
+    if (voice.draft ? !spoken : !text.trim()) return;
     setBusy(true); setError(null);
     try {
-      await replyToAssistantCard(target.cardId, text, force);
+      await replyToAssistantCard(target.cardId, spoken?.text ?? text, force, [], spoken ? { voice: spoken.voice } : {});
+      if (spoken) voice.sent();
       close();
     } catch (e) {
       const refusal = cardRefusal(e);
@@ -60,6 +80,9 @@ export function CardReplyBar(props: { target?: CardReplyTarget; onClose?: () => 
       setBusy(false);
     }
   }
+  sendRef.current = send;
+  /** Send or Enter: with a voice waiting, the composer's rules decide (now, when ready, or not). */
+  const submit = () => (voice.draft ? voice.requestSend() : void send(false));
 
   return (
     <div className="px-1 pt-0.5" data-card-reply-bar="">
@@ -93,6 +116,9 @@ export function CardReplyBar(props: { target?: CardReplyTarget; onClose?: () => 
         </div>
       )}
       <div className="flex items-end gap-2 rounded-2xl border border-border bg-panel-2 py-1.5 pl-3 pr-1.5">
+        <div className="min-w-0 flex-1">
+        <CardVoiceDraftArea voice={voice} onSubmit={submit} disabled={busy} />
+        {!voice.recording && !voice.draft && (
         <textarea
           ref={input}
           value={text}
@@ -101,14 +127,17 @@ export function CardReplyBar(props: { target?: CardReplyTarget; onClose?: () => 
           onKeyDown={(e) => {
             // Escape ends the reply only, not a sheet the bar sits in.
             if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(false); }
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); }
           }}
           placeholder={REPLY_PLACEHOLDER}
           aria-label="Your reply to the card"
-          className="max-h-40 min-h-11 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none placeholder:text-text-subtle"
+          className="block max-h-40 min-h-11 w-full resize-none bg-transparent py-1.5 text-sm outline-none placeholder:text-text-subtle"
         />
+        )}
+        </div>
+        <CardVoiceMicButton voice={voice} typed={text} disabled={busy} className="mb-2.5 max-md:mb-1.5" />
         <button
-          type="button" onClick={() => void send(false)} disabled={busy || !text.trim()} aria-label="Send to the manager chat"
+          type="button" onClick={submit} disabled={busy || (!text.trim() && !voice.draft)} aria-label="Send to the manager chat"
           className={cn("flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground disabled:opacity-50 md:size-9")}
         >
           <ArrowUp className="size-4" />

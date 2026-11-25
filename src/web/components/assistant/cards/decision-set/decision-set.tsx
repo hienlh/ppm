@@ -269,6 +269,7 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
               // "Send anyway" sends the pick; with none left there is nothing to confirm.
               confirm={pick ? confirms[card.id] : undefined}
               onConfirm={() => pick && void set.sendOne(card, pick.answer, true)}
+              onSendNow={(next) => void set.sendOne(card, next)}
             />
           )}
           <div className="flex min-w-0 flex-wrap items-center gap-1.5 border-t border-border-soft pt-2.5" data-decision-actions="">
