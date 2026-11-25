@@ -1,6 +1,6 @@
 /**
- * Migration 77: the notification feed. Only adds the `notification_feed` table and its two
- * indexes. A database at 76 is made by running the ladder and dropping them again, so the step
+ * Migration 83: the notification feed. Only adds the `notification_feed` table and its two
+ * indexes. A database at 82 is made by running the ladder and dropping them again, so the step
  * runs against the real earlier shape.
  */
 import { Database } from "bun:sqlite";
@@ -19,26 +19,26 @@ function fresh(): Database {
   return db;
 }
 
-/** A database the way migration 76 left it, with a project row in it. */
-function databaseAt76(): Database {
+/** A database the way migration 82 left it, with a project row in it. */
+function databaseAt82(): Database {
   const db = fresh();
   for (const i of FEED_INDEXES) db.exec(`DROP INDEX ${i}`);
   db.exec("DROP TABLE notification_feed");
   db.query("INSERT INTO projects (path, name) VALUES ('/tmp/demo', 'demo')").run();
-  db.exec("PRAGMA user_version = 76");
+  db.exec("PRAGMA user_version = 82");
   return db;
 }
 
-describe("migration 77: notification feed", () => {
+describe("migration 83: notification feed", () => {
   it("brings a fresh database to the current version with the feed table", () => {
     const db = fresh();
-    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(77);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(83);
     expect(version(db)).toBe(CURRENT_SCHEMA_VERSION);
     expect(tableNames(db)).toContain("notification_feed");
   });
 
-  it("adds the feed to a database at 76 and keeps what was there", () => {
-    const db = databaseAt76();
+  it("adds the feed to a database at 82 and keeps what was there", () => {
+    const db = databaseAt82();
     expect(tableNames(db)).not.toContain("notification_feed");
     runMigrations(db);
     expect(version(db)).toBe(CURRENT_SCHEMA_VERSION);
@@ -54,11 +54,11 @@ describe("migration 77: notification feed", () => {
     });
   });
 
-  it("stays at 76 when an index cannot be created, rather than claiming 77", () => {
-    const db = databaseAt76();
+  it("stays at 82 when an index cannot be created, rather than claiming 83", () => {
+    const db = databaseAt82();
     // A table holding the index's name makes that statement fail.
     db.exec("CREATE TABLE notification_feed_created (x)");
     expect(() => runMigrations(db)).toThrow("already a table named notification_feed_created");
-    expect(version(db)).toBe(76);
+    expect(version(db)).toBe(82);
   });
 });
