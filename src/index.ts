@@ -169,7 +169,7 @@ export async function buildProgram(): Promise<Command> {
  */
 export function resolveEntryMode(
   argv: string[],
-): "supervise" | "serve" | "edge" | "share-host" | "web-egress" | "ensure-supervisor" | "file-index-walk" | "cli" {
+): "supervise" | "serve" | "edge" | "share-host" | "web-egress" | "ensure-supervisor" | "file-index-walk" | "memory" | "cli" {
   if (argv.includes("__supervise__")) return "supervise";
   if (argv.includes("__serve__")) return "serve";
   if (argv.includes("__edge__")) return "edge";
@@ -179,6 +179,7 @@ export function resolveEntryMode(
   // PPM's watchdog task (Windows Task Scheduler): starts PPM when its last run died.
   if (argv.includes("__ensure_supervisor__")) return "ensure-supervisor";
   if (argv.includes("__file_index_walk__")) return "file-index-walk";
+  if (argv.includes("__memory__")) return "memory";
   return "cli";
 }
 
@@ -207,6 +208,10 @@ if (import.meta.main) {
       break;
     case "file-index-walk":
       await import("./services/file-index/file-index-walk-process.ts");
+      break;
+    case "memory":
+      // The server's memory host: stdout carries its JSON lines, so nothing may print there.
+      await (await import("./services/memory/memory-host.ts")).main();
       break;
     default: {
       // A command's stdout is its output (`--json`, a pipe): log lines go to stderr.

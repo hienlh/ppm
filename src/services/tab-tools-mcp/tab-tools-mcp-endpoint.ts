@@ -25,6 +25,10 @@ import { createSessionHistoryTools, type SessionHistoryTools } from "./session-h
 import { isSessionHistoryTool } from "../../shared/session-history-tools.ts";
 import { isBrowserTool } from "../../shared/web-browser-tools.ts";
 import { browserToolsUnavailable } from "../web-browser/browser-tools-availability.ts";
+import { MEMORY_TOOL_DEFINITIONS } from "./memory-tool-definitions.ts";
+import type { MemoryTools } from "./memory-tools.ts";
+import { memoryHostTools } from "../memory/memory-host-client.ts";
+import { isMemoryTool } from "../../shared/memory-tools.ts";
 
 /**
  * `/api/tab-tools-mcp` — serves the tab tools to one chat session's own agent (the MCP plumbing
@@ -32,7 +36,8 @@ import { browserToolsUnavailable } from "../web-browser/browser-tools-availabili
  * read, `open_url` a web server on the host, and `run_in_terminal` a terminal with a command
  * typed in, all on that session's devices; `read_terminal` reads the terminals of the session's
  * project. Nothing a tab shows comes back except, for an HTML page, the check of how it rendered.
- * The session-history tools (`session-history-tools.ts`) search and read the project's other chats.
+ * The session-history tools (`session-history-tools.ts`) search and read the project's other chats,
+ * and the memory tools (`memory-tools.ts`) search, read, write and forget PPM's shared memories.
  */
 
 type Request = (sessionId: string, req: TabOpenAsk, waitMs: number) => Promise<TabOpenOutcome>;
@@ -57,6 +62,8 @@ export function createTabToolsMcpHandler(deps: {
   openUrl: OpenUrlTool;
   /** `search_sessions`, `list_session_turns`, `read_session_turns`. */
   sessionHistory: SessionHistoryTools;
+  /** `memory_search`, `memory_read`, `memory_write`, `memory_forget`; listed only when given. */
+  memory?: MemoryTools;
   resolveTarget?: (input: unknown, binding: TabToolsBinding, opts?: TabTargetOptions) => Promise<TabTargetOutcome>;
   /** Why the `browser_*` tools are off (Settings → Web Browser), or null. Unset: always off. */
   browserUnavailable?: () => string | null;
@@ -112,7 +119,7 @@ export function createTabToolsMcpHandler(deps: {
     serverName: "ppm-tabs",
     tokenRequired: "A chat session token is required",
     resolveToken: deps.resolveToken,
-    tools: TAB_TOOLS_MCP_TOOL_DEFINITIONS,
+    tools: deps.memory ? [...TAB_TOOLS_MCP_TOOL_DEFINITIONS, ...MEMORY_TOOL_DEFINITIONS] : TAB_TOOLS_MCP_TOOL_DEFINITIONS,
     // The browser tools follow Settings → Web Browser (the browser on, and AI control on), not
     // Settings → Tools, so a chat whose user has either off is never offered them.
     unavailable: (name) => {
@@ -131,6 +138,7 @@ export function createTabToolsMcpHandler(deps: {
       if (name === READ_TERMINAL_TOOL) return deps.terminal.read(binding, args);
       if (name === RUN_IN_TERMINAL_TOOL) return deps.terminal.run(binding, args);
       if (isSessionHistoryTool(name)) return deps.sessionHistory.call(binding, name, args);
+      if (isMemoryTool(name) && deps.memory) return deps.memory.call(binding, name, args);
       const resolved = await resolveTarget(args.path, binding, name === OPEN_FILE_TOOL ? { folder: true } : undefined);
       if (!resolved.ok) return textResult(resolved.error, true);
       if (name === OPEN_FILE_TOOL) return openFile(binding, resolved.target, args);
@@ -196,4 +204,5 @@ export const tabToolsMcpHandler = createTabToolsMcpHandler({
   }),
   sessionHistory: createSessionHistoryTools({ canonical: canonicalTabSession }),
   browserUnavailable: browserToolsUnavailable,
+  memory: memoryHostTools(),
 });

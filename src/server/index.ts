@@ -44,6 +44,7 @@ import { lspWebSocket } from "./ws/lsp.ts";
 import { androidWebSocket } from "./ws/android.ts";
 import { lspManager } from "../services/lsp/lsp-manager.ts";
 import { stopCommandScopesSync } from "../services/chat-session-processes/session-processes.service.ts";
+import { stopMemoryHost } from "../services/memory/memory-host-client.ts";
 import { isRemoteDesktopEnabled } from "../services/remote-desktop/remote-desktop-flag.ts";
 import { isAndroidEmulatorEnabled } from "../services/android/android-flag.ts";
 import { ok, err } from "../types/api.ts";
@@ -364,6 +365,10 @@ import { setRememberedApprovalsChanged } from "../services/remembered-approvals/
 import { REMEMBERED_APPROVALS_CHANGED_EVENT } from "../shared/remembered-approvals.ts";
 import { broadcastGlobalEvent } from "./ws/global.ts";
 setRememberedApprovalsChanged(() => broadcastGlobalEvent({ type: REMEMBERED_APPROVALS_CHANGED_EVENT }));
+// PPM's shared memory in Settings; its changes and the local model's install go out on /ws/global.
+import { memoryRoutes, wireMemoryEvents } from "./routes/memory.ts";
+app.route("/api/memory", memoryRoutes);
+wireMemoryEvents();
 import { notificationRoutes } from "./routes/notifications.ts";
 app.route("/api/notifications", notificationRoutes);
 app.route("/api/settings/mcp", mcpRoutes);
@@ -1515,6 +1520,7 @@ if (process.argv.includes("__serve__")) {
     // Chats' commands and MCP servers run in scopes outside PPM's cgroup, so stopping PPM's unit
     // no longer takes them along.
     try { stopCommandScopesSync(); } catch {}
+    try { stopMemoryHost(); } catch {}
     try { server.stop(true); } catch {}
     process.exit(0);
   };
