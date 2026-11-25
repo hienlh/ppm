@@ -162,6 +162,8 @@ export class ViewerHub {
       // The person's own input while an AI acts takes the browser back from it.
       if (aiControlLock.state().active && msg.type !== "releaseAll") aiControlLock.takeBack();
       this.host.touchInput();
+      // A repaint Chrome dropped while the pacer held it is fetched once the person stops.
+      if (msg.type !== "releaseAll") this.pacer?.noteInput();
       if (active && this.input) await this.input.send(msg, this.viewport, active.sessionId);
       return;
     }

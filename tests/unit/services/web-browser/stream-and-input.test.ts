@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolveAddress, isNavigableUrl, SEARCH_URL } from "../../../../src/services/web-browser/address-bar.ts";
 import { inputToCdp, type Viewport } from "../../../../src/services/web-browser/input-bridge.ts";
-import { ScreencastPacer } from "../../../../src/services/web-browser/screencast-pacer.ts";
+import { ScreencastPacer, SETTLE_MS } from "../../../../src/services/web-browser/screencast-pacer.ts";
 import { CdpConnection, type CdpTransport } from "../../../../src/services/web-browser/cdp-connection.ts";
 import { decodeBinaryFrame } from "../../../../src/shared/web-browser-binary-frames.ts";
 
@@ -117,6 +117,74 @@ describe("ScreencastPacer", () => {
     s.pacer.ack(1);
     await Bun.sleep(5);
     expect(s.acks()).toEqual([1, 2]);
+  });
+
+  test("acks one frame per interval, every frame in turn", async () => {
+    const s = setup(10); // 100 ms interval
+    await s.pacer.start("S", { cssWidth: 390, cssHeight: 844, dpr: 1, mobile: true });
+    s.frame(1);
+    s.frame(2); // Chrome keeps more than one in flight
+    s.pacer.ack(1); // the viewer drew both
+    s.pacer.ack(2);
+    await Bun.sleep(20);
+    expect(s.acks()).toEqual([1]); // the first goes out at once
+    await Bun.sleep(100);
+    expect(s.acks()).toEqual([1, 2]);
+    await Bun.sleep(120);
+    expect(s.acks()).toEqual([1, 2]); // nothing left to ack
+  });
+
+  test("times the next ack from the previous ack, so Chrome's capture delay falls inside the interval", async () => {
+    const s = setup(10); // 100 ms interval
+    await s.pacer.start("S", { cssWidth: 390, cssHeight: 844, dpr: 1, mobile: true });
+    const t0 = Date.now();
+    s.frame(1);
+    s.pacer.ack(1);
+    expect(s.acks().length).toBe(1);
+    await Bun.sleep(40); // Chrome answers the ack 40 ms later
+    s.frame(2);
+    s.pacer.ack(2);
+    while (s.acks().length < 2 && Date.now() - t0 < 300) await Bun.sleep(2);
+    const at = Date.now() - t0;
+    expect(at).toBeGreaterThan(90);
+    expect(at).toBeLessThan(125); // not 140: one interval after the first ack
+  });
+
+  test("restarts the stream once the person stops, when Chrome was held since their input", async () => {
+    const s = setup(10);
+    await s.pacer.start("S", { cssWidth: 390, cssHeight: 844, dpr: 1, mobile: true });
+    s.pacer.noteInput();
+    s.frame(1);
+    s.frame(2); // held for the interval: a repaint meanwhile would be dropped
+    await Bun.sleep(SETTLE_MS + 40);
+    expect(s.sent.filter((m) => m.method === "Page.startScreencast").length).toBe(2);
+    expect(s.sent.filter((m) => m.method === "Page.stopScreencast").length).toBe(1);
+  });
+
+  test("does not restart the stream after input when Chrome was never held", async () => {
+    const s = setup(10);
+    await s.pacer.start("S", { cssWidth: 390, cssHeight: 844, dpr: 1, mobile: true });
+    s.pacer.noteInput();
+    await Bun.sleep(SETTLE_MS + 40);
+    expect(s.sent.filter((m) => m.method === "Page.startScreencast").length).toBe(1);
+  });
+
+  test("a restart keeps the viewer's count of undrawn pictures", async () => {
+    const s = setup();
+    await s.pacer.start("S", { cssWidth: 390, cssHeight: 844, dpr: 1, mobile: true });
+    s.frame(1);
+    s.frame(2);
+    await Bun.sleep(5);
+    s.pacer.noteInput();
+    await Bun.sleep(SETTLE_MS + 30);
+    const before = s.acks().length;
+    s.frame(3); // the restarted stream's first frame
+    await Bun.sleep(10);
+    expect(s.acks().length).toBe(before); // still two undrawn pictures: held
+    s.pacer.ack(1);
+    s.pacer.ack(2);
+    await Bun.sleep(10);
+    expect(s.acks().length).toBe(before + 1);
   });
 
   test("ignores frames of another page session", async () => {
