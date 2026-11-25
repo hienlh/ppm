@@ -2146,6 +2146,38 @@ Download Whisper and a model (may take minutes); waits until it is done
 
 Remove the Whisper build and models PPM installed
 
+### `ppm speech learned`
+
+Words voice messages taught PPM: list them, undo one, or restore one
+
+**Usage:** `ppm speech learned [options] [command]`
+
+#### `ppm speech learned list`
+
+List a project's learned words, the pairs still being learned, and the undone ones
+
+**Options:**
+- `--project <name>` — Which project's lists (default: the PPM Assistant, "__assistant__")
+- `--json` — Print JSON
+
+#### `ppm speech learned remove`
+
+Undo a learned word, or stop learning a pair (by the word it means); it is not learned again until restored
+
+**Options:**
+- `--project <name>` — Which project's lists (default: the PPM Assistant, "__assistant__")
+
+**Usage:** `ppm speech learned remove [options] <word>`
+
+#### `ppm speech learned restore`
+
+Bring back an undone word: learned again, or counted again where it left off
+
+**Options:**
+- `--project <name>` — Which project's lists (default: the PPM Assistant, "__assistant__")
+
+**Usage:** `ppm speech learned restore [options] <word>`
+
 ## `ppm start`
 
 Start the PPM server (background by default)
