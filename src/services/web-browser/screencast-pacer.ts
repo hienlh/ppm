@@ -29,11 +29,18 @@
  * The interval comes from the setting's ceiling (Auto: 30 a second; LAN measured 29.8 at it).
  * The two-picture window is what follows a slower link: over 5 Mbit/s it settles at ~8 full-size
  * pictures a second whatever the ceiling.
+ *
+ * While the person scrolls over such a link, the pictures are made smaller (`screencast-scale.ts`:
+ * half size took 5 Mbit/s scrolling from 8.3 to 12.1 pictures a second) and the stream goes back
+ * to full size with the settle refresh above, so the page is sharp once it stands still. A link
+ * that keeps up (`screencast-link.ts`) never gets smaller pictures.
  */
 import type { CdpConnection } from "./cdp-connection.ts";
 import { encodePictureFrame } from "../../shared/web-browser-binary-frames.ts";
 import type { Viewport } from "./input-bridge.ts";
 import { streamFpsCap, type WebBrowserSettings } from "../../shared/web-browser-settings.ts";
+import { LinkMonitor } from "./screencast-link.ts";
+import { chooseScale, type ScreencastScale } from "./screencast-scale.ts";
 
 export const MAX_IN_FLIGHT = 2;
 /** Quiet time after the person's last input before a held stream is refreshed. */
@@ -59,6 +66,9 @@ export class ScreencastPacer {
   /** The person acted, and Chrome has been held since: a repaint may be missing. */
   private inputPending = false;
   private heldSinceInput = false;
+  /** Size of the pictures relative to full size; below 1 only while scrolling over a slow link. */
+  private scale: ScreencastScale = 1;
+  readonly link = new LinkMonitor();
   private readonly off: () => void;
 
   constructor(
@@ -105,10 +115,14 @@ export class ScreencastPacer {
     await this.stopCurrent();
     this.sessionId = sessionId;
     this.viewport = vp;
-    if (newViewer) this.inFlight = 0;
+    if (newViewer) {
+      this.inFlight = 0;
+      this.scale = 1;
+      this.link.reset();
+    }
     this.chromeUnacked = 0;
     this.lastAckAt = 0;
-    const scale = Math.min(vp.dpr, 2);
+    const scale = this.scale < 1 ? this.scale : Math.min(vp.dpr, 2);
     await this.cdp.send("Page.startScreencast", {
       format: "jpeg",
       quality: this.opts().jpegQuality,
@@ -120,24 +134,39 @@ export class ScreencastPacer {
 
   /** The viewer drew picture `seq`. Older acks are counted the same: order is all that matters. */
   ack(_seq: number): void {
+    this.link.onViewerAck();
     if (this.inFlight > 0) this.inFlight--;
     this.maybeAck();
   }
 
-  /** The person sent input to the page. */
-  noteInput(): void {
+  /** The person sent input to the page; `scrolling` for a wheel or a finger. */
+  noteInput(scrolling = false): void {
     if (!this.sessionId) return;
     this.inputPending = true;
     if (this.chromeUnacked > 0) this.heldSinceInput = true;
+    if (scrolling && this.scale === 1) {
+      const scale = chooseScale({ moving: true, linkFps: this.link.linkFps(), capFps: this.fps() });
+      if (scale < 1) {
+        this.scale = scale;
+        void this.refresh();
+      }
+    }
     if (this.settleTimer) clearTimeout(this.settleTimer);
     this.settleTimer = setTimeout(() => this.settle(), SETTLE_MS);
   }
 
+  /** Size of the pictures relative to full size right now. */
+  get pictureScale(): ScreencastScale {
+    return this.scale;
+  }
+
   private settle(): void {
     this.settleTimer = null;
-    const stale = this.heldSinceInput;
+    // Back to full size once the person stops: the sharp picture is the settle refresh.
+    const stale = this.heldSinceInput || this.scale < 1;
     this.inputPending = false;
     this.heldSinceInput = false;
+    this.scale = 1;
     if (stale) void this.refresh();
   }
 
@@ -157,7 +186,10 @@ export class ScreencastPacer {
 
   private maybeAck(): void {
     if (this.chromeUnacked === 0 || this.sessionId === null) return;
-    if (this.inFlight >= MAX_IN_FLIGHT) return this.hold();
+    if (this.inFlight >= MAX_IN_FLIGHT) {
+      this.link.onViewerLimited();
+      return this.hold();
+    }
     const now = Date.now();
     const wait = this.lastAckAt + this.interval() - now;
     if (wait > 0) {

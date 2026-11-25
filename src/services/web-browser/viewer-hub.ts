@@ -164,7 +164,7 @@ export class ViewerHub {
       if (aiControlLock.state().active && msg.type !== "releaseAll") aiControlLock.takeBack();
       this.host.touchInput();
       // A repaint Chrome dropped while the pacer held it is fetched once the person stops.
-      if (msg.type !== "releaseAll") this.pacer?.noteInput();
+      if (msg.type !== "releaseAll") this.pacer?.noteInput(msg.type === "wheel" || msg.type === "touch");
       if (active && this.input) await this.input.send(msg, this.viewport, active.sessionId);
       return;
     }

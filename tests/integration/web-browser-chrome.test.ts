@@ -138,6 +138,17 @@ describe.skipIf(!hasBrowser)("PPM's browser with a real Chrome", () => {
     await until(async () => (await pageValue("document.getElementById('q').value")) === "thời tiết Hà Nội");
   }, 20_000);
 
+  it("a restarted screencast sends a still page as it is (what the settle refresh relies on)", async () => {
+    await pageValue("document.activeElement?.blur(); true"); // no caret blinking: nothing repaints
+    await Bun.sleep(700);
+    const before = pictures;
+    await Bun.sleep(700);
+    expect(pictures).toBe(before);
+    const pacer = (viewerHub as unknown as { pacer: { refresh(): Promise<void> } }).pacer;
+    await pacer.refresh();
+    await until(() => pictures > before, 5000);
+  }, 20_000);
+
   it("refuses PPM's own port and file://", async () => {
     received.length = 0;
     await viewerHub.onMessage(viewer, { type: "navigate", url: `http://127.0.0.1:${fakePpm!.port}/` });

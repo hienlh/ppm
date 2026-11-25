@@ -1079,7 +1079,10 @@ setting `web_browser.enabled`); Settings → Web Browser holds every switch.
   which makes Chrome send the page as it is (over 5 Mbit/s with a 93 ms round trip, half the
   keystrokes on a still page used to show only at the caret's next blink, ~660 ms). Acking Chrome at
   once fixed that too but made it encode every repaint (CPU 30 % → 80 % of a core while scrolling).
-  The last viewer to connect controls; others see "Use here".
+  While the person scrolls (wheel or finger) over a link that holds the stream back — the pacer
+  waiting on the viewer's acks (`screencast-link.ts`) — the pictures are made 0.75 or 0.5 of full
+  size (`screencast-scale.ts`), and the settle refresh brings them back to full size; a link that
+  keeps up never gets smaller pictures. The last viewer to connect controls; others see "Use here".
 - **Input** (`input-bridge.ts`, `use-web-browser-input.ts`): pointer and touch as fractions of the
   picture; typing goes through a hidden textarea so an IME can compose, and arrives as
   `Input.imeSetComposition` / `Input.insertText` — key codes only for keys with no character.

@@ -195,6 +195,36 @@ describe("ScreencastPacer", () => {
     expect(fixed.pacer.fps()).toBe(12);
   });
 
+  test("scrolling over a link that holds the stream back makes pictures smaller, until the person stops", async () => {
+    const s = setup(12, true);
+    await s.pacer.start("S", { cssWidth: 1440, cssHeight: 800, dpr: 1, mobile: false });
+    const now = Date.now();
+    for (let i = 0; i <= 5; i++) s.pacer.link.onViewerAck(now - 1000 + i * 200); // 5 a second
+    s.pacer.link.onViewerLimited(now - 10);
+    s.pacer.noteInput(true);
+    expect(s.pacer.pictureScale).toBe(0.5);
+    await Bun.sleep(10);
+    const starts = () => s.sent.filter((m) => m.method === "Page.startScreencast").map((m) => m.params.maxWidth);
+    expect(starts()).toEqual([1440, 720]);
+    s.pacer.noteInput(true); // still scrolling: no further restart
+    await Bun.sleep(10);
+    expect(starts()).toEqual([1440, 720]);
+    await Bun.sleep(SETTLE_MS + 30);
+    expect(s.pacer.pictureScale).toBe(1);
+    expect(starts()).toEqual([1440, 720, 1440]);
+  });
+
+  test("scrolling over a link that keeps up keeps full-size pictures", async () => {
+    const s = setup(12, true);
+    await s.pacer.start("S", { cssWidth: 1440, cssHeight: 800, dpr: 1, mobile: false });
+    const now = Date.now();
+    for (let i = 0; i <= 5; i++) s.pacer.link.onViewerAck(now - 1000 + i * 200);
+    s.pacer.noteInput(true);
+    expect(s.pacer.pictureScale).toBe(1);
+    await Bun.sleep(SETTLE_MS + 30);
+    expect(s.sent.filter((m) => m.method === "Page.startScreencast").length).toBe(1);
+  });
+
   test("ignores frames of another page session", async () => {
     const s = setup();
     await s.pacer.start("OTHER", { cssWidth: 100, cssHeight: 100, dpr: 1, mobile: false });
