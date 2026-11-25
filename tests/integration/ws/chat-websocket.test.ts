@@ -405,6 +405,38 @@ describe("Chat WebSocket — New Protocol", () => {
     close();
   });
 
+  it("Stop keeps what was queued, sends none of it, and Send now sends it afterwards", async () => {
+    const session = await chatService.createSession("mock", {});
+    const { ws, messages, waitForType, waitForNthType, close } = await connectWs(session.id);
+    await waitForType("session_state");
+    const provider = providerRegistry.get("mock")! as any;
+    const originalPush = provider.pushMessage;
+    // A provider that takes a message mid-turn, with no queue of its own: PPM holds what is queued.
+    provider.pushMessage = async () => true;
+    try {
+      ws.send(JSON.stringify({ type: "message", content: "hello" }));
+      await waitForType("text");
+      ws.send(JSON.stringify({ type: "message", content: "queued while running", queued: true }));
+      expect((await waitForType("queue_state")).queue).toHaveLength(1);
+
+      ws.send(JSON.stringify({ type: "cancel" }));
+      // The stopped turn ends; nothing it held may open a turn of its own after it.
+      await waitForType("done");
+      await new Promise((r) => setTimeout(r, 500));
+      expect(messages.filter((m) => m.type === "user_message")).toEqual([]);
+      const kept = messages.filter((m) => m.type === "queue_state").at(-1)!.queue;
+      expect(kept).toHaveLength(1);
+      expect(kept[0]).toMatchObject({ content: "queued while running", paused: true });
+
+      // The person sends it themselves: it opens a turn, and the queue empties.
+      const donesBefore = messages.filter((m) => m.type === "done").length;
+      ws.send(JSON.stringify({ type: "queue_send_now" }));
+      expect((await waitForType("user_message")).content).toBe("queued while running");
+      expect(messages.filter((m) => m.type === "queue_state").at(-1)!.queue).toEqual([]);
+      await waitForNthType("done", donesBefore + 1);
+    } finally { if (originalPush) provider.pushMessage = originalPush; else delete provider.pushMessage; close(); }
+  });
+
   it("cancel with no active stream is a no-op", async () => {
     const session = await chatService.createSession("mock", {});
     const { ws, messages, waitForType, close } = await connectWs(session.id);
@@ -902,22 +934,27 @@ describe("Chat reply delivery", () => {
     expect(decodeReply(history.find((m) => m.role === "user")!.content).replyTo).toEqual(replyTo);
     c1.close(); c2.close(); c3.close();
   });
-  it("pushes the encoded snapshot for now, next and later followups", async () => {
+  it("queues a reply follow-up sent mid-turn with its encoded snapshot, and Send now pushes it", async () => {
     const session = await chatService.createSession("mock", {});
     const client = await connectWs(session.id); await client.waitForType("session_state");
     const provider = providerRegistry.get("mock")! as any;
     const originalPush = provider.pushMessage;
-    const captured: Array<{ content: string; priority: string }> = [];
-    provider.pushMessage = async (_id: string, content: string, opts: any) => { captured.push({ content, priority: opts.priority }); };
+    const captured: string[] = [];
+    provider.pushMessage = async (_id: string, content: string) => { captured.push(content); return true; };
     try {
       client.ws.send(JSON.stringify({ type: "message", content: "first" }));
       await client.waitForType("text");
-      for (const priority of ["now", "next", "later"]) {
-        client.ws.send(JSON.stringify({ type: "message", content: priority, priority, replyTo: reference(session.id) }));
-        for (let i = 0; i < 100 && captured.length < ["now", "next", "later"].indexOf(priority) + 1; i++) await Bun.sleep(5);
-      }
-      expect(captured.map((v) => v.priority)).toEqual(["now", "next", "later"]);
-      for (const sent of captured) expect(decodeReply(sent.content)).toEqual({ content: sent.priority, replyTo: reference(session.id) });
+      client.ws.send(JSON.stringify({ type: "message", content: "follow-up", queued: true, replyTo: reference(session.id) }));
+      const state = await client.waitForType("queue_state");
+      expect(state.queue).toHaveLength(1);
+      expect(decodeReply(state.queue[0].content)).toEqual({ content: "follow-up", replyTo: reference(session.id) });
+      // Held, not pushed, until the AI is told to read it.
+      expect(captured).toEqual([]);
+      client.ws.send(JSON.stringify({ type: "queue_send_now" }));
+      const echoed = await client.waitForType("user_message");
+      expect(decodeReply(echoed.content)).toEqual({ content: "follow-up", replyTo: reference(session.id) });
+      expect(captured.map((c) => decodeReply(c))).toEqual([{ content: "follow-up", replyTo: reference(session.id) }]);
+      expect((await client.waitForNthType("queue_state", 2)).queue).toEqual([]);
       await client.waitForType("done");
     } finally { if (originalPush) provider.pushMessage = originalPush; else delete provider.pushMessage; client.close(); }
   });

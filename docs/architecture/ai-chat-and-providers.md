@@ -20,6 +20,9 @@ Async questions arrive on completed `agentMessage` items with `questions`, not
 as approval requests. Live events and rollout history map them to an inline
 `RequestUserInput` card. Answering or skipping sends a normal follow-up message,
 so it works during a turn and after completion without blocking the agent.
+Mid-turn that message goes out as Send now (steered into the running turn), not
+held in the queue until the turn ends — the agent asked so it could act on the
+answer, and a queued answer left the card looking unanswered.
 The reply includes the originating item ID; the card derives its answered state
 from that user message after reload. Async cards do not take keyboard focus away
 from the composer. Nested agent questions are read-only in the parent transcript.
@@ -477,7 +480,7 @@ PPM uses a **persistent streaming session** model instead of per-message query e
 - Provider maintains **long-lived AsyncGenerator streaming input** per chat session (not per message)
 - Follow-up messages **push into the existing generator** instead of abort-and-replace
 - **Single streaming loop** per session decoupled from WebSocket message handler
-- Message priority support: `now` (interrupt current), `next` (queue first), `later` (queue at end)
+- Messages typed while a turn runs wait in a queue shown above the composer (see *Message queue* below)
 - Supports image attachments in messages
 
 **Design Benefits:**
@@ -496,15 +499,12 @@ MessageInput.tsx calls useChat.sendMessage()
     ↓
 useChat opens WebSocket: WS /ws/project/:name/chat/:sessionId
     ↓
-Sends: { type: "message", content: "Debug...", priority?: "now"|"next"|"later" }
+Sends: { type: "message", content: "Debug...", queued?: true, sendNow?: true }
     ↓
 WS handler in chat.ts receives message
     ↓
 If already streaming with different content → abort previous + wait cleanup
-If streaming, new message priority determines queue behavior:
-    • priority: "now" → abort current, restart with new content
-    • priority: "next" → push into pending queue (higher priority)
-    • priority: "later" → push to end of queue (FIFO)
+If streaming, the message joins the session's queue (see Message queue below)
     ↓
 runStreamLoop() executes in detached async context
     ↓
@@ -537,6 +537,51 @@ Phase transitions to idle, clients can send new message
     ↓
 useChat saves message to store, displays in chat history
 ```
+
+### Message queue
+
+A message a person sends while a turn runs works like Claude Code's queue. It is not drawn in the
+conversation. Instead it waits in a stack above the composer (`queued-messages-stack.tsx`), with
+**Send now**, **Edit** (back into the composer) and **Remove**. Ctrl/Cmd+Enter does Send now. The
+queue is the server's (`SessionEntry.queue`, `src/server/ws/chat-message-queue.ts`), so every device
+shows the same stack: it goes out as `queue_state` and in the greeting's `session_state.queue`.
+
+- **Claude** gets the message at once, pushed with the entry's id as the SDK message `uuid`. The
+  CLI reads it at the turn's next step, as soon as the running tool calls finish, or right after
+  the turn. It reports each step as a `command_lifecycle` frame, which the provider yields as
+  `queue_lifecycle`. On `started` the entry leaves the stack and joins the conversation
+  (`user_message` to every device, the sender's included). Edit and Remove call
+  `cancelAsyncMessage(uuid)`, which answers `false` once the CLI has started reading. Send now
+  calls `backgroundTasks()` (running shells and subagents move to the background, and the CLI reads
+  the queue in the same turn); when there is nothing to move, it calls `interrupt()`, which keeps
+  the queue and sends it next.
+- **Every other provider** (Codex, Antigravity, …): PPM holds the entries and sends them as one
+  message when the turn ends. Send now pushes them right away; Codex steers that push into the
+  running turn.
+- **Stop** sends none of it. Every entry stays in the stack, paused (`pauseQueue`, shown as "held
+  after Stop"), and goes out only when the person presses Send now (with no turn running, it opens
+  a turn of its own) or takes it back with Edit. Claude's own queue dies with the stopped process,
+  so PPM holds the entries from then on.
+- **A crash** kills Claude's own queue together with its process too; what was queued, and not
+  paused, is sent once the stream ends.
+- **Queue and Send now are the only two modes.** A browser message carries no `priority`: the old
+  Interrupt / Queue / Later toggle is gone, and `later` remains only for PPM's own senders
+  (schedules, the Assistant, extensions).
+- **Merging into one message.** Queued messages are merged by decoding each message's blocks and
+  encoding them once (a block decodes only at the end of a message). One message carries one reply
+  and one set of turn references, so a second reply waits for the next turn (`mergeablePrefix`).
+- **Send now needs a command old enough to be a task.** `backgroundTasks()` moves a Bash command
+  only after the CLI has registered it as a task, about 3 s after it starts. Before that, the
+  call still answers `true` and changes nothing. So the provider interrupts the turn unless the CLI
+  starts reading the queue within 1.5 s (`SEND_NOW_GRACE_MS`). The interrupted turn's
+  `error_during_execution` result is an ordinary end, not an error. Every turn result takes and
+  clears that flag, so an interrupt that met a turn already ending cannot make a later turn's real
+  error look like a success.
+- **Mid-turn delivery format.** A queued message the CLI reads mid-turn reaches the API inside a
+  `<system-reminder>`, in a trailing `role: "system"` message, beside the tool result.
+
+e2e: `PPM_PLAYWRIGHT_MODULE=<playwright-core>/index.mjs node tests/e2e/chat-queue-e2e.mjs`. It runs the
+real Claude CLI against the fake API in `fixtures/chat-queue-server.ts`.
 
 ### Session State Management
 
