@@ -10,7 +10,7 @@ export { until, sleep };
 export function loopKit({ web, fx, tg, page, shotsDir, owner, record }) {
   const data = async (path, init) => (await fx.api(path, init)).data;
   const kit = {
-    web, fx, tg, page, owner, record,
+    web, fx, tg, page, owner, record, shotsDir,
     /** The chat's own turns as the scripted provider saw them, oldest first. */
     turnsIn: async (sessionId) => (await fx.state()).turns.filter((t) => t.sessionId === sessionId),
     callsOf: (label) => fx.recordsOf(label),

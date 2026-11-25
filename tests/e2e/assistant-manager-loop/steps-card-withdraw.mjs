@@ -77,6 +77,10 @@ export async function step15(k, s) {
   await k.idle(s.aChat);
 
   // PPM: the replaced card, opened from its folded line, says what replaced it, with Restore.
+  // The step before leaves Settings open as a window, which the page restores over everything:
+  // forget it, then start from the Assistant itself.
+  await k.page.evaluate(() => localStorage.removeItem("ppm-windows"));
+  await k.page.goto(`${k.web}/project/alpha/assistant`, { waitUntil: "domcontentloaded" });
   const fold = k.body().locator("[data-answered-card]", { hasText: A }).last();
   await fold.waitFor({ timeout: 20000 });
   assert.match(await fold.innerText(), /Replaced by/);
@@ -85,11 +89,16 @@ export async function step15(k, s) {
   await opened.locator("[data-card-withdrawn-actions]").waitFor({ timeout: 10000 });
   await opened.scrollIntoViewIfNeeded();
   await k.shot("30-replaced-card-restore-1440");
-  // The card that replaced it says so.
-  await k.streamCard("needs_decision", B).locator("[data-card-replaces]").waitFor({ timeout: 10000 });
+  // Show new card takes the user to B in the set of decisions, which says what it replaces.
+  assert.deepEqual((await k.cards()).find((x) => x.id === filed.cardId)?.payload.supersedes, [{ id: a.id, title: A }]);
+  await opened.getByRole("button", { name: "Show new card" }).click();
+  const replacesLine = k.body().locator("[data-card-replaces]:visible", { hasText: A }).first();
+  await replacesLine.waitFor({ timeout: 10000 });
+  await replacesLine.scrollIntoViewIfNeeded();
+  await k.shot("30b-new-card-replaces-1440");
 
   // The manager chat, with its report and withdraw tool cards.
-  await k.streamCard("needs_decision", B).getByRole("button", { name: "Open chat" }).click();
+  await k.page.goto(`${k.web}/project/alpha?openChat=claude/${s.aChat}`, { waitUntil: "domcontentloaded" });
   const toolCard = k.page.locator('[data-ppm-tool-card*="report_withdraw"]:visible').last();
   await toolCard.waitFor({ timeout: 20000 });
   assert.match(await toolCard.innerText(), /Withdrew cards/);
