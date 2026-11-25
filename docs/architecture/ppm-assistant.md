@@ -1437,7 +1437,9 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   anyway?" (`force`), so the conversation under the card goes on; and "Send anyway" for a card still
   waiting sends `confirmAge` (`cardDecided` in `assistant-telegram-card-replies.ts`). A Telegram photo (or an
   album, gathered by `media_group_id`) sent as a reply to a card goes the same way, the largest copy
-  under those limits. `POST …/dismiss` takes reports
+  under those limits, and so does a voice message, once read: its transcript goes as the words and
+  the server writes the voice part (`voice` on the reply, accepted from the Telegram channel only;
+  see `ai-chat-and-providers.md` → Voice messages). `POST …/dismiss` takes reports
   and the budget card. Status changes are compare-and-set, so a second answer gets
   `already_answered`; a request answered anywhere else resolves its card; a request that no longer
   waits resolves it with nothing run.

@@ -22,7 +22,7 @@
 import type { TaskView } from "../../shared/ppm-tasks.ts";
 import { formatTaskRef } from "../../shared/ppm-tasks-refs.ts";
 import { assistantClock, type AssistantClock } from "../assistant-wake/assistant-clock.ts";
-import { forwardUserWordsAboutTask, type ForwardTarget, type TaskWordsInput, type TaskWordsResult } from "../assistant-cards/forward-verbatim.ts";
+import { forwardUserWordsAboutTask, type ForwardTarget, type SpokenWords, type TaskWordsInput, type TaskWordsResult } from "../assistant-cards/forward-verbatim.ts";
 import { readSessionState, workingSessionFor } from "../ppm-tasks/link-state/session-link-state-reader.ts";
 import { getTaskProject } from "../ppm-tasks/ppm-tasks-projects.service.ts";
 import { isHandedOff, managerSessionFor } from "../ppm-tasks/ppm-tasks-write.ts";
@@ -146,6 +146,8 @@ export interface TaskWordsMessage {
   /** Someone else's words: a forward, or text an inline bot wrote. */
   notTheUsers: boolean;
   hasPhoto: boolean;
+  /** A voice message the bridge stored and read; `text` is its transcript. */
+  voice?: SpokenWords;
 }
 
 interface Armed {
@@ -325,7 +327,7 @@ export class AssistantTelegramTaskMessages {
       const ref = await resolveTaskRef(task.id, { anyProject: true });
       if (!ref.ok) return { ok: false, html: notSentHtml(chat, ref.error) };
       const result = await (this.deps.forward ?? realForward)({
-        text: m.text, target: chat.target, taskRef: ref.ref, chatKind: chat.kind,
+        text: m.text, target: chat.target, taskRef: ref.ref, chatKind: chat.kind, ...(m.voice ? { voice: m.voice } : {}),
         actor: { channel: "telegram", telegramChatId: chatId, telegramMessageId: m.messageId },
         // The chat's answer comes back here, under the user's own message.
         followUp: {

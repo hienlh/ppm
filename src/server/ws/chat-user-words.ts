@@ -9,6 +9,7 @@
  */
 import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
 import { defuseUserWordsHeader, type UserWordsReference } from "../../shared/user-words-block.ts";
+import { encodeVoicePart, isStoredVoicePath } from "../../shared/voice-message.ts";
 import type { TaskReference } from "../../shared/chat-task-ref.ts";
 import { neutralizePpmTags } from "../../services/assistant-watch/watch-event-text.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
@@ -35,6 +36,13 @@ export interface DeliverUserWordsInput {
    * naming the file opens the message so the chat draws it as the composer's images are drawn.
    */
   images?: readonly ReplyImage[];
+  /**
+   * The words were spoken: a voice message the server stored in PPM's uploads folder and had
+   * Whisper read, `text` being its transcript. The voice part (marker, the note that the words may
+   * be misheard, the transcript) is built here from these, after the text was neutralized, so the
+   * user's words can neither forge nor move it.
+   */
+  voice?: { path: string; durationSec: number };
   userWords: UserWordsReference;
   /**
    * The task the words are about (a Telegram message sent to a task's chat), read from the task
@@ -88,12 +96,14 @@ const inlineImageMarker = (path: string): string => `[Attached image (contents i
  * the text was neutralized, so the text can neither forge nor alter them), then the user's words,
  * then the user-words block — the only block that decodes.
  */
-export function userWordsContent(input: Pick<DeliverUserWordsInput, "text" | "images" | "userWords" | "taskRefs" | "projectName">): string {
+export function userWordsContent(input: Pick<DeliverUserWordsInput, "text" | "images" | "voice" | "userWords" | "taskRefs" | "projectName">): string {
   // Pasted text (an email, a log) may carry a loose PPM-looking tag or a copy of the user-words
   // header: both are defused, so the one block PPM builds below is the only one there.
   const words = defuseCommand(defuseAttachmentMarkers(defuseUserWordsHeader(neutralizePpmTags(input.text))));
+  // A voice part is always last in a message: the chat draws its player from the last marker line.
+  const said = input.voice ? encodeVoicePart({ path: input.voice.path, durationSec: input.voice.durationSec, transcript: words }) : words;
   const markers = (input.images ?? []).map((img) => inlineImageMarker(img.path));
-  const body = markers.length ? `${markers.join("\n\n")}\n\n${words}` : words;
+  const body = markers.length ? `${markers.join("\n\n")}\n\n${said}` : said;
   return encodeMessageBlocks(body, { userWords: input.userWords, taskRefs: input.taskRefs ?? null, ownProject: input.projectName || undefined });
 }
 
@@ -104,6 +114,7 @@ const wordsFrom = (input: DeliverUserWordsInput): string =>
 export async function deliverUserWords(input: DeliverUserWordsInput): Promise<DeliverUserWordsResult> {
   const images = input.images ?? [];
   if (!input.text.trim() && !images.length) return { ok: false, error: "The message is empty" };
+  if (input.voice && (!input.text.trim() || !isStoredVoicePath(input.voice.path))) return { ok: false, error: "The voice message is not one PPM stored" };
   const target = resolveMigratedSession(input.targetSessionId);
   if (isAssistantSession(target)) return { ok: false, error: "A PPM Assistant session takes the user's words from its own chat" };
   if (getSessionDesignSlug(target)) return { ok: false, error: "A design chat does not take forwarded words" };

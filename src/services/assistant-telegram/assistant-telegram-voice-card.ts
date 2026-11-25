@@ -15,6 +15,8 @@ export const VOICE_FORWARDED_TEXT = "PPM reads your own voice messages only, not
 export const AUDIO_FORMAT_TEXT = "PPM reads voice messages and audio files in mp3, m4a, ogg, opus, wav or webm. Nothing was sent.";
 export const VOICE_OLD_TEXT = "A voice message sent while PPM was off is not read. Send it again if it still matters.";
 export const VOICE_REPLY_HINT = "Reply to this message with the corrected text to replace it.";
+/** Under the status of a voice message that answers a card or a task: its transcript goes there, not to the Assistant. */
+export const VOICE_ANSWERS_TEXT = "Once read, it goes where a typed answer would: to the card or task it answers.";
 /**
  * Longest replacement a card can show. Telegram refuses a message over 4096 characters, and the
  * card adds its header, the reason and the hint around the transcript: an edit that fails would
@@ -36,9 +38,13 @@ export function voiceRefusal(voice: { duration?: number; file_size?: number; fil
   return null;
 }
 
-/** The reply sent the moment a voice message arrives; `followsPhotoAt` names a photo already sent. */
-export function voiceStatusHtml(followsPhotoAt: string | null, audioFile = false): string {
+/**
+ * The reply sent the moment a voice message arrives; `followsPhotoAt` names a photo already sent,
+ * `answers` says it answers a card or a task.
+ */
+export function voiceStatusHtml(followsPhotoAt: string | null, audioFile = false, answers = false): string {
   const head = audioFile ? AUDIO_TRANSCRIBING_TEXT : VOICE_TRANSCRIBING_TEXT;
+  if (answers) return `${head}\n<i>${escapeTelegramHtml(VOICE_ANSWERS_TEXT)}</i>`;
   return followsPhotoAt
     ? `${head}\n<i>It goes on as a follow-up to the photo sent at ${escapeTelegramHtml(followsPhotoAt)}.</i>`
     : head;
@@ -131,10 +137,12 @@ export interface VoiceSentExtras {
   /** Given only when no card was shown (review off): otherwise the card already said them. */
   fixes?: readonly VoiceFix[];
   timing?: { whisperMs: number; haikuMs?: number };
+  /** It answers a card or a task: whether it went there is said in the line after this note. */
+  answers?: boolean;
 }
 
 export function voiceSentHtml(transcript: string, extras: VoiceSentExtras = {}): string {
-  const lines = ["✅ <b>Sent</b>", quote(transcript)];
+  const lines = [extras.answers ? "🎙 <b>Transcript</b>" : "✅ <b>Sent</b>", quote(transcript)];
   const fixes = extras.fixes ? voiceFixesHtml(extras.fixes) : null;
   if (fixes) lines.push(fixes);
   if (extras.timing) lines.push(`<i>${voiceTimingText(extras.timing)}</i>`);

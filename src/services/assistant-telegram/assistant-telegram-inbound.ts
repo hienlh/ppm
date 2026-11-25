@@ -34,7 +34,9 @@ import type { AnswerTurn } from "./assistant-telegram-own-answers.ts";
 import type { TaskWordsAim, TaskWordsMessage } from "./assistant-telegram-task-message.ts";
 import { TelegramVoiceMessages } from "./assistant-telegram-voice.ts";
 import type { TelegramVoiceDeps } from "./assistant-telegram-voice-deps.ts";
-import type { VoiceBundle } from "./assistant-telegram-voice-pending.ts";
+import type { VoiceBundle, VoiceWordsAim } from "./assistant-telegram-voice-pending.ts";
+import { encodeVoicePart, type VoicePart } from "../../shared/voice-message.ts";
+import { rmSync } from "node:fs";
 import {
   AUDIO_FORMAT_TEXT, audioFileExt, VOICE_FORWARDED_TEXT, VOICE_OLD_TEXT, voiceOffHtml, voiceRefusal,
 } from "./assistant-telegram-voice-card.ts";
@@ -97,6 +99,11 @@ export interface InboundDeps {
    * to tell the user when a card took them or refused them, null when they are not for a card.
    */
   typedAnswer?: (chatId: string, m: TypedAnswerMessage) => string | null;
+  /**
+   * Whether words in a message arriving now would be taken by a question card (`typedAnswer` without
+   * acting): asked for a voice message before it is read, so its transcript goes where typed words would.
+   */
+  wantsTypedAnswer?: (chatId: string, replyToMessageId?: number) => boolean;
   /** A message sent as a reply to a card's message: true when it answered the card. */
   replyToCard?: (chatId: string, m: CardReplyMessage) => Promise<boolean>;
   /** Whether this message of this chat shows one of the Assistant's cards. */
@@ -153,7 +160,8 @@ export class AssistantTelegramInbound {
     for (let i = 0; i < 50; i++) {
       const pending = [...this.lanes.values()];
       await Promise.all(pending.map((l) => l.chain));
-      if ([...this.lanes.values()].every((l) => !l.gathered && !l.timer && !l.album)) return;
+      // A voice answering a card is read in a bundle of its own, held by no lane.
+      if ([...this.lanes.values()].every((l) => !l.gathered && !l.timer && !l.album) && !this.voice?.reading()) return;
       await Bun.sleep(10);
     }
   }
@@ -473,10 +481,14 @@ export class AssistantTelegramInbound {
     await this.deliverBundle(chatId, gathered, null);
   }
 
-  /** Sends a bundle as one message, the voice part (if any) last, and confirms its updates. */
-  private async deliverBundle(chatId: string, bundle: Gathered, voicePart: string | null): Promise<void> {
+  /**
+   * Sends a bundle as one message, the voice part (if any) last, and confirms its updates. A voice
+   * that answers a card or a task goes there instead (`answerWithVoice`).
+   */
+  private async deliverBundle(chatId: string, bundle: Gathered, voice: VoicePart | null): Promise<void> {
     try {
-      const parts = voicePart ? [...bundle.parts, voicePart] : bundle.parts;
+      if (bundle.words && voice) return await this.answerWithVoice(chatId, bundle.words, voice, bundle.quote);
+      const parts = voice ? [...bundle.parts, encodeVoicePart(voice)] : bundle.parts;
       if (bundle.images.length) this.photoSentAt.set(chatId, this.now());
       if (parts.length || bundle.images.length) await this.deliver(chatId, parts.join("\n\n"), bundle.images, bundle.quote);
     } finally {
@@ -506,6 +518,14 @@ export class AssistantTelegramInbound {
       return false;
     }
     const quote = this.quoteOf(chatId, message);
+    const words = this.voiceWordsAim(chatId, message);
+    if (words) {
+      // Like typed words to a card, it is never merged into a gathered message: what was gathered
+      // goes first, and nothing sent while it is read joins it.
+      await this.flush(chatId);
+      this.voice!.start(chatId, message, { updateIds: [updateId], parts: [], images: [], quote, words }, audioExt ?? undefined);
+      return true;
+    }
     const held = this.lanes.get(chatId)?.gathered;
     // One voice per message, and a burst answers at most one message: either sends what was gathered.
     if (held && (held.voice || (quote && held.quote && held.quote.sourceId !== quote.sourceId))) await this.flush(chatId);
@@ -516,6 +536,56 @@ export class AssistantTelegramInbound {
     if (lane.timer) { clearTimeout(lane.timer); lane.timer = null; }
     this.voice!.start(chatId, message, gathered, audioExt ?? undefined);
     return true;
+  }
+
+  /**
+   * Whether a voice message answers a card or a task, decided when it arrives as it is for typed
+   * words: a reply to one of the Assistant's cards, to a question card that takes words, or to a
+   * task card, or the message after ✏️ Other or "Message about this task". Null: it is for the
+   * Assistant, and gathers with what else is sent.
+   */
+  private voiceWordsAim(chatId: string, message: TelegramMessage): VoiceWordsAim | null {
+    const repliedTo = message.reply_to_message?.message_id;
+    const aimed = (repliedTo !== undefined && !!this.deps.isCardMessage?.(chatId, repliedTo))
+      || !!this.deps.wantsTypedAnswer?.(chatId, repliedTo)
+      || !!this.deps.taskWords?.wants(chatId, repliedTo);
+    return aimed ? { messageId: message.message_id, ...(repliedTo !== undefined ? { replyToMessageId: repliedTo } : {}) } : null;
+  }
+
+  /**
+   * A voice message's transcript, read and (if asked) reviewed, sent where typed words to the same
+   * message go, in the same order: a question card that takes words, one of the Assistant's cards
+   * (its manager chat gets the transcript as a voice message in the user-words block, through
+   * `forward-verbatim.ts`), a task's chat; else the Assistant, with the voice part and the quote.
+   * Every rule of a typed reply holds: a card decided, withdrawn, replaced or older than a day is
+   * refused or asked about exactly as a typed reply to it would be. Runs on the chat's lane.
+   */
+  private async answerWithVoice(chatId: string, aim: VoiceWordsAim, voice: VoicePart, quote: TelegramQuote | null): Promise<void> {
+    const repliedTo = aim.replyToMessageId;
+    const text = voice.transcript;
+    const spoken = { path: voice.path, durationSec: voice.durationSec };
+    const said = this.deps.typedAnswer?.(chatId, {
+      text, notTheUsers: false, hasPhoto: false, ...(repliedTo !== undefined ? { replyToMessageId: repliedTo } : {}),
+    }) ?? null;
+    if (said !== null) {
+      // A question's answer is its words: nothing names the audio, so it is not kept.
+      try { rmSync(voice.path, { force: true }); } catch { /* best effort */ }
+      return this.reply(chatId, said);
+    }
+    if (repliedTo !== undefined && this.deps.replyToCard && this.deps.isCardMessage?.(chatId, repliedTo)) {
+      const card: CardReplyMessage = { text, voice: spoken, replyToMessageId: repliedTo, messageId: aim.messageId, notTheUsers: false };
+      if (await this.deps.replyToCard(chatId, card)) return;
+    }
+    const aboutTask = this.deps.taskWords?.wants(chatId, repliedTo) ?? null;
+    if (aboutTask && this.deps.taskWords) {
+      return this.deps.taskWords.take(chatId, {
+        text, messageId: aim.messageId, notTheUsers: false, hasPhoto: false, voice: spoken,
+        ...(repliedTo !== undefined ? { replyToMessageId: repliedTo } : {}),
+      }, aboutTask);
+    }
+    // Nothing takes it any more (the card moved on while it was read): it goes to the Assistant, as
+    // typed words would have, quoting what it replied to.
+    await this.deliver(chatId, encodeVoicePart(voice), [], quote);
   }
 
   /** A voice message while the feature is off: said plainly, with a button to turn it on when Whisper is there. */
