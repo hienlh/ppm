@@ -69,6 +69,12 @@ import { isAssistantProject } from "../../../shared/assistant-project";
 import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
 import type { Session, SessionInfo } from "../../../types/chat";
+import { specsApi, specStartBody, specStartFromMetadata, type SpecStartChoice } from "@/lib/api-specs";
+import { SPEC_PANE_EVENT, takeSpecPaneRequest } from "@/lib/open-spec-chat";
+import { useSessionSpec, useSpec } from "@/hooks/use-spec";
+import { useIsMobile } from "@/hooks/use-is-mobile";
+import { SpecWorkflowChip, SpecWorkflowContext, SpecWorkflowMenuSection, type SpecWorkflowState } from "@/components/spec/spec-workflow";
+import { SpecPane } from "@/components/spec/spec-pane";
 
 /** A fork a host has taken over: the forked session, and the message to resend in it. */
 export interface ChatForkRequest {
@@ -249,6 +255,49 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
   // A manager chat's Tasks chip: its project's open tasks, while that project's task store is on.
   const tasksSummary = useManagerTasksSummary(assistant ? null : sessionId);
   const footerChipsRef = useScrollEdgeFades();
+
+  // Spec mode: the workflow a new chat starts in, and the spec a chat is bound to (shown beside it).
+  const [specStart, setSpecStartState] = useState<SpecStartChoice>(() => specStartFromMetadata(metadata));
+  const setSpecStart = useCallback((next: SpecStartChoice) => {
+    setSpecStartState(next);
+    if (tabId) patchTabMetadata(tabId, { specStart: next });
+  }, [tabId]);
+  const specBinding = useSessionSpec(designSlug ? "" : projectName, sessionId);
+  const specState = useSpec(projectName, specBinding?.slug ?? null);
+  const isMobileLayout = useIsMobile();
+  const [specPaneOpen, setSpecPaneOpen] = useState(() => !isMobileLayout);
+  // Opening a spec from the sidebar shows its pane even when this chat was already open with it closed.
+  useEffect(() => {
+    if (!sessionId) return;
+    if (takeSpecPaneRequest(sessionId)) setSpecPaneOpen(true);
+    const onRequest = (e: Event) => {
+      if ((e as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId && takeSpecPaneRequest(sessionId)) setSpecPaneOpen(true);
+    };
+    window.addEventListener(SPEC_PANE_EVENT, onRequest);
+    return () => window.removeEventListener(SPEC_PANE_EVENT, onRequest);
+  }, [sessionId]);
+  // The session's title is known further down; starting a spec in an existing chat names it after it.
+  const specTitleRef = useRef("");
+  const startSpecHere = useCallback(async (choice: SpecStartChoice) => {
+    const body = specStartBody(choice, specTitleRef.current || "Spec");
+    if (!body || !sessionId) return;
+    try {
+      await specsApi.create(projectName, { ...body, sessionId });
+      setSpecPaneOpen(true);
+    } catch (e) {
+      toast.error("Could not start the spec", { description: (e as Error).message });
+    }
+  }, [projectName, sessionId]);
+  const specWorkflow = useMemo<SpecWorkflowState>(() => ({
+    choice: specStart,
+    setChoice: setSpecStart,
+    locked: !!sessionId || !!designSlug,
+    boundTitle: specState.spec?.title ?? null,
+    boundChecks: specState.spec?.checks ?? null,
+    onTogglePane: () => setSpecPaneOpen((v) => !v),
+    paneOpen: specPaneOpen,
+    onStartHere: sessionId && !designSlug && specBinding === null ? startSpecHere : undefined,
+  }), [specStart, setSpecStart, sessionId, designSlug, specState.spec?.title, specState.spec?.checks, specPaneOpen, specBinding, startSpecHere]);
 
   /**
    * Every sessionless chat tab (new, `/clear`, a design's chat, a reload mid-resolution)
@@ -1164,6 +1213,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
             // Fixed at creation too: the server runs every turn with the Assistant's
             // instructions and its ask-before-changing policy.
             ...(assistant && { assistant: true }),
+            // A spec workflow: the server creates the spec bound to this session, so the first
+            // message already carries its rules.
+            ...(!designSlug && specStartBody(specStart, content) && { spec: specStartBody(specStart, content) }),
           }, { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) });
           if (attempt !== firstSendAttempt.current) return;
           useSessionListStore.getState().upsertSession(projectRefForName(pName), {
@@ -1191,7 +1243,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
       // Only now: the message is on (or queued for) a live session's socket.
       clearDraft();
     },
-    [sessionId, providerId, projectName, sendMessage, permissionMode, metadata, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug, assistant, moveDraft, preparation, ensureAccountClaim, tabId, permissionReplaceable],
+    [sessionId, providerId, projectName, sendMessage, permissionMode, metadata, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug, assistant, moveDraft, preparation, ensureAccountClaim, tabId, permissionReplaceable, specStart],
   );
 
   // Read through a ref so handleInputSend keeps a stable identity — it is passed to
@@ -1423,14 +1475,34 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     }
   }, []);
 
+  // Memoized: the composer is memoized, and the chip reads its state from the context.
+  const workflowChip = useMemo(() => (designSlug || minimalMode ? undefined : <SpecWorkflowChip />), [designSlug, minimalMode]);
+  const workflowMenu = useMemo(
+    () => (designSlug || minimalMode ? undefined : (close: () => void) => <SpecWorkflowMenuSection onDone={close} />),
+    [designSlug, minimalMode],
+  );
+  specTitleRef.current = sessionTitle ?? "";
+  const specPane = specBinding && specPaneOpen ? (
+    // Beside the chat only when the tab is wide enough for both; a narrower tab (a tablet held
+    // upright, a split panel) puts it above the chat, which keeps the composer full width.
+    <div className={isMobileLayout
+      ? "absolute inset-0 z-30 flex flex-col bg-panel"
+      : "order-first flex h-[45%] w-full shrink-0 flex-col border-b border-border @3xl/spec:order-none @3xl/spec:h-full @3xl/spec:w-[44%] @3xl/spec:min-w-[340px] @3xl/spec:max-w-[760px] @3xl/spec:border-b-0 @3xl/spec:border-l"}>
+      <SpecPane projectName={projectName} slug={specBinding.slug} state={specState} onClose={() => setSpecPaneOpen(false)} />
+    </div>
+  ) : null;
+
   return (
     <AgentSessionProvider value={agentSessionIdentity}>
     <AssistantContentContext.Provider value={assistant}>
+    <SpecWorkflowContext.Provider value={specWorkflow}>
+    <div className="@container/spec h-full min-h-0">
+    <div className="relative flex h-full min-h-0 flex-col @3xl/spec:flex-row">
     <div
       data-onboarding="chat"
       // `@container/chat`: the bars and the composer compact on the chat's own width, which a
       // design window's chat column or a split panel decides — not on the viewport.
-      className="@container/chat flex flex-col h-full relative"
+      className="@container/chat flex flex-col h-full relative min-w-0 min-h-0 flex-1"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -1699,10 +1771,16 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
             promptCache={promptCache}
             offline={connectionStage !== "hidden"}
             idlePlaceholder={phase === "idle" && turnStop && isSessionMissingStop(turnStop) ? "Message to start fresh…" : undefined}
+            workflowSlot={workflowChip}
+            modeMenuFooter={workflowMenu}
           />
         </div>
       </div>
     </div>
+    {specPane}
+    </div>
+    </div>
+    </SpecWorkflowContext.Provider>
     </AssistantContentContext.Provider>
     </AgentSessionProvider>
   );

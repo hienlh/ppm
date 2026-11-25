@@ -10,7 +10,7 @@ export const BUILTIN_CLI_COMMANDS: readonly string[] = [
   "projects", "config", "git", "chat", "tags", "manager", "theme", "ai", "keybindings", "proxy",
   "device-name", "settings", "notify", "telegram-bot", "ppmbot", "mcp", "accounts", "upgrade",
   "autostart", "cloud", "forward", "skills", "ext", "lsp", "speech", "vault", "db", "backup", "restore",
-  "jira", "system", "design", "group-chat", "teams", "schedule", "export",
+  "jira", "system", "design", "group-chat", "teams", "schedule", "export", "spec",
 ];
 
 /** Names Commander answers itself, on top of the registered commands. */

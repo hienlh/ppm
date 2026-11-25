@@ -13,6 +13,7 @@ import { useNewFeatureTools } from "./use-new-feature-tools";
 import { SESSION_HISTORY_TOOLS } from "../../../shared/session-history-tools";
 import { SESSION_COLLAB_TOOLS } from "../../../shared/session-collab";
 import { SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_TOOLS } from "../../../shared/session-schedule-tools";
+import { SPEC_TOOLS } from "../../../shared/spec-tools";
 import type { SessionCollabSettings } from "../../../shared/session-collab-settings";
 import { VAULT_TOOLS } from "../../../shared/vault";
 import { PPM_TASK_TOOLS } from "../../../shared/ppm-task-tools";
@@ -158,6 +159,46 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Tell the manager now",
     note: "The PPM Assistant only: wakes a project's manager chat about task changes, after you said yes.",
   },
+  spec_status: {
+    label: "Read the spec",
+    note: "Reads where the chat's spec stands: each document, the tasks and their waves, the last test runs.",
+  },
+  spec_create: {
+    label: "Start specs",
+    note: "Starts a spec when you ask for one in an ordinary chat, which then works in Spec mode.",
+  },
+  spec_submit: {
+    label: "Submit documents",
+    note: "Says requirements, design or tasks are ready. PPM checks them and asks you to approve; the AI never approves.",
+  },
+  spec_open_design: {
+    label: "Draw screens",
+    note: "For a spec with a UI: creates its PPM Design and opens it, for the AI to draw the screens you approve before the design.",
+  },
+  task_start: {
+    label: "Start tasks",
+    note: "Starts a task of the approved plan, refused while its dependencies are open or a running task shares its files.",
+  },
+  task_done: {
+    label: "Finish tasks",
+    note: "Finishes a task (Standard checks). PPM ticks its box in tasks.md.",
+  },
+  task_red: {
+    label: "Run failing tests",
+    note: "Thorough checks: PPM runs the task's new tests and must see them fail before the code exists, then locks them.",
+  },
+  task_green: {
+    label: "Run passing tests",
+    note: "Thorough checks: PPM runs the locked tests, finishes the task when they pass, then compares the whole suite with the failures it had before.",
+  },
+  suite_check: {
+    label: "Check the suite",
+    note: "Thorough checks: runs the whole test suite again after fixing failures it reported.",
+  },
+  spec_run_sessions: {
+    label: "Run the tasks in new chats",
+    note: "Only when you ask for it: PPM opens a chat per task, up to three at a time. Run all otherwise hands the tasks to the spec's own chat.",
+  },
 };
 
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [
@@ -192,6 +233,11 @@ const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }>
     title: "Vault",
     intro: "Your secret vault (Settings → Vault), for ordinary chats. Off until you turn them on here; the PPM Assistant always has them.",
     tools: VAULT_TOOLS,
+  },
+  {
+    title: "Spec mode",
+    intro: "Requirements, design and tasks you approve step by step. Thorough checks run the tests the design names, in the project folder.",
+    tools: SPEC_TOOLS,
   },
 ];
 

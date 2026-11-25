@@ -63,6 +63,7 @@ const SERVER = [
   "teams list", "teams delete",
   "cloud link", "cloud unlink", "cloud alias set", "cloud alias remove",
   "forward list", "forward start", "forward stop",
+  "spec list", "spec status", "spec new", "spec approve", "spec checks", "spec run", "spec stop", "spec call",
 ];
 
 const DIRECT_ALLOWED = [

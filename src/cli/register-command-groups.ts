@@ -104,6 +104,9 @@ export async function registerLaterCommandGroups(program: Command): Promise<void
   const { registerScheduleCommands } = await import("./commands/schedule-cmd.ts");
   registerScheduleCommands(program);
 
+  const { registerSpecCommands } = await import("./commands/spec-cmd.ts");
+  registerSpecCommands(program);
+
   const { registerExportCommands } = await import("./commands/export-cmd.ts");
   registerExportCommands(program);
 }

@@ -18,6 +18,7 @@ import { setServerListenAddress } from "../../../src/services/server-listen-addr
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { passedMcpServers } from "../../helpers/passed-mcp-servers.ts";
 import { sessionCollabMcpAccessFor, sessionCollabMcpTokens } from "../../../src/services/session-collab/session-collab-tokens.ts";
+import { specMcpAccessFor } from "../../../src/services/specs/spec-mcp-tokens.ts";
 import {
   SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
   API_KEY_PROMPT_CACHE_TTL_MS,
@@ -1796,6 +1797,7 @@ describe("ClaudeAgentSdkProvider", () => {
         // What chatService.prepareSendOptions hands the session's turn.
         await drain(provider.sendMessage(session.id, "hi", {
           tabToolsMcp: tabToolsMcpAccessFor(session.id)!, sessionCollabMcp: sessionCollabMcpAccessFor(session.id)!,
+          specMcp: specMcpAccessFor(session.id)!,
         }));
         expect(clis).toHaveLength(1);
         expect(clis[0]!.pushed.map((m) => m.message.content)).toEqual(["hi"]);
@@ -1814,9 +1816,10 @@ describe("ClaudeAgentSdkProvider", () => {
         await provider.prewarm({ projectPath: project });
         expect(clis[0]!.options.disallowedTools).toEqual(["CronCreate", "CronList", "CronDelete"]);
         const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
-        // What chatService.prepareSendOptions hands the turn: the terminal tools are on by default.
+        // What chatService.prepareSendOptions hands the turn: the terminal and Spec mode tools are on by default.
         await drain(provider.sendMessage(session.id, "hi", {
           tabToolsMcp: tabToolsMcpAccessFor(session.id)!, sessionCollabMcp: sessionCollabMcpAccessFor(session.id)!,
+          specMcp: specMcpAccessFor(session.id)!,
         }));
         expect(clis).toHaveLength(1);
 

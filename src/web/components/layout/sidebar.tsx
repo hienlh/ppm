@@ -24,6 +24,8 @@ const DesignsSidebarPanel = lazy(() =>
 // Lazy for the same reason: the task list loads with the section.
 const TasksSidebarPanel = lazy(() =>
   import("@/components/ppm-tasks/tasks-sidebar-panel").then((m) => ({ default: m.TasksSidebarPanel })));
+const SpecsSidebarPanel = lazy(() =>
+  import("@/components/spec/specs-sidebar-panel").then((m) => ({ default: m.SpecsSidebarPanel })));
 
 function ResizeHandle({ onResize }: { onResize: (width: number) => void }) {
   const dragging = useRef(false);
@@ -146,6 +148,9 @@ export const Sidebar = memo(function Sidebar() {
             )}
             {sidebarActiveTab === "tasks" && (
               <Suspense fallback={null}><TasksSidebarPanel /></Suspense>
+            )}
+            {sidebarActiveTab === "specs" && (
+              <Suspense fallback={null}><SpecsSidebarPanel /></Suspense>
             )}
             {sidebarActiveTab === "database" && <DatabaseSidebar />}
             {sidebarActiveTab === "tunnels" && <PortForwardingPanel />}

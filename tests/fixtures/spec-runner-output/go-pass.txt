@@ -1,0 +1,2 @@
+ok  	example.com/x	0.001s
+exit=0
