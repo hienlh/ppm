@@ -1392,7 +1392,7 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   (`src/shared/assistant-limits.ts`). Each refused or merged report is logged at INFO with its kind,
   project, session and reason, never its text.
 - **Withdrawing and replacing cards** (`card-withdraw.ts`, switch `report_withdraw` in Settings →
-  Tools → Cards, feature intro `card-withdraw-2026-11`, off until the user chooses). A manager takes
+  Tools → Cards, on by default with no feature introduction, so an upgrade asks nothing). A manager takes
   back a card a newer one replaced (`report_to_assistant { supersedes: [ids] }`) or that the user
   handled elsewhere (`report_withdraw { cards, reason, superseded_by? }`; with no `cards` it lists
   the manager's open cards). The Assistant has `card_withdraw`: any project's report cards in a turn

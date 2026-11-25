@@ -76,10 +76,10 @@ describe("a late reply or press on a withdrawn card in PPM", () => {
 });
 
 describe("the switch", () => {
-  it("is a feature introduction: off until the user chooses", () => {
-    expect(featureIntroOfTool("report_withdraw")?.id).toBe("card-withdraw-2026-11");
-    expect(ppmToolOn({}, "report_withdraw")).toBe(false);
-    expect(ppmToolOn({ ppm_tools: { report_withdraw: true } }, "report_withdraw")).toBe(true);
+  it("is on by default, asks nothing after an upgrade, and turns off in Settings → Tools", () => {
+    expect(featureIntroOfTool("report_withdraw")).toBeUndefined();
+    expect(ppmToolOn({}, "report_withdraw")).toBe(true);
+    expect(ppmToolOn({ ppm_tools: { report_withdraw: false } }, "report_withdraw")).toBe(false);
   });
 
   it("adds the reminder to the digest ask only while on, as fixed text", () => {

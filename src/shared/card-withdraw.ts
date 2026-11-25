@@ -4,7 +4,8 @@
  * Settings → Tools (`report_withdraw`) turns the whole of it on or off — the tool, the
  * `supersedes` and `task` fields of `report_to_assistant`, the Assistant's `card_withdraw`, the
  * reminders PPM adds to a manager's report, digest and task close, and dropping a closed task's
- * done and failed cards. It is a feature introduction, so it stays off until the user chooses.
+ * done and failed cards. On by default (no feature introduction: nothing is asked after an
+ * upgrade); the user turns it off there.
  */
 export const REPORT_WITHDRAW_TOOL = "report_withdraw";
 

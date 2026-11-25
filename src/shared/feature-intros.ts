@@ -17,7 +17,6 @@ import type { PpmTool, PpmToolSwitches } from "./ppm-tools.ts";
 import { SESSION_HISTORY_TOOLS } from "./session-history-tools.ts";
 import { SESSION_COLLAB_TOOLS } from "./session-collab.ts";
 import { SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL, SESSION_SCHEDULE_TOOLS } from "./session-schedule-tools.ts";
-import { CARD_TOOLS } from "./card-withdraw.ts";
 
 export interface FeatureIntro {
   /** Stable for the life of the install: the answer is stored under it. */
@@ -140,15 +139,6 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
       + "Each of those can be switched off in Settings → Web Browser.",
     tools: [],
     setting: "web_browser",
-    since: "2026-11",
-  },
-  {
-    id: "card-withdraw-2026-11",
-    title: "Managers take back cards that went stale",
-    body: "A project's manager chat can withdraw a card it sent once a newer card replaces it or you have handled it "
-      + "elsewhere, saying why, and PPM reminds it of its cards still open. Your waiting cards are never closed by PPM on "
-      + "its own; a withdrawn card shows what replaced it, and Restore brings it back. It stays off until you choose.",
-    tools: CARD_TOOLS,
     since: "2026-11",
   },
 ];
