@@ -61,7 +61,7 @@ describe("ctx host", () => {
     const spy = spyOn(notificationService, "broadcast").mockImplementation((async (type: string, payload: unknown) => { sent.push({ type, payload }); }) as never);
     restores.push(() => spy.mockRestore());
     await ctxHost(schedule)("notify", { title: "PR #12 approved", body: "by hienlh", sessionId: "6d8c0aa2-0435-4e50-82a5-a6cd92deb312" });
-    expect(sent).toEqual([{ type: "schedule", payload: { title: "PR #12 approved", body: "by hienlh", project: "demo", sessionId: "6d8c0aa2-0435-4e50-82a5-a6cd92deb312" } }]);
+    expect(sent).toEqual([{ type: "schedule", payload: { title: "PR #12 approved", body: "by hienlh", project: "demo", sessionId: "6d8c0aa2-0435-4e50-82a5-a6cd92deb312", scheduleId: String(schedule.id) } }]);
     await expect(ctxHost(schedule)("notify", { body: "no title" })).rejects.toThrow("ctx.notify needs a title");
   });
 

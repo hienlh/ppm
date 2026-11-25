@@ -36,6 +36,8 @@ function notifyScheduleNotice(n: ScheduleNotice): void {
       body: n.body,
       project: n.projectName,
       sessionId: n.sessionId,
+      // A notice about every schedule of an unreachable chat names none of them in particular.
+      ...(n.schedules.length === 1 ? { scheduleId: String(n.schedules[0]!.id) } : {}),
       ...(n.providerId ? { providerId: n.providerId } : {}),
     }, {
       ownKey: `session-schedule-${n.key}`,

@@ -114,6 +114,7 @@ async function notifyRunFinished(schedule: Schedule, result: RunResult): Promise
       body,
       project: await projectNameFor(schedule.project_path),
       sessionId: schedule.session_id ?? "",
+      scheduleId: String(schedule.id),
     });
   } catch (e) {
     // Notify failures must not poison the run record
