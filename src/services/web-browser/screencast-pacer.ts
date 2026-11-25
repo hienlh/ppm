@@ -10,8 +10,7 @@
  * Two in flight rather than one, or a relayed link would cap the rate at one picture per round
  * trip.
  *
- * Three things measured on a 5 Mbit/s, 93 ms link (plans/reports/research-261125-2048-web-browser-lag.md)
- * shape the rest:
+ * Three things measured on a 5 Mbit/s link with a 93 ms round trip shape the rest:
  * - Chrome takes ~20–25 ms after an ack to capture and encode the next frame. Timing the ack from
  *   the last frame's arrival put that delay on top of every interval (12 fps came out as 9.5), so
  *   acks are timed from the previous ack: the capture delay falls inside the interval.
@@ -26,10 +25,15 @@
  *   since their input, the screencast is restarted, which makes Chrome send the page as it is.
  *   Acking Chrome at once instead fixed it too but made Chrome encode every repaint (CPU 30 %
  *   → 80 % of a core while scrolling).
+ *
+ * The interval comes from the setting's ceiling (Auto: 30 a second; LAN measured 29.8 at it).
+ * The two-picture window is what follows a slower link: over 5 Mbit/s it settles at ~8 full-size
+ * pictures a second whatever the ceiling.
  */
 import type { CdpConnection } from "./cdp-connection.ts";
 import { encodePictureFrame } from "../../shared/web-browser-binary-frames.ts";
 import type { Viewport } from "./input-bridge.ts";
+import { streamFpsCap, type WebBrowserSettings } from "../../shared/web-browser-settings.ts";
 
 export const MAX_IN_FLIGHT = 2;
 /** Quiet time after the person's last input before a held stream is refreshed. */
@@ -60,7 +64,7 @@ export class ScreencastPacer {
   constructor(
     private readonly cdp: CdpConnection,
     private readonly sink: PacerSink,
-    private readonly opts: () => { fpsCap: number; jpegQuality: number },
+    private readonly opts: () => Pick<WebBrowserSettings, "fpsCap" | "jpegQuality"> & Partial<Pick<WebBrowserSettings, "autoFps">>,
   ) {
     this.off = cdp.onEvent((e) => {
       if (e.method !== "Page.screencastFrame" || e.sessionId !== this.sessionId) return;
@@ -137,8 +141,14 @@ export class ScreencastPacer {
     if (stale) void this.refresh();
   }
 
+  /** The stream's ceiling in frames a second. */
+  fps(): number {
+    const o = this.opts();
+    return streamFpsCap({ autoFps: o.autoFps ?? false, fpsCap: o.fpsCap });
+  }
+
   private interval(): number {
-    return 1000 / this.opts().fpsCap;
+    return 1000 / this.fps();
   }
 
   private hold(): void {

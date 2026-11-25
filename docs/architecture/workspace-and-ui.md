@@ -1071,8 +1071,15 @@ setting `web_browser.enabled`); Settings → Web Browser holds every switch.
   a one-use nonce, and `allowPublicTunnel` (`tunnel-request-guard.ts`: Cloudflare, Funnel and generic
   proxy headers are public, Tailscale Serve is the tailnet). Pictures are JPEG in binary frames
   (`shared/web-browser-binary-frames.ts`); the viewer acks each one after drawing it and Chrome's next
-  frame waits for that (at most two in flight, `fpsCap`), so a slow link slows the stream instead of
-  queueing. The last viewer to connect controls; others see "Use here".
+  frame waits for that (at most two in flight), so a slow link slows the stream instead of
+  queueing. Acks to Chrome go out one per interval, timed from the previous ack. The ceiling is the
+  picture setting: Auto (the default, `autoFps`) is 30 frames a second; Saver/Balanced/Smooth fix
+  `fpsCap`. Chrome drops repaints while it waits for an ack and never resends them, so 120 ms after
+  the person's last input the pacer restarts the screencast if Chrome was held since that input,
+  which makes Chrome send the page as it is (over 5 Mbit/s with a 93 ms round trip, half the
+  keystrokes on a still page used to show only at the caret's next blink, ~660 ms). Acking Chrome at
+  once fixed that too but made it encode every repaint (CPU 30 % → 80 % of a core while scrolling).
+  The last viewer to connect controls; others see "Use here".
 - **Input** (`input-bridge.ts`, `use-web-browser-input.ts`): pointer and touch as fractions of the
   picture; typing goes through a hidden textarea so an IME can compose, and arrives as
   `Input.imeSetComposition` / `Input.insertText` — key codes only for keys with no character.

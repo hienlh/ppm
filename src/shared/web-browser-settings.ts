@@ -15,7 +15,13 @@ export interface WebBrowserSettings {
   maxTabs: number;
   /** Chrome is stopped after this long with nobody watching or acting in it. */
   idleStopMinutes: number;
-  /** Ceiling on screencast frames per second. */
+  /**
+   * Pace the picture by what the connection carries, up to `AUTO_FPS_CAP` frames a second.
+   * Off: `fpsCap` is the ceiling (the Saver/Balanced/Smooth presets). The connection can always
+   * lower the pace.
+   */
+  autoFps: boolean;
+  /** Ceiling on screencast frames per second when `autoFps` is off. */
   fpsCap: number;
   /** JPEG quality of each frame, 30–85. */
   jpegQuality: number;
@@ -44,6 +50,7 @@ export const WEB_BROWSER_LIMITS = {
 export const DEFAULT_WEB_BROWSER_SETTINGS: Readonly<WebBrowserSettings> = Object.freeze({
   maxTabs: 4,
   idleStopMinutes: 10,
+  autoFps: true,
   fpsCap: 12,
   jpegQuality: 55,
   allowLocalhost: true,
@@ -54,12 +61,20 @@ export const DEFAULT_WEB_BROWSER_SETTINGS: Readonly<WebBrowserSettings> = Object
   browserPath: null,
 });
 
-/** Picture presets offered in Settings. */
+/** Ceiling of the Auto picture mode: LAN measured 29.8 fps of 67 KB pictures at this ceiling. */
+export const AUTO_FPS_CAP = 30;
+
+/** Fixed picture presets offered in Settings beside Auto. */
 export const WEB_BROWSER_QUALITY_PRESETS = {
-  saver: { fpsCap: 8, jpegQuality: 45 },
-  balanced: { fpsCap: 12, jpegQuality: 55 },
-  smooth: { fpsCap: 20, jpegQuality: 65 },
+  saver: { autoFps: false, fpsCap: 8, jpegQuality: 45 },
+  balanced: { autoFps: false, fpsCap: 12, jpegQuality: 55 },
+  smooth: { autoFps: false, fpsCap: 20, jpegQuality: 65 },
 } as const;
+
+/** The stream's ceiling in frames a second. */
+export function streamFpsCap(s: Pick<WebBrowserSettings, "autoFps" | "fpsCap">): number {
+  return s.autoFps ? AUTO_FPS_CAP : s.fpsCap;
+}
 
 function clampInt(value: unknown, [min, max]: readonly [number, number], fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
@@ -80,6 +95,8 @@ export function parseWebBrowserSettings(raw: unknown): WebBrowserSettings {
   const settings: WebBrowserSettings = {
     maxTabs: clampInt(value.maxTabs, WEB_BROWSER_LIMITS.maxTabs, d.maxTabs),
     idleStopMinutes: clampInt(value.idleStopMinutes, WEB_BROWSER_LIMITS.idleStopMinutes, d.idleStopMinutes),
+    // Absent on rows saved before Auto existed (they hold the old default, 12): those get Auto.
+    autoFps: bool(value.autoFps, d.autoFps),
     fpsCap: clampInt(value.fpsCap, WEB_BROWSER_LIMITS.fpsCap, d.fpsCap),
     jpegQuality: clampInt(value.jpegQuality, WEB_BROWSER_LIMITS.jpegQuality, d.jpegQuality),
     allowLocalhost: bool(value.allowLocalhost, d.allowLocalhost),

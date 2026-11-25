@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AUTO_FPS_CAP,
+  WEB_BROWSER_QUALITY_PRESETS,
+  streamFpsCap,
   DEFAULT_WEB_BROWSER_SETTINGS,
   parseWebBrowserSettings,
   webBrowserTurnedOn,
@@ -24,6 +27,17 @@ describe("parseWebBrowserSettings", () => {
     expect(s.idleStopMinutes).toBe(2);
     expect(s.fpsCap).toBe(DEFAULT_WEB_BROWSER_SETTINGS.fpsCap);
     expect(s.jpegQuality).toBe(71);
+  });
+
+  test("the picture follows the connection unless a fixed preset was chosen", () => {
+    expect(parseWebBrowserSettings({}).autoFps).toBe(true);
+    // A row saved before Auto existed holds the old default: it gets Auto.
+    expect(parseWebBrowserSettings({ fpsCap: 12, jpegQuality: 55 }).autoFps).toBe(true);
+    const fixed = parseWebBrowserSettings({ ...WEB_BROWSER_QUALITY_PRESETS.smooth });
+    expect(fixed.autoFps).toBe(false);
+    expect(streamFpsCap(fixed)).toBe(20);
+    expect(streamFpsCap(parseWebBrowserSettings({}))).toBe(AUTO_FPS_CAP);
+    expect(parseWebBrowserSettings({ autoFps: "yes" }).autoFps).toBe(true);
   });
 
   test("an explicit answer is kept, a non-boolean is not", () => {

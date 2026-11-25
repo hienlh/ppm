@@ -4,6 +4,7 @@ import { inputToCdp, type Viewport } from "../../../../src/services/web-browser/
 import { ScreencastPacer, SETTLE_MS } from "../../../../src/services/web-browser/screencast-pacer.ts";
 import { CdpConnection, type CdpTransport } from "../../../../src/services/web-browser/cdp-connection.ts";
 import { decodeBinaryFrame } from "../../../../src/shared/web-browser-binary-frames.ts";
+import { AUTO_FPS_CAP } from "../../../../src/shared/web-browser-settings.ts";
 
 describe("resolveAddress", () => {
   test("http(s) passes, other schemes are refused", () => {
@@ -76,7 +77,7 @@ describe("inputToCdp", () => {
 });
 
 describe("ScreencastPacer", () => {
-  function setup(fpsCap = 1000) {
+  function setup(fpsCap = 1000, autoFps = false) {
     let deliver: (m: string) => void = () => {};
     const sent: { method: string; params: Record<string, unknown>; sessionId?: string; id: number }[] = [];
     const t: CdpTransport = {
@@ -91,7 +92,7 @@ describe("ScreencastPacer", () => {
     };
     const cdp = new CdpConnection(t);
     const pictures: Uint8Array[] = [];
-    const pacer = new ScreencastPacer(cdp, { sendBinary: (b) => pictures.push(b) }, () => ({ fpsCap, jpegQuality: 55 }));
+    const pacer = new ScreencastPacer(cdp, { sendBinary: (b) => pictures.push(b) }, () => ({ fpsCap, jpegQuality: 55, autoFps }));
     const frame = (n: number) => deliver(JSON.stringify({ method: "Page.screencastFrame", sessionId: "S", params: { data: Buffer.from([0xff, 0xd8, n]).toString("base64"), sessionId: n, metadata: { deviceWidth: 390, deviceHeight: 844 } } }));
     const acks = () => sent.filter((m) => m.method === "Page.screencastFrameAck").map((m) => m.params.sessionId);
     return { pacer, frame, pictures, acks, sent };
@@ -185,6 +186,13 @@ describe("ScreencastPacer", () => {
     s.pacer.ack(2);
     await Bun.sleep(10);
     expect(s.acks().length).toBe(before + 1);
+  });
+
+  test("Auto runs at its own ceiling; a fixed preset at the preset's", async () => {
+    const auto = setup(12, true);
+    expect(auto.pacer.fps()).toBe(AUTO_FPS_CAP);
+    const fixed = setup(12, false);
+    expect(fixed.pacer.fps()).toBe(12);
   });
 
   test("ignores frames of another page session", async () => {

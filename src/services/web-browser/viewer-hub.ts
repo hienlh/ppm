@@ -15,6 +15,7 @@ import { createLogger } from "../logger.ts";
 import { installPageFeatures } from "./page-features.ts";
 import { installAudioRelay } from "./audio/audio-relay.ts";
 import { aiControlLock } from "./ai-control/ai-control-lock.ts";
+import { streamFpsCap } from "../../shared/web-browser-settings.ts";
 
 const log = createLogger("web-browser");
 
@@ -89,7 +90,7 @@ export class ViewerHub {
   add(viewer: Viewer): void {
     this.viewers.set(viewer.id, viewer);
     const s = this.host.settings();
-    viewer.send({ type: "hello", tabs: this.host.tabs?.list() ?? [], activeTabId: this.host.activeTabId, limits: { maxTabs: s.maxTabs, idleStopMinutes: s.idleStopMinutes, fpsCap: s.fpsCap, audio: s.audio } });
+    viewer.send({ type: "hello", tabs: this.host.tabs?.list() ?? [], activeTabId: this.host.activeTabId, limits: { maxTabs: s.maxTabs, idleStopMinutes: s.idleStopMinutes, fpsCap: streamFpsCap(s), audio: s.audio } });
     viewer.send(this.status());
     viewer.send({ type: "ai", ...pick(aiControlLock.state()) });
     this.takeControl(viewer.id);
