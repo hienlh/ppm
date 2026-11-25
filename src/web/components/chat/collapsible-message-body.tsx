@@ -27,7 +27,9 @@ export function CollapsibleMessageBody({ watch, className, toggleClassName, chil
     const el = contentRef.current;
     if (!el) return;
     const check = () => setIsOverflowing(el.scrollHeight > el.clientHeight + 2);
-    check();
+    // No measuring here: a ResizeObserver reports once when it starts observing, after the
+    // browser's own layout. Measuring at mount forced the layout of a whole older page in its
+    // commit (64-78 ms of a 50-message page on a 1 GB chat), once per bubble that mounted.
     const ro = new ResizeObserver(check);
     ro.observe(el);
     return () => ro.disconnect();

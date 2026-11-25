@@ -82,13 +82,23 @@ describe("FromSessionBubble", () => {
       scrollHeight: Object.getOwnPropertyDescriptor(proto, "scrollHeight"),
       clientHeight: Object.getOwnPropertyDescriptor(proto, "clientHeight"),
     };
+    const realResizeObserver = globalThis.ResizeObserver;
     const restore = () => {
       for (const key of ["scrollHeight", "clientHeight"] as const) {
         if (before[key]) Object.defineProperty(proto, key, before[key]!);
         else delete (proto as unknown as Record<string, unknown>)[key];
       }
+      globalThis.ResizeObserver = realResizeObserver;
     };
     const overflow = () => {
+      // The clamp measures only when its ResizeObserver reports, which a browser does once when
+      // observing starts (after layout); happy-dom's never reports, so this one does it at once.
+      globalThis.ResizeObserver = class {
+        constructor(private readonly cb: ResizeObserverCallback) {}
+        observe(target: Element) { this.cb([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver); }
+        unobserve() {}
+        disconnect() {}
+      } as unknown as typeof ResizeObserver;
       Object.defineProperty(proto, "scrollHeight", {
         configurable: true,
         get(this: HTMLElement) { return this.getAttribute("data-message-clamp") === "collapsed" ? 400 : 40; },

@@ -156,9 +156,9 @@ describe("the top sentinel", () => {
   it("watches the top once a compact summary names a transcript", async () => {
     await render({ onExpandCompact: async () => 0 });
     expect(live()).toHaveLength(1);
-    // A screenful of lead time, so the next segment is usually there before the
-    // reader reaches the end of this one.
-    expect(live()[0]!.options.rootMargin).toBe("400px 0px 0px 0px");
+    // Three screens of lead time, so on a fast scroll the next segment is there before the
+    // reader reaches the top.
+    expect(live()[0]!.options.rootMargin).toBe("300% 0px 0px 0px");
   });
 
   it("fetches the segment the summary points at when the top comes into range", async () => {
