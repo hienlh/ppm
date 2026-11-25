@@ -62,9 +62,16 @@ export interface UseGitRepo {
   reload: () => void;
 }
 
-export function useGitRepo(projectName: string | undefined): UseGitRepo {
+/**
+ * `pinned` points this one surface at a repository of its own without touching the device's choice:
+ * the Branch Review tab the AI's `open_branch_review` opened on a named repository. A pin no longer
+ * among the discovered repositories is ignored, so the surface falls back to the choice rather than
+ * asking for a pick its own picker could not satisfy.
+ */
+export function useGitRepo(projectName: string | undefined, pinned?: string): UseGitRepo {
   const discovery = useGitRepoStore((s) => (projectName ? s.discovery[projectName] : undefined));
-  const chosen = useGitRepoStore((s) => (projectName ? s.chosen[projectName] : undefined));
+  const storeChoice = useGitRepoStore((s) => (projectName ? s.chosen[projectName] : undefined));
+  const chosen = pinned && discovery?.repos.some((r) => r.path === pinned) ? pinned : storeChoice;
   const load = useGitRepoStore((s) => s.load);
   const chooseInStore = useGitRepoStore((s) => s.choose);
 

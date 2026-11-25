@@ -1207,14 +1207,15 @@ wrote it, is kept or reverted on disk where it sits. Full design and verificatio
 
 PPM's own answer to claude.ai's Artifact tool: the AI writes a file and calls `open_file` or
 `open_preview`, and the file opens in a PPM tab on the device the user is chatting from; `open_url`,
-`read_terminal` and `run_in_terminal` reach the user's servers and terminals the same way. Each is
+`open_branch_review`, `read_terminal` and `run_in_terminal` reach the user's servers, branches and
+terminals the same way. Each is
 switched in Settings → Tools (`ai.ppm_tools`). Full design and verification:
 [AI tab tools](ai-tab-tools.md).
 
 ## PPM's tool switches
 
 Settings → Tools (`tools-settings-section.tsx`) turns each of PPM's own AI tools on or off —
-`open_file`, `open_preview`, `open_url`, `read_terminal`, `run_in_terminal`, `search_sessions`,
+`open_file`, `open_preview`, `open_url`, `open_branch_review`, `read_terminal`, `run_in_terminal`, `search_sessions`,
 `list_session_turns`, `read_session_turns`, `db_query`, `open_query`, `db_execute`,
 `create_session`, `send_to_session`, `session_status`, `session_schedule_create`,
 `session_schedule_list`, `session_schedule_delete`, `session_schedule_set_enabled`,
