@@ -10,6 +10,8 @@ export interface UserAgentInfo {
 }
 
 const BROWSERS: ReadonlyArray<[RegExp, string]> = [
+  // The native apps send their own logs too: "PPM-Android/0.9 (Android 17; …)", "PPM-macOS/0.9 (Macintosh; …)".
+  [/\bPPM-(?:Android|macOS)\/(\d+(?:\.\d+)*)/, "PPM app"],
   [/\bEdg(?:e|A|iOS)?\/(\d+)/, "Edge"],
   [/\bOPR\/(\d+)/, "Opera"],
   [/\bSamsungBrowser\/(\d+)/, "Samsung Internet"],

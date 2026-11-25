@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { X, Check, Plus, Settings, ChevronUp, ChevronDown, Pencil, Trash2, Palette, ArrowLeft, Image as ImageIcon, Search, ExternalLink, Copy } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder, loadRecentTimes } from "@/stores/project-store";
@@ -29,6 +29,10 @@ interface ActionSheetItem {
 
 export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps) {
   const { projects, activeProject, setActiveProject, setProjectColor, setProjectImage, removeProjectImage, reorderProjects, renameProject, deleteProject, customOrder, sortMode, setProjectSortMode } = useProjectStore(useShallow((s) => ({ projects: s.projects, activeProject: s.activeProject, setActiveProject: s.setActiveProject, setProjectColor: s.setProjectColor, setProjectImage: s.setProjectImage, removeProjectImage: s.removeProjectImage, reorderProjects: s.reorderProjects, renameProject: s.renameProject, deleteProject: s.deleteProject, customOrder: s.customOrder, sortMode: s.projectSortMode, setProjectSortMode: s.setProjectSortMode })));
+  const recentVersion = useProjectStore((s) => s.recentVersion);
+  const refreshRecent = useProjectStore((s) => s.refreshRecent);
+  // Another device may have opened a project since this page loaded: read the Recent times again.
+  useEffect(() => { if (isOpen) void refreshRecent(); }, [isOpen, refreshRecent]);
 
   const version = useSettingsStore((s) => s.version);
 
@@ -40,8 +44,8 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
 
   // Search + sort + recent-open times (mirrors the desktop switcher)
   const [query, setQuery] = useState("");
-  const recentTimes = useMemo(() => loadRecentTimes(), [isOpen]);
-  const sorted = useMemo(() => applySort(projects, customOrder, sortMode), [projects, customOrder, sortMode]);
+  const recentTimes = useMemo(() => loadRecentTimes(), [isOpen, recentVersion]);
+  const sorted = useMemo(() => applySort(projects, customOrder, sortMode), [projects, customOrder, sortMode, isOpen, recentVersion]);
   const q = query.trim().toLowerCase();
   const filtered = q
     ? sorted.filter((p) => p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q))

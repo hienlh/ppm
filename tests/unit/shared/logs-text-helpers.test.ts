@@ -151,6 +151,12 @@ describe("user agent names", () => {
     expect(userAgentTag("curl/8.0")).toBe("Browser");
   });
 
+  it("names the native apps by app and system", () => {
+    expect(userAgentTag("PPM-Android/0.9.3 (Android 17; Lenovo TB-J716F; tablet) okhttp/5.0.0")).toBe("PPM app·Android");
+    expect(userAgentTag("PPM-macOS/0.9 (Macintosh; macOS 15.7.9)")).toBe("PPM app·Mac");
+    expect(userAgentSummary("PPM-macOS/0.9 (Macintosh; macOS 15.7.9)")).toBe("PPM app 0.9 on macOS");
+  });
+
   it("does not guess at what it cannot read", () => {
     expect(describeUserAgent(undefined)).toEqual({ browser: "Browser", version: null, os: "Unknown OS" });
   });
