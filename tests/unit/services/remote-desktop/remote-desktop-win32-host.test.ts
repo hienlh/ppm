@@ -1,0 +1,119 @@
+import { describe, expect, it } from "bun:test";
+import { connectStateName } from "../../../../src/services/remote-desktop/remote-desktop-win32-session.ts";
+import {
+  snapshotWindowsHost, windowsHostRequirements, WIN_DISPLAY_ID, WIN_SESSION_ID, type WindowsHostApi,
+} from "../../../../src/services/remote-desktop/remote-desktop-win32-host.ts";
+import { remoteDesktopReadiness } from "../../../../src/services/remote-desktop/remote-desktop-requirements.ts";
+import { explainCaptureFailure } from "../../../../src/services/remote-desktop/remote-desktop-capture-error.ts";
+import type { RemoteDisplay } from "../../../../src/services/remote-desktop/remote-desktop-displays.ts";
+
+const MONITOR: RemoteDisplay = {
+  id: "\\\\.\\DISPLAY1", label: "Display 1", primary: true, x: 0, y: 0, width: 1920, height: 1080, captureIndex: 0,
+};
+
+/** A fake Windows host: the session and monitors are whatever the test says, and reading the
+ *  monitor list is counted so the "do not trust a disconnected session's monitors" rule shows. */
+function fakeHost(session: ReturnType<WindowsHostApi["session"]>, displays: RemoteDisplay[]) {
+  let displayReads = 0;
+  const host: WindowsHostApi = {
+    session: () => session,
+    displays: () => { displayReads++; return displays; },
+  };
+  return { host, reads: () => displayReads };
+}
+
+describe("connectStateName", () => {
+  it("maps WTS_CONNECTSTATE_CLASS in enum order", () => {
+    expect(connectStateName(0)).toBe("active");
+    expect(connectStateName(1)).toBe("connected");
+    expect(connectStateName(4)).toBe("disconnected");
+    expect(connectStateName(9)).toBe("init");
+  });
+
+  it("refuses anything outside the enum", () => {
+    expect(connectStateName(10)).toBeNull();
+    expect(connectStateName(-1)).toBeNull();
+    expect(connectStateName(1.5)).toBeNull();
+  });
+});
+
+describe("windowsHostRequirements", () => {
+  it("an active session with a monitor passes both rows", () => {
+    const { host } = fakeHost({ sessionId: 1, state: "active", isConsole: true }, [MONITOR]);
+    const rows = windowsHostRequirements(snapshotWindowsHost(host));
+    expect(rows.map((r) => [r.id, r.ok])).toEqual([[WIN_SESSION_ID, true], [WIN_DISPLAY_ID, true]]);
+    expect(rows.every((r) => r.gates === "video")).toBe(true);
+  });
+
+  it("an RDP-connected session counts as on screen", () => {
+    const { host } = fakeHost({ sessionId: 2, state: "active", isConsole: false }, [MONITOR]);
+    expect(windowsHostRequirements(snapshotWindowsHost(host))[0]!.ok).toBe(true);
+  });
+
+  it("an active session with no monitor fails only the display row", () => {
+    const { host } = fakeHost({ sessionId: 1, state: "active", isConsole: true }, []);
+    const rows = windowsHostRequirements(snapshotWindowsHost(host));
+    expect(rows.find((r) => r.id === WIN_SESSION_ID)!.ok).toBe(true);
+    const display = rows.find((r) => r.id === WIN_DISPLAY_ID)!;
+    expect(display.ok).toBe(false);
+    expect(display.detail).toContain("dummy plug");
+  });
+
+  it("a disconnected session shows only the session row and never reads its monitors", () => {
+    const { host, reads } = fakeHost({ sessionId: 2, state: "disconnected", isConsole: false }, [MONITOR]);
+    const rows = windowsHostRequirements(snapshotWindowsHost(host));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: WIN_SESSION_ID, ok: false });
+    expect(rows[0]!.detail).toContain("#2");
+    expect(rows[0]!.detail).toContain("Remote Desktop (RDP)");
+    expect(reads()).toBe(0);
+  });
+
+  it("no session information means no rows rather than a guess", () => {
+    const { host } = fakeHost(null, []);
+    expect(windowsHostRequirements(snapshotWindowsHost(host))).toEqual([]);
+  });
+});
+
+describe("remoteDesktopReadiness on win32", () => {
+  it("a disconnected session blocks video", async () => {
+    const { host } = fakeHost({ sessionId: 2, state: "disconnected", isConsole: false }, []);
+    const r = await remoteDesktopReadiness("win32", null, host);
+    expect(r.platformSupported).toBe(true);
+    expect(r.requirements.find((x) => x.id === WIN_SESSION_ID)?.ok).toBe(false);
+    expect(r.videoReady).toBe(false);
+  });
+
+  it("no display blocks video", async () => {
+    const { host } = fakeHost({ sessionId: 1, state: "active", isConsole: true }, []);
+    const r = await remoteDesktopReadiness("win32", null, host);
+    expect(r.requirements.find((x) => x.id === WIN_DISPLAY_ID)?.ok).toBe(false);
+    expect(r.videoReady).toBe(false);
+  });
+
+  it("other platforms never get the Windows rows", async () => {
+    const { host } = fakeHost({ sessionId: 2, state: "disconnected", isConsole: false }, []);
+    const r = await remoteDesktopReadiness("linux", { kind: "x11", display: ":0", xauthority: null }, host);
+    expect(r.requirements.some((x) => x.id.startsWith("win-"))).toBe(false);
+  });
+});
+
+describe("explainCaptureFailure", () => {
+  it("names a disconnected or locked session for gdigrab error 5, keeping the raw text", () => {
+    const raw = "[gdigrab @ 0000021b] Failed to capture image (error 5) | Output file does not contain any stream";
+    const msg = explainCaptureFailure("win32", raw);
+    expect(msg).toContain("disconnected");
+    expect(msg).toContain("locked");
+    expect(msg).toContain(raw);
+  });
+
+  it("names a missing display when DXGI has no output", () => {
+    const msg = explainCaptureFailure("win32", "[Parsed_ddagrab_0 @ 0000] Failed to enumerate DXGI output 0");
+    expect(msg).toContain("no display");
+  });
+
+  it("leaves other failures and other platforms as they were", () => {
+    expect(explainCaptureFailure("win32", "boom")).toBe("Capture failed: boom");
+    expect(explainCaptureFailure("linux", "Failed to capture image (error 5)")).toBe("Capture failed: Failed to capture image (error 5)");
+  });
+});

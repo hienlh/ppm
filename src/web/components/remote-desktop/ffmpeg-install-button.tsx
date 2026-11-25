@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 import { Loader2 } from "@/lib/icons";
+import { TEXT_BUTTON } from "@/lib/control-size";
 
 interface InstallStatus {
   state: "idle" | "installing" | "installed" | "error";
@@ -48,8 +49,8 @@ export function FfmpegInstallButton({ label }: { label: string }) {
     <div className="flex flex-col gap-2">
       <button type="button" disabled={busy || status.state === "installed"}
         onClick={() => void install()}
-        className="inline-flex min-h-11 items-center gap-1.5 rounded-md bg-white/10 px-3 text-sm hover:bg-white/20 disabled:opacity-50">
-        {busy && <Loader2 className="size-4 animate-spin" />}
+        className={`inline-flex items-center justify-center ${TEXT_BUTTON} self-start bg-white/10 hover:bg-white/20 disabled:opacity-50`}>
+        {busy && <Loader2 className="size-3.5 animate-spin" />}
         {busy ? "Installing ffmpeg…" : status.state === "installed" ? "Installed — checking…" : label}
       </button>
       {busy && <p role="status" className="text-xs text-white/70">Installing on the host. You can close this panel and return later.</p>}

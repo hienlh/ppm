@@ -86,7 +86,14 @@ describe("remoteDesktopReadiness", () => {
   });
 
   it("win32 checklist: ffmpeg with an automatic install action and a client-side download link", async () => {
-    const r = await remoteDesktopReadiness("win32");
+    // A host whose session is on screen with a monitor, so the only row that can fail is ffmpeg.
+    // The real host differs per machine (a headless PC's session is often disconnected), and the
+    // Windows rows have their own tests in `remote-desktop-win32-host.test.ts`.
+    const readyHost = {
+      session: () => ({ sessionId: 1, state: "active" as const, isConsole: true }),
+      displays: () => [{ id: "\\\\.\\DISPLAY1", label: "Display 1", primary: true, x: 0, y: 0, width: 1920, height: 1080, captureIndex: 0 }],
+    };
+    const r = await remoteDesktopReadiness("win32", null, readyHost);
     expect(r.platformSupported).toBe(true);
     const ffmpeg = r.requirements.find((x) => x.id === "ffmpeg")!;
     expect(ffmpeg.gates).toBe("video");

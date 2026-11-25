@@ -29,6 +29,7 @@ import {
   type QualityPreset,
 } from "./remote-desktop-quality.ts";
 import { createLogger } from "../logger.ts";
+import { explainCaptureFailure } from "./remote-desktop-capture-error.ts";
 
 const log = createLogger("remote-desktop");
 
@@ -219,7 +220,7 @@ export class RemoteDesktopSession {
         if (generation !== this.captureGeneration) return;
         if (!this.closed) {
           if (reason) {
-            try { this.ws.send(JSON.stringify({ type: "error", message: `Capture failed: ${reason}` })); } catch { /* closing anyway */ }
+            try { this.ws.send(JSON.stringify({ type: "error", message: explainCaptureFailure(process.platform, reason) })); } catch { /* closing anyway */ }
           }
           this.close("capture-exit");
         }

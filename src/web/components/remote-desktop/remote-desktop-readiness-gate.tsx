@@ -6,13 +6,18 @@
  *
  * Actions are generic (`terminal` types into a PPM dock terminal — the host's shell, so it works
  * from a phone; `host` asks the server to prompt/open Settings on the host; `link` opens on the
- * client). Same dark chrome and ≥44px targets as the warning gate, both surfaces.
+ * client). Same dark chrome as the warning gate; buttons take the standard sizes from
+ * `docs/design-guidelines.md` rule 3 (28px with text, 26px below `md`).
  */
 import { useState, type ReactNode } from "react";
-import { CheckCircle2, Circle, ExternalLink, Loader2, MonitorSmartphone, TerminalSquare } from "@/lib/icons";
+import { AlertTriangle, CheckCircle2, Circle, ExternalLink, Loader2, MonitorSmartphone, TerminalSquare } from "@/lib/icons";
+import { TEXT_BUTTON } from "@/lib/control-size";
 import { FfmpegInstallButton } from "./ffmpeg-install-button";
 import { runInTerminal } from "@/lib/run-in-terminal";
 import { useRemoteDesktopReadiness, type RemoteDesktopRequirement, type RequirementAction } from "./use-remote-desktop-readiness";
+
+/** Every button on this surface: the standard text-button size over this gate's own colours. */
+export const GATE_BUTTON = `inline-flex items-center justify-center ${TEXT_BUTTON}`;
 
 export interface RemoteDesktopReadinessGateProps {
   onCancel: () => void;
@@ -57,15 +62,15 @@ export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktop
           <p className="text-xs text-white/50">Re-checking every few seconds — this updates by itself once fixed.</p>
         )}
 
-        <div className="flex gap-2">
-          <button type="button" onClick={onCancel} className="min-h-11 flex-1 rounded-md bg-white/10 px-3 text-sm hover:bg-white/20">
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className={`${GATE_BUTTON} bg-white/10 hover:bg-white/20`}>
             Cancel
           </button>
           <button
             type="button"
             disabled={!caps?.videoReady}
             onClick={() => setAccepted(true)}
-            className="min-h-11 flex-1 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
+            className={`${GATE_BUTTON} bg-primary font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40`}
             data-testid="remote-desktop-readiness-continue"
           >
             {viewOnly ? "Continue (view only)" : "Continue"}
@@ -95,6 +100,15 @@ function RequirementRow({ req, ...handlers }: { req: RemoteDesktopRequirement } 
         {!req.ok && (
           <>
             <p className="text-sm text-white/70">{req.detail}</p>
+            {req.warning && (
+              <p
+                className="flex gap-2 rounded-md border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs text-amber-100"
+                data-testid={`remote-desktop-requirement-${req.id}-warning`}
+              >
+                <AlertTriangle className="mt-px size-3.5 shrink-0 text-amber-300" />
+                <span>{req.warning}</span>
+              </p>
+            )}
             <div className="flex flex-wrap gap-2">
               {req.actions.map((a) => <ActionButton key={a.label} action={a} reqId={req.id} {...handlers} />)}
             </div>
@@ -106,19 +120,19 @@ function RequirementRow({ req, ...handlers }: { req: RemoteDesktopRequirement } 
 }
 
 function ActionButton({ action, reqId, onHostAction, onTerminal }: { action: RequirementAction; reqId: string } & ActionHandlers) {
-  const cls = "inline-flex min-h-11 items-center gap-1.5 rounded-md bg-white/10 px-3 text-sm hover:bg-white/20";
+  const cls = `${GATE_BUTTON} bg-white/10 hover:bg-white/20`;
   if (action.kind === "install") return <FfmpegInstallButton label={action.label} />;
   if (action.kind === "terminal") {
     return (
       <button type="button" className={cls} onClick={() => onTerminal(action.command)} title={action.command}>
-        <TerminalSquare className="size-4" /> {action.label}
+        <TerminalSquare className="size-3.5" /> {action.label}
       </button>
     );
   }
   if (action.kind === "link") {
     return (
       <a className={cls} href={action.url} target="_blank" rel="noreferrer">
-        <ExternalLink className="size-4" /> {action.label}
+        <ExternalLink className="size-3.5" /> {action.label}
       </a>
     );
   }

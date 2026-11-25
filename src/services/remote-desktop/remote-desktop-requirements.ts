@@ -18,6 +18,9 @@ import { detectLinuxSession, type LinuxSession } from "./remote-desktop-linux-se
 import { gstElements, type GstElements } from "./remote-desktop-capture-wayland.ts";
 import { getX11 } from "./remote-desktop-x11.ts";
 import {
+  realWindowsHost, snapshotWindowsHost, windowsHostRequirements, type WindowsHostApi,
+} from "./remote-desktop-win32-host.ts";
+import {
   MAC_PERMISSION_SETTINGS_URL,
   macPermissionStatus,
   requestMacPermission,
@@ -45,6 +48,9 @@ export interface RemoteDesktopRequirement {
   title: string;
   /** One sentence: what it is for and what to do. Shown only while `ok` is false. */
   detail: string;
+  /** A consequence the user must know before pressing an action (e.g. the PC unlocks at its
+   *  own screen). Drawn apart from `detail`; optional so older clients simply skip it. */
+  warning?: string;
   actions: RequirementAction[];
 }
 
@@ -267,9 +273,12 @@ async function linuxRequirements(session: LinuxSession): Promise<RemoteDesktopRe
   return [...waylandCaptureRequirements(await gstElements()), uinputRequirement()];
 }
 
+/** `windowsHost` is passed by tests: it otherwise reads the real session and monitors, which a
+ *  Linux runner does not have and a developer's desktop answers differently from a headless PC. */
 export async function remoteDesktopReadiness(
   platform: NodeJS.Platform = process.platform,
   linuxSession = platform === "linux" ? detectLinuxSession() : null,
+  windowsHost: WindowsHostApi = realWindowsHost,
 ): Promise<RemoteDesktopReadiness> {
   // On Linux "is this platform supported" means "is there a graphical session to capture" —
   // the grabber then depends on its type, which is a requirement rather than a hard no.
@@ -286,6 +295,7 @@ export async function remoteDesktopReadiness(
       requirements.push(macPermissionRequirement("accessibility", status.accessibility));
     }
     if (platform === "linux" && linuxSession) requirements.push(...await linuxRequirements(linuxSession));
+    if (platform === "win32") requirements.push(...windowsHostRequirements(snapshotWindowsHost(windowsHost)));
   }
   const inputSupported = getInputBackend(platform, linuxSession) !== null;
   return {

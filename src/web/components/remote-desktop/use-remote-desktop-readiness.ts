@@ -24,6 +24,8 @@ export interface RemoteDesktopRequirement {
   gates: "video" | "input";
   title: string;
   detail: string;
+  /** A consequence to read before pressing an action. Absent on older hosts. */
+  warning?: string;
   actions: RequirementAction[];
 }
 
