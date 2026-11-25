@@ -128,7 +128,7 @@ export async function bootstrapProviders(): Promise<void> {
       const existing = ai.providers["antigravity"];
       // No model is written: an absent one ("Auto") is agy's own pick. An old "pro" means that
       // too, and a model saved with its effort (`-high`) keeps the model; effort is picked apart.
-      if (!existing || existing.model === "pro" || /-(low|medium|high)$/i.test(existing.model ?? "")) {
+      if (!existing || existing.model === "pro" || /-(low|medium|high|xhigh)$/i.test(existing.model ?? "")) {
         const { model, ...rest } = existing ?? {};
         const kept = model && model !== "pro" ? toAntigravityBaseModelId(model) : undefined;
         configService.set("ai", {

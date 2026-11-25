@@ -40,6 +40,37 @@ export function chipLabel(modelDisplay: string, effortValue: string | null | und
 
 export const DEFAULT_EFFORT = EFFORT_OPTIONS.find((o) => o.default)!.value;
 
+/** Whether an Antigravity model exposes `xhigh` ("Extra") in its picker. */
+export function antigravityModelSupportsXhigh(model: { supportedEfforts?: string[] } | undefined): boolean {
+  return Boolean(model?.supportedEfforts?.includes("xhigh"));
+}
+
+/** Effort choices for Antigravity: Low/Medium/High, plus Extra only when the chosen model has xhigh. */
+export function antigravityEffortOptions(model: { supportedEfforts?: string[] } | undefined, keepXhigh?: boolean): EffortOption[] {
+  const allowXhigh = model ? antigravityModelSupportsXhigh(model) : Boolean(keepXhigh);
+  return EFFORT_OPTIONS.filter((o) =>
+    o.value === "low" || o.value === "medium" || o.value === "high" || (o.value === "xhigh" && allowXhigh),
+  );
+}
+
+/** Effort choices for a model across providers: omits unsupported levels (notably `xhigh`) when known. */
+export function effortOptionsForModel(
+  providerId: string | undefined,
+  model: { supportedEfforts?: string[] } | undefined,
+  opts?: { keepLevels?: readonly (string | null | undefined)[] },
+): EffortOption[] {
+  const keep = new Set((opts?.keepLevels ?? []).filter((v): v is string => Boolean(v)));
+  if (providerId === "antigravity") {
+    return antigravityEffortOptions(model, keep.has("xhigh"));
+  }
+  const supported = model?.supportedEfforts;
+  if (!supported) return EFFORT_OPTIONS;
+  if (supported.length === 0) {
+    return EFFORT_OPTIONS.filter((o) => (o.value !== "xhigh" && o.value !== "max") || keep.has(o.value));
+  }
+  return EFFORT_OPTIONS.filter((o) => supported.includes(o.value) || keep.has(o.value));
+}
+
 /** The picked effort beside the one the turns run at, and what overrides the pick if anything does. */
 export function shownEffort(
   effort: string | null | undefined,

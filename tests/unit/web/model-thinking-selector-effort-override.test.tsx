@@ -51,3 +51,52 @@ it("shows the pick as before when nothing overrides it", async () => {
   expect(container.querySelector('[role="note"]')).toBeNull();
   expect(container.textContent).not.toContain("In effect");
 });
+
+it("shows Antigravity Extra only for models with xhigh and resets to High when switching to a model without it", async () => {
+  const agyModels = [
+    { value: "gemini-4-neon", label: "Gemini 4 Neon", isDefault: true, supportedEfforts: ["low", "medium", "high", "xhigh"] },
+    { value: "gemini-4-carbon", label: "Gemini 4 Carbon", supportedEfforts: ["low", "medium", "high"] },
+  ];
+  const spy = spyOn(api, "get").mockResolvedValue(agyModels as never);
+  restore = () => spy.mockRestore();
+
+  let pickedModel = "gemini-4-neon";
+  let pickedEffort = "xhigh";
+  view = await mount(
+    <ModelThinkingSelector
+      model="gemini-4-neon"
+      effort="xhigh"
+      thinking={false}
+      onModelChange={(m) => { pickedModel = m; }}
+      onEffortChange={(e) => { pickedEffort = e; }}
+      onThinkingChange={() => {}}
+      projectName="demo-agy"
+      providerId="antigravity"
+    />,
+  );
+  await click(view.container.querySelector("button")!);
+  expect(effortRow(view.container, "Extra")).toBeDefined();
+
+  // Clicking a model without xhigh switches the model and drops xhigh back to high.
+  const carbonRow = [...view.container.querySelectorAll("button")].find((b) => b.textContent?.includes("Gemini 4 Carbon"))!;
+  await click(carbonRow);
+  expect(pickedModel).toBe("gemini-4-carbon");
+  expect(pickedEffort).toBe("high");
+
+  await view.unmount();
+  view = await mount(
+    <ModelThinkingSelector
+      model="gemini-4-carbon"
+      effort="xhigh"
+      thinking={false}
+      onModelChange={() => {}}
+      onEffortChange={() => {}}
+      onThinkingChange={() => {}}
+      projectName="demo-agy"
+      providerId="antigravity"
+    />,
+  );
+  await click(view.container.querySelector("button")!);
+  expect(effortRow(view.container, "Extra")).toBeUndefined();
+  expect(view.container.querySelector("button")!.textContent).toBe("Gemini 4 Carbon · High");
+});

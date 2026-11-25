@@ -56,17 +56,44 @@ export function storedAgyModels(): AgyModels | null {
   }
 }
 
+const ANTIGRAVITY_EFFORT_ORDER = ["low", "medium", "high", "xhigh"] as const;
+type AntigravityEffort = (typeof ANTIGRAVITY_EFFORT_ORDER)[number];
+
+/** Extract the trailing effort level from an Antigravity model ID or display label. */
+function extractAntigravityEffort(id: string, label?: string): AntigravityEffort | null {
+  const match = /-(low|medium|high|xhigh)$/i.exec(id)?.[1]
+    ?? (label ? /\((low|medium|high|xhigh)\)\s*$/i.exec(label)?.[1] : undefined);
+  return match ? (match.toLowerCase() as AntigravityEffort) : null;
+}
+
+function sortedAntigravityEfforts(set: Set<AntigravityEffort>): AntigravityEffort[] {
+  return ANTIGRAVITY_EFFORT_ORDER.filter((e) => set.has(e));
+}
+
 /** agy's models as picker options, one per model (effort is picked separately), agy's own first pick marked. */
 export function agyModelOptions(models: AgyModels | null): ModelOption[] {
   if (!models) return [];
   const defaultBase = models.current ? toAntigravityBaseModelId(models.current) : undefined;
-  const seen = new Set<string>();
+  const byValue = new Map<string, { option: ModelOption; efforts: Set<AntigravityEffort> }>();
   const out: ModelOption[] = [];
   for (const m of models.available) {
     const value = toAntigravityBaseModelId(m.modelId);
-    if (seen.has(value)) continue;
-    seen.add(value);
-    out.push({ value, label: toAntigravityBaseModelLabel(m.name), ...(value === defaultBase ? { isDefault: true } : {}) });
+    let entry = byValue.get(value);
+    if (!entry) {
+      const option: ModelOption = {
+        value,
+        label: toAntigravityBaseModelLabel(m.name),
+        ...(value === defaultBase ? { isDefault: true } : {}),
+      };
+      entry = { option, efforts: new Set() };
+      byValue.set(value, entry);
+      out.push(option);
+    }
+    const effort = extractAntigravityEffort(m.modelId, m.name);
+    if (effort) entry.efforts.add(effort);
+  }
+  for (const { option, efforts } of byValue.values()) {
+    if (efforts.size > 0) option.supportedEfforts = sortedAntigravityEfforts(efforts);
   }
   return out;
 }
@@ -91,20 +118,21 @@ export interface GetCascadeModelConfigDataRaw {
   }>;
 }
 
-/** Strip trailing `-(low|medium|high)` from an Antigravity model ID. */
+/** Strip trailing `-(low|medium|high|xhigh)` from an Antigravity model ID. */
 export function toAntigravityBaseModelId(id: string): string {
-  return id.replace(/-(low|medium|high)$/i, "");
+  return id.replace(/-(low|medium|high|xhigh)$/i, "");
 }
 
-/** Strip trailing ` (Low|Medium|High)` from an Antigravity model display label. */
+/** Strip trailing ` (Low|Medium|High|XHigh)` from an Antigravity model display label. */
 export function toAntigravityBaseModelLabel(label: string): string {
-  return label.replace(/\s*\((low|medium|high)\)\s*$/i, "").trim();
+  return label.replace(/\s*\((low|medium|high|xhigh)\)\s*$/i, "").trim();
 }
 
 /**
  * Resolve `(model, effort)` into the concrete Antigravity `modelId` sent with `session/set_model`,
- * against agy's own list: `("gemini-4-carbon", "high")` -> `"gemini-4-carbon-high"`, and a model
- * with fewer efforts gets the one it has (`gpt-oss-120b` -> `gpt-oss-120b-medium`).
+ * against agy's own list: `("gemini-4-neon", "xhigh")` -> `"gemini-4-neon-xhigh"`, and a model
+ * with fewer efforts gets the closest one it has (`gemini-4-carbon` at `xhigh` -> `gemini-4-carbon-high`,
+ * `gpt-oss-120b` -> `gpt-oss-120b-medium`).
  * No model chosen ("Auto") means agy's: `current`, at the chosen effort. Null when there is
  * nothing to ask for, i.e. no choice and agy named no model: the chat keeps agy's.
  */
@@ -119,11 +147,17 @@ export function resolveAntigravityModelId(
   if (!from) return null;
 
   const base = toAntigravityBaseModelId(from);
-  const suffix = /-(low|medium|high)$/i.exec(chosen ?? "")?.[1];
+  const suffix = /-(low|medium|high|xhigh)$/i.exec(chosen ?? "")?.[1];
   const rawEffort = (effort || suffix || ANTIGRAVITY_DEFAULT_EFFORT).toLowerCase();
-  const wanted = `${base}-${rawEffort === "low" || rawEffort === "medium" ? rawEffort : "high"}`;
+  const normEffort = rawEffort === "low" || rawEffort === "medium" || rawEffort === "xhigh"
+    ? rawEffort
+    : rawEffort === "max"
+      ? "xhigh"
+      : "high";
+  const wanted = `${base}-${normEffort}`;
   const available = agy?.available ?? [];
   if (available.length === 0 || available.includes(wanted)) return wanted;
+  if (normEffort === "xhigh" && available.includes(`${base}-high`)) return `${base}-high`;
   if (available.includes(base)) return base;
   return available.find((id) => toAntigravityBaseModelId(id) === base) ?? wanted;
 }
@@ -138,8 +172,8 @@ export function parseAntigravityModels(raw: GetCascadeModelConfigDataRaw | null 
   if (configs.length === 0) return [];
 
   const byRawLabel = new Map<string, ModelOption>();
+  const byBase = new Map<string, { option: ModelOption; efforts: Set<AntigravityEffort> }>();
   const allBaseOptions: ModelOption[] = [];
-  const seenBase = new Set<string>();
 
   for (const cfg of configs) {
     const rawLabel = cfg.label?.trim();
@@ -147,12 +181,20 @@ export function parseAntigravityModels(raw: GetCascadeModelConfigDataRaw | null 
     if (!rawLabel || !rawValue) continue;
     const value = toAntigravityBaseModelId(rawValue);
     const label = toAntigravityBaseModelLabel(rawLabel);
-    const option: ModelOption = { value, label };
-    byRawLabel.set(rawLabel, option);
-    if (!seenBase.has(value)) {
-      seenBase.add(value);
+    let entry = byBase.get(value);
+    if (!entry) {
+      const option: ModelOption = { value, label };
+      entry = { option, efforts: new Set() };
+      byBase.set(value, entry);
       allBaseOptions.push(option);
     }
+    const effort = extractAntigravityEffort(rawValue, rawLabel);
+    if (effort) entry.efforts.add(effort);
+    byRawLabel.set(rawLabel, entry.option);
+  }
+
+  for (const { option, efforts } of byBase.values()) {
+    if (efforts.size > 0) option.supportedEfforts = sortedAntigravityEfforts(efforts);
   }
 
   if (allBaseOptions.length === 0) return [];
@@ -188,8 +230,16 @@ export async function fetchAntigravityModelsLive(customHome?: string): Promise<M
   const fromAgy = agyModelOptions(stored);
   const fromApp = await fetchLanguageServerModels(customHome);
   if (fromApp.length === 0) return fromAgy;
+  const agyByValue = new Map(fromAgy.map((m) => [m.value, m]));
   const defaultBase = stored?.current ? toAntigravityBaseModelId(stored.current) : undefined;
-  return fromApp.map((m) => (m.value === defaultBase ? { ...m, isDefault: true } : m));
+  return fromApp.map((m) => {
+    const supportedEfforts = m.supportedEfforts ?? agyByValue.get(m.value)?.supportedEfforts;
+    return {
+      ...m,
+      ...(supportedEfforts ? { supportedEfforts } : {}),
+      ...(m.value === defaultBase ? { isDefault: true } : {}),
+    };
+  });
 }
 
 async function fetchLanguageServerModels(customHome?: string): Promise<ModelOption[]> {

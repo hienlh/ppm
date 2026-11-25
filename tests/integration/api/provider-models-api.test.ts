@@ -41,7 +41,7 @@ describe("Provider Models API", () => {
       const json = (await res.json()) as any;
       expect(json.ok).toBe(true);
       expect(Array.isArray(json.data)).toBe(true);
-      expect(json.data.length).toBe(11);
+      expect(json.data.length).toBe(13);
 
       const values = json.data.map((m: any) => m.value);
       expect(values).toContain("claude-opus-5-5");
@@ -49,22 +49,33 @@ describe("Provider Models API", () => {
       expect(values).toContain("claude-fable-5-2");
       expect(values).toContain("claude-fable-5-1");
       expect(values).toContain("claude-fable-5");
+      expect(values).toContain("claude-sonnet-5-5");
       expect(values).toContain("claude-sonnet-5");
       expect(values).toContain("claude-sonnet-4-6");
       expect(values).toContain("claude-opus-4-8");
       expect(values).toContain("claude-opus-4-7");
       expect(values).toContain("claude-opus-4-6");
+      expect(values).toContain("claude-haiku-5-5");
       expect(values).toContain("claude-haiku-4-5");
 
       // Strongest model listed first (power-sorted)
       expect(json.data[0].value).toBe("claude-opus-5-5");
 
-      // Check labels
+      // Check labels and effort capabilities
+      const sonnet55Model = json.data.find((m: any) => m.value === "claude-sonnet-5-5");
+      expect(sonnet55Model.label).toBe("Claude Sonnet 5.5");
+      expect(sonnet55Model.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+
+      const haiku55Model = json.data.find((m: any) => m.value === "claude-haiku-5-5");
+      expect(haiku55Model.label).toBe("Claude Haiku 5.5");
+      expect(haiku55Model.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+
       const fableModel = json.data.find((m: any) => m.value === "claude-fable-5");
       expect(fableModel.label).toBe("Claude Fable 5");
 
       const sonnetModel = json.data.find((m: any) => m.value === "claude-sonnet-4-6");
       expect(sonnetModel.label).toBe("Claude Sonnet 4.6");
+      expect(sonnetModel.supportedEfforts).toEqual(["low", "medium", "high", "max"]);
 
       const opus48Model = json.data.find((m: any) => m.value === "claude-opus-4-8");
       expect(opus48Model.label).toBe("Claude Opus 4.8");
@@ -115,7 +126,7 @@ describe("Provider Models API", () => {
       const json = (await res.json()) as any;
       expect(json.ok).toBe(true);
       expect(Array.isArray(json.data)).toBe(true);
-      expect(json.data.length).toBe(11);
+      expect(json.data.length).toBe(13);
 
       const values = json.data.map((m: any) => m.value);
       expect(values).toContain("claude-opus-5-5");
@@ -123,11 +134,13 @@ describe("Provider Models API", () => {
       expect(values).toContain("claude-fable-5-2");
       expect(values).toContain("claude-fable-5-1");
       expect(values).toContain("claude-fable-5");
+      expect(values).toContain("claude-sonnet-5-5");
       expect(values).toContain("claude-sonnet-5");
       expect(values).toContain("claude-sonnet-4-6");
       expect(values).toContain("claude-opus-4-8");
       expect(values).toContain("claude-opus-4-7");
       expect(values).toContain("claude-opus-4-6");
+      expect(values).toContain("claude-haiku-5-5");
       expect(values).toContain("claude-haiku-4-5");
       expect(json.data[0].value).toBe("claude-opus-5-5");
     });

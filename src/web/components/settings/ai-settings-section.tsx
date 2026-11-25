@@ -18,21 +18,13 @@ import { ProviderBadge } from "@/components/chat/provider-selector";
 import { openSettings } from "./open-settings";
 import { CodexContextSettings } from "./codex-context-settings";
 import { McpSignInList } from "@/components/mcp-auth/mcp-sign-in-list";
-import { effortNotice, noticeText, shownEffort } from "@/components/chat/model-thinking-selector-helpers";
+import { antigravityEffortOptions, antigravityModelSupportsXhigh, effortNotice, effortOptionsForModel, noticeText, shownEffort } from "@/components/chat/model-thinking-selector-helpers";
 import { autoModelLabel, modelDisplayName } from "@/lib/model-display-name";
 import type { EffortStatus } from "../../../shared/effort-status";
 import type { ModelOption } from "../../../types/chat";
 import { LOG_ONLY_IDLE_MINUTES, leftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../../shared/leftover-processes";
 import { MemoryGuardSettingsFields } from "./memory-guard-settings";
 import type { ProviderProbeStatus } from "../../../providers/provider-probe";
-
-const EFFORT_OPTIONS = [
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "xhigh", label: "Extra" },
-  { value: "max", label: "Max" },
-];
 
 const PERMISSION_MODE_OPTIONS = [
   { value: "bypassPermissions", label: "Bypass permissions (default)" },
@@ -183,6 +175,23 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
   const modelOptions = isSdkProvider
     ? models
     : [{ value: "__default__", label: autoModelLabel(models) }, ...models];
+
+  const antigravityModel = activeTab === "antigravity"
+    ? models.find((m) => m.value === (config?.model || models.find((x) => x.isDefault)?.value))
+    : undefined;
+  const antigravityEfforts = antigravityEffortOptions(antigravityModel, config?.effort === "xhigh");
+  const antigravityEffortValue = antigravityModel && !antigravityModelSupportsXhigh(antigravityModel)
+    && (config?.effort === "xhigh" || config?.effort === "max")
+    ? "high"
+    : (config?.effort ?? "high");
+
+  const sdkModel = isSdkProvider
+    ? models.find((m) => m.value === (config?.model ?? models[0]?.value))
+    : undefined;
+  const sdkEfforts = effortOptionsForModel(activeTab, sdkModel);
+  const sdkEffortValue = sdkModel?.supportedEfforts && !sdkEfforts.some((o) => o.value === (config?.effort ?? "high"))
+    ? "high"
+    : (config?.effort ?? "high");
 
   return (
     <div className={gapSize}>
@@ -373,7 +382,23 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
             <Label htmlFor="ai-model" className={compact ? labelSize : undefined}>Model</Label>
             <Select
               value={isSdkProvider ? (config?.model ?? models[0]?.value) : (config?.model || "__default__")}
-              onValueChange={(v) => handleSave("model", v === "__default__" ? undefined : v)}
+              onValueChange={(v) => {
+                const nextModel = v === "__default__" ? undefined : v;
+                if (activeTab === "antigravity" && (config?.effort === "xhigh" || config?.effort === "max")) {
+                  const target = models.find((m) => m.value === (nextModel || models.find((x) => x.isDefault)?.value));
+                  if (target && !antigravityModelSupportsXhigh(target)) {
+                    handleSettingsSave({ providers: { antigravity: { model: nextModel, effort: "high" } } });
+                    return;
+                  }
+                } else if (isSdkProvider && config?.effort === "xhigh") {
+                  const target = models.find((m) => m.value === nextModel);
+                  if (target?.supportedEfforts && !target.supportedEfforts.includes("xhigh")) {
+                    handleSettingsSave({ providers: { [activeTab]: { model: nextModel, effort: "high" } } });
+                    return;
+                  }
+                }
+                handleSave("model", nextModel);
+              }}
               disabled={modelsLoading}
             >
               <SelectTrigger id="ai-model" className={`w-full ${compact ? "h-7 text-[11px]" : ""}`}>
@@ -394,14 +419,14 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
           <div className={fieldGap}>
             <Label htmlFor="ai-antigravity-effort" className={compact ? labelSize : undefined}>Effort</Label>
             <Select
-              value={config?.effort ?? "high"}
+              value={antigravityEffortValue}
               onValueChange={(v) => handleSave("effort", v)}
             >
               <SelectTrigger id="ai-antigravity-effort" className={`w-full ${compact ? "h-7 text-[11px]" : ""}`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {EFFORT_OPTIONS.filter((o) => o.value === "low" || o.value === "medium" || o.value === "high").map((opt) => (
+                {antigravityEfforts.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </SelectItem>
@@ -459,14 +484,14 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
             <div className={fieldGap}>
               <Label htmlFor="ai-effort" className={compact ? labelSize : undefined}>Effort</Label>
               <Select
-                value={config?.effort ?? "high"}
+                value={sdkEffortValue}
                 onValueChange={(v) => handleSave("effort", v)}
               >
                 <SelectTrigger id="ai-effort" className={`w-full ${compact ? "h-7 text-[11px]" : ""}`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {EFFORT_OPTIONS.map((opt) => (
+                  {sdkEfforts.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>
