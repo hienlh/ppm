@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.26.37] - 2026-11-25
+
+### Added
+
+- **Answer the Assistant's cards by voice in PPM**: a mic on the reply bar, the "Other" field of decisions and of question cards, on desktop and phone, with the same transcription and review as the chat's voice messages.
+- **The web browser's picture defaults to Auto**, up to 30 frames a second, and while you scroll over a slow link it sends smaller pictures, then a sharp one when you stop.
+
+### Fixed
+
+- **Typing in the web browser over a slow link shows at once** instead of sometimes waiting for the caret's next blink.
+
 ## [0.26.36] - 2026-11-25
 
 ### Added
