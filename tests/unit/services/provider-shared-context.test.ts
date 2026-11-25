@@ -115,6 +115,18 @@ describe("provider sharing", () => {
     expect(context).toContain("CODEX_RULES");
   });
 
+  test("Antigravity rules in each folder agy loads reach other providers, and never Antigravity itself", async () => {
+    const { project, userHome, put } = fixture();
+    const folders = [".agents", ".agent", "_agents", "_agent"];
+    for (const dir of folders) put(join(project, dir, "rules", "style.md"), `AGY_RULE_IN_${dir}`);
+    for (const recipient of ["claude", "codex"]) {
+      const context = await buildSharedProviderContext(project, [], { userHome, recipientProviderId: recipient });
+      for (const dir of folders) expect(context).toContain(`AGY_RULE_IN_${dir}`);
+    }
+    const forAgy = await buildSharedProviderContext(project, [], { userHome, recipientProviderId: "antigravity" });
+    expect(forAgy).not.toContain("AGY_RULE_IN_");
+  });
+
   test("memory without an index remains discoverable through its native directory", async () => {
     const { project, userHome, put } = fixture();
     const memory = join(project, ".future", "memory");
