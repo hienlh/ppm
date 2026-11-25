@@ -20,6 +20,10 @@ describe("resolveEntryMode — binary daemon sentinel routing", () => {
   it("routes __file_index_walk__ to the file index walk", () => {
     expect(resolveEntryMode(["/opt/ppm/bin/ppm", "__file_index_walk__"])).toBe("file-index-walk");
   });
+  it("routes __search__ to the search host", () => {
+    expect(resolveEntryMode(["/opt/ppm/bin/ppm", "__search__"])).toBe("search");
+    expect(resolveEntryMode(["/home/u/.bun/bin/bun", "/repo/src/index.ts", "__search__"])).toBe("search");
+  });
   it("treats normal CLI commands as cli", () => {
     expect(resolveEntryMode(["ppm", "start"])).toBe("cli");
     expect(resolveEntryMode(["ppm", "upgrade", "--check"])).toBe("cli");
