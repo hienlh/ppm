@@ -15,6 +15,7 @@ import { createLogger } from "../logger.ts";
 import { installPageFeatures } from "./page-features.ts";
 import { installAudioRelay } from "./audio/audio-relay.ts";
 import { aiControlLock } from "./ai-control/ai-control-lock.ts";
+import { streamFpsCap } from "../../shared/web-browser-settings.ts";
 
 const log = createLogger("web-browser");
 
@@ -89,7 +90,7 @@ export class ViewerHub {
   add(viewer: Viewer): void {
     this.viewers.set(viewer.id, viewer);
     const s = this.host.settings();
-    viewer.send({ type: "hello", tabs: this.host.tabs?.list() ?? [], activeTabId: this.host.activeTabId, limits: { maxTabs: s.maxTabs, idleStopMinutes: s.idleStopMinutes, fpsCap: s.fpsCap, audio: s.audio } });
+    viewer.send({ type: "hello", tabs: this.host.tabs?.list() ?? [], activeTabId: this.host.activeTabId, limits: { maxTabs: s.maxTabs, idleStopMinutes: s.idleStopMinutes, fpsCap: streamFpsCap(s), audio: s.audio } });
     viewer.send(this.status());
     viewer.send({ type: "ai", ...pick(aiControlLock.state()) });
     this.takeControl(viewer.id);
@@ -162,6 +163,8 @@ export class ViewerHub {
       // The person's own input while an AI acts takes the browser back from it.
       if (aiControlLock.state().active && msg.type !== "releaseAll") aiControlLock.takeBack();
       this.host.touchInput();
+      // A repaint Chrome dropped while the pacer held it is fetched once the person stops.
+      if (msg.type !== "releaseAll") this.pacer?.noteInput(msg.type === "wheel" || msg.type === "touch");
       if (active && this.input) await this.input.send(msg, this.viewport, active.sessionId);
       return;
     }

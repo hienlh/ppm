@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { AlertTriangle, Globe } from "@/lib/icons";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api-client";
-import { WEB_BROWSER_QUALITY_PRESETS, type WebBrowserSettings } from "../../../shared/web-browser-settings";
+import { AUTO_FPS_CAP, WEB_BROWSER_QUALITY_PRESETS, type WebBrowserSettings } from "../../../shared/web-browser-settings";
 import { refreshWebBrowserAvailable } from "@/components/web-browser/use-web-browser-available";
 import { openWebBrowser } from "@/components/web-browser/open-web-browser";
 
@@ -57,7 +57,7 @@ export function WebBrowserSettingsSection() {
   if (!caps) return <div className="text-sm text-muted-foreground">Loading…</div>;
   const s = caps.settings;
   const locked = caps.publicRequest; // reach switches cannot be widened from a public link
-  const preset = (Object.entries(WEB_BROWSER_QUALITY_PRESETS).find(([, p]) => p.fpsCap === s.fpsCap && p.jpegQuality === s.jpegQuality)?.[0]) ?? "custom";
+  const preset = s.autoFps ? "auto" : (Object.entries(WEB_BROWSER_QUALITY_PRESETS).find(([, p]) => p.fpsCap === s.fpsCap && p.jpegQuality === s.jpegQuality)?.[0]) ?? "custom";
 
   return (
     <div className="space-y-6">
@@ -96,8 +96,13 @@ export function WebBrowserSettingsSection() {
         </label>
         <label className="flex items-center gap-3 py-1 text-sm">
           <span className="flex-1">Picture <span className="text-xs text-muted-foreground">(more frames cost more bandwidth)</span></span>
-          <select value={preset} onChange={(e) => { const p = WEB_BROWSER_QUALITY_PRESETS[e.target.value as keyof typeof WEB_BROWSER_QUALITY_PRESETS]; if (p) void save(p); }}
+          <select value={preset} onChange={(e) => {
+            if (e.target.value === "auto") return void save({ autoFps: true });
+            const p = WEB_BROWSER_QUALITY_PRESETS[e.target.value as keyof typeof WEB_BROWSER_QUALITY_PRESETS];
+            if (p) void save(p);
+          }}
             className="min-h-9 rounded-md border border-border bg-panel px-2 text-sm">
+            <option value="auto">Auto (up to {AUTO_FPS_CAP} fps, follows the connection)</option>
             <option value="saver">Saver (8 fps)</option>
             <option value="balanced">Balanced (12 fps)</option>
             <option value="smooth">Smooth (20 fps)</option>
