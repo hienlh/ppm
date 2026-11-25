@@ -7,12 +7,19 @@ import {
 } from "../../services/specs/spec.service.ts";
 import { isSpecChecks, isSpecKind, isSpecPhase, isSpecWorkflow, phaseFileName, type SpecPhase } from "../../shared/spec-types.ts";
 import { isRunning, runAllBlocker, startRun, stopRun } from "../../services/specs/spec-scheduler.ts";
-import { tellSpecChat } from "../ws/spec-run-env.ts";
 import { approvalMessage, runAllMessage } from "../../services/specs/spec-approval-message.ts";
 import { resolve } from "node:path";
 import { getSessionProvider, sessionIdAliases } from "../../services/db.service.ts";
 import { specForSession } from "../../services/specs/spec-store.ts";
 import { providerRegistry } from "../../providers/registry.ts";
+
+// Loaded on first use: the chat socket module it needs reaches the providers and the Assistant's
+// MCP endpoint, whose route caller imports the project router this file is mounted on, so a
+// static import here leaves that router uninitialised when the route caller loads it first.
+async function tellSpecChat(projectPath: string, sessionId: string | null | undefined, text: string): Promise<boolean> {
+  const { tellSpecChat: tell } = await import("../ws/spec-run-env.ts");
+  return tell(projectPath, sessionId, text);
+}
 
 /**
  * `/api/project/:projectName/specs` — the specs of one project, for the browser and `ppm spec`.
