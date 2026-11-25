@@ -27,7 +27,7 @@ describe("session tools provider options", () => {
       "mcp__ppm-sessions__create_session", "mcp__ppm-sessions__send_to_session", "mcp__ppm-sessions__session_status", "mcp__ppm-sessions__design_screenshot",
       "mcp__ppm-sessions__session_schedule_create", "mcp__ppm-sessions__session_schedule_list", "mcp__ppm-sessions__session_schedule_delete",
       "mcp__ppm-sessions__session_schedule_set_enabled", "mcp__ppm-sessions__session_schedule_propose_script", "mcp__ppm-sessions__session_schedule_claim",
-      "mcp__ppm-sessions__report_to_assistant",
+      "mcp__ppm-sessions__report_to_assistant", "mcp__ppm-sessions__report_withdraw",
       "mcp__ppm-sessions__vault_list", "mcp__ppm-sessions__vault_read", "mcp__ppm-sessions__vault_propose",
       "mcp__ppm-sessions__ppm_task_list", "mcp__ppm-sessions__ppm_task_get", "mcp__ppm-sessions__ppm_task_project",
       "mcp__ppm-sessions__ppm_task_create", "mcp__ppm-sessions__ppm_task_update", "mcp__ppm-sessions__ppm_task_close",

@@ -125,7 +125,7 @@ export function ppmToolIcon(toolName: string): PpmToolIcon | null {
   if (t === "search_sessions") return "search";
   if (t === "list_session_turns" || t === "read_session_turns") return "turns";
   if (t.startsWith("session_schedule_")) return "schedule";
-  if (t === "report_to_assistant") return "report";
+  if (t === "report_to_assistant" || t === "report_withdraw") return "report";
   if (name.server === "design" || t.startsWith("design_")) return "design";
   if (name.server === "assistant") return "assistant";
   return "tool";

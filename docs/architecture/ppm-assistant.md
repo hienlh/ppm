@@ -1391,6 +1391,32 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   held for the morning; the same urgent title collapses into one card
   (`src/shared/assistant-limits.ts`). Each refused or merged report is logged at INFO with its kind,
   project, session and reason, never its text.
+- **Withdrawing and replacing cards** (`card-withdraw.ts`, switch `report_withdraw` in Settings →
+  Tools → Cards, on by default with no feature introduction, so an upgrade asks nothing). A manager takes
+  back a card a newer one replaced (`report_to_assistant { supersedes: [ids] }`) or that the user
+  handled elsewhere (`report_withdraw { cards, reason, superseded_by? }`; with no `cards` it lists
+  the manager's open cards). The Assistant has `card_withdraw`: any project's report cards in a turn
+  the user started, only its own (`byAssistant`) in a turn PPM started. Only `needs_decision`,
+  `urgent`, `done` and `failed` reports of the caller's project (a previous manager chat's included),
+  never a chat's approval/question mirror, a rules change, a budget card, or an open card carrying an
+  answer (one reopened because the user's words did not arrive); at most `WITHDRAW_PER_TURN` (5) per
+  turn of the withdrawing chat, counted by the chat's live turn id (else the last 10 minutes). A
+  withdrawn card is `dismissed` with `answer.withdrawn` (`sessionId`, `reason`, `supersededBy`,
+  `turnId`) and `answer.by` `manager`/`assistant` — no new status, no migration. The user's Restore
+  (`POST /cards/:id/restore`, withdrawn cards only) puts it back to `open` and sends it to Telegram
+  again (change `restored`). PPM shows "Replaced by …" / "Withdrawn: …" on the card, Restore and Show
+  new card under it, "Replaces …" on the new card, and one toast with Undo in every tab that showed
+  it waiting; Telegram rewrites the old copy's end line and sends the replacing card as a reply to
+  it. A reply to a withdrawn card is asked about ("send anyway?"), never refused, so the user's words
+  are not lost; an OK pressed late is told to answer the new card. Reminders, all only while the
+  switch is on: every report's answer lists the manager's other open cards; the manager's rules gain
+  `MANAGER_WITHDRAW_RULE`; the digest ask gains `DIGEST_ASK_WITHDRAW_TEXT` (fixed text — the manager
+  looks its cards up with `report_withdraw`, no model text is pasted into the ask). A report may name
+  the task it is about (`task`, stored as `payload.aboutTask`); when that task closes
+  (`card-task-closure.ts`, on `ppmTasksEvents`) its `done`/`failed` cards are cleared by PPM, a card
+  that waits only gets `payload.taskClosed` ("Task … was closed"), and the close tool's answer lists
+  those waiting cards for the closer to withdraw if settled. PPM never closes a card that waits on
+  the user by itself.
 - **Answering.** `POST /api/assistant/cards/:id/answer` answers the exact request an approval or
   question card mirrors, through `chatControl().answerApproval` with origin `assistant_card`; Allow
   is refused when the card does not show everything that would run. A question card is answered with

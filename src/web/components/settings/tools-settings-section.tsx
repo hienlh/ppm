@@ -16,6 +16,7 @@ import { SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_TOOLS } from "../../../s
 import type { SessionCollabSettings } from "../../../shared/session-collab-settings";
 import { VAULT_TOOLS } from "../../../shared/vault";
 import { PPM_TASK_TOOLS } from "../../../shared/ppm-task-tools";
+import { CARD_TOOLS } from "../../../shared/card-withdraw";
 import { SectionHeader, SwitchRow } from "./settings-rows";
 import { SessionCollabSettingsControls } from "./session-collab-settings-controls";
 
@@ -158,6 +159,10 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Tell the manager now",
     note: "The PPM Assistant only: wakes a project's manager chat about task changes, after you said yes.",
   },
+  report_withdraw: {
+    label: "Withdraw stale cards",
+    note: "A manager chat takes back its cards a newer card replaced or you handled elsewhere (the Assistant too, when you ask it), saying why. Restore brings one back.",
+  },
 };
 
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [
@@ -192,6 +197,11 @@ const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }>
     title: "Vault",
     intro: "Your secret vault (Settings → Vault), for ordinary chats. Off until you turn them on here; the PPM Assistant always has them.",
     tools: VAULT_TOOLS,
+  },
+  {
+    title: "Cards",
+    intro: "The cards in “Waiting on you”. PPM never closes a card that waits on you by itself; with this on, the card's own manager may.",
+    tools: CARD_TOOLS,
   },
 ];
 

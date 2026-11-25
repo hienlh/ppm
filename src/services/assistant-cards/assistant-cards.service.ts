@@ -41,9 +41,10 @@ export interface NewCard {
 /**
  * `shown`: a queued approval or question card reached the front of its chat and can be answered
  * now (Telegram sends it then). `overdue`: an approval or question card has stood unanswered past
- * `APPROVAL_OVERDUE_MS` (Telegram rings once more).
+ * `APPROVAL_OVERDUE_MS` (Telegram rings once more). `restored`: the user brought back a card its
+ * author had withdrawn, so it waits again (Telegram sends it once more, with buttons).
  */
-export type CardChange = "created" | "changed" | "shown" | "overdue";
+export type CardChange = "created" | "changed" | "shown" | "overdue" | "restored";
 export type CardListener = (card: AssistantCard, change: CardChange) => void;
 
 export interface CardsEnv {
@@ -166,6 +167,20 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
       const row = getCardRow(id);
       if (row) tell(row, "changed", isWaiting(row));
       return true;
+    },
+    /**
+     * Brings back a card its author withdrew: the user's choice, never a model's. Only from
+     * `dismissed`, only when the card was withdrawn rather than dismissed by the user, and
+     * compare-and-set, so two presses bring it back once. The answer is cleared: nobody answered it.
+     */
+    restore(id: string): TransitionResult {
+      const before = getCardRow(id);
+      if (!before) return { ok: false, card: null };
+      if (before.status !== "dismissed" || !before.answer?.withdrawn) return { ok: false, card: toCard(before) };
+      if (!casCardStatus(id, "dismissed", "open", null, env.now())) return { ok: false, card: toCard(getCardRow(id) ?? before) };
+      const after = getCardRow(id)!;
+      log.info(`card ${id} restored by the user`);
+      return { ok: true, card: tell(after, "restored", isWaiting(after)) };
     },
     /**
      * Puts the manager's answer to a reply under the card and tells every PPM tab. Card listeners

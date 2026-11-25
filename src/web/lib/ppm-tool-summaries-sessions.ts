@@ -86,7 +86,40 @@ function report(ctx: PpmToolContext): PpmToolSummary {
   const kind = str(answer?.kind) ?? asked;
   const title = str(ctx.args.title);
   const kindLabel = kind ? (REPORT_KINDS[kind] ?? oneLine(kind, 20)) : undefined;
-  return { label: labelFor(ctx, "Report to Assistant", "Reported to Assistant"), detail: joinParts(kindLabel, title && oneLine(title, 80)) };
+  // Cards it replaced: counted from the answer when there is one, else from what was asked.
+  const replaced = Array.isArray(answer?.withdrawn)
+    ? answer.withdrawn.filter((w) => isObj(w) && w.outcome === "withdrawn").length
+    : Array.isArray(ctx.args.supersedes) ? ctx.args.supersedes.length : 0;
+  return {
+    label: labelFor(ctx, "Report to Assistant", "Reported to Assistant"),
+    detail: joinParts(kindLabel, title && oneLine(title, 80), replaced > 0 ? `replaces ${replaced}` : undefined),
+  };
+}
+
+/**
+ * `report_withdraw`: with no cards it lists the manager's open cards; otherwise it withdraws them.
+ * The line says how many went and why, from the answer, or what was asked when there is none.
+ */
+function withdraw(ctx: PpmToolContext): PpmToolSummary {
+  const answer = jsonAnswer(ctx.text);
+  const asked = Array.isArray(ctx.args.cards) ? ctx.args.cards.length : 0;
+  if (!asked) {
+    const listed = Array.isArray(answer?.listed) ? answer.listed.length : undefined;
+    return {
+      label: labelFor(ctx, "List open cards", "Listed open cards"),
+      detail: listed === undefined ? undefined : listed === 0 ? "none waiting" : `${listed} waiting`,
+    };
+  }
+  const reason = str(ctx.args.reason);
+  const list = Array.isArray(answer?.withdrawn) ? answer.withdrawn.filter(isObj) : null;
+  const done = list ? list.filter((w) => w.outcome === "withdrawn").length : undefined;
+  const count = done === undefined ? `${asked} card${asked === 1 ? "" : "s"}`
+    : done === asked ? `${done} card${done === 1 ? "" : "s"}` : `${done} of ${asked} cards`;
+  const replaced = str(ctx.args.superseded_by) ? "replaced" : undefined;
+  return {
+    label: labelFor(ctx, "Withdraw cards", "Withdrew cards"),
+    detail: joinParts(count, replaced, reason && oneLine(reason, 80)),
+  };
 }
 
 /** A schedule's name and next fire as an answer gives them. */
@@ -160,6 +193,7 @@ export function sessionToolSummary(ctx: PpmToolContext): PpmToolSummary | null {
     case "list_session_turns": return listTurns(ctx);
     case "read_session_turns": return readTurns(ctx);
     case "report_to_assistant": return report(ctx);
+    case "report_withdraw": return withdraw(ctx);
     default: return ctx.tool.startsWith("session_schedule_") ? schedule(ctx) : null;
   }
 }

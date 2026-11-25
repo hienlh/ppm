@@ -17,8 +17,9 @@ import { ChevronDown } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { TEXT_BUTTON } from "@/lib/control-size";
 import { CHAT_MESSAGE_TEXT } from "@/lib/chat-message-text";
-import type { AssistantCard } from "../../../../shared/assistant-cards";
+import { cardWithdrawal, type AssistantCard } from "../../../../shared/assistant-cards";
 import { CardMenu } from "./card-menu";
+import { CardReplacesLine, CardTaskClosedLine, WithdrawnCardActions } from "./card-withdrawal-parts";
 import { FollowUpNewCards } from "./card-followup-new-cards";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 
@@ -61,8 +62,13 @@ export function cardStatusLine(card: AssistantCard): string | null {
     case "open":
     case "info":
       return null;
-    case "dismissed":
-      return `Dismissed${at}`;
+    case "dismissed": {
+      const withdrawn = cardWithdrawal(card);
+      if (withdrawn?.supersededBy) return `Replaced by “${withdrawn.supersededBy.title}”${at}`;
+      if (withdrawn) return `Withdrawn by ${card.answer?.by === "assistant" ? "the Assistant" : "the manager"}: ${withdrawn.reason}${at}`;
+      // PPM's own reason (a closed task cleared its done card), else the user's Dismiss.
+      return card.answer?.by === "ppm" && card.answer.note ? `${card.answer.note}${at}` : `Dismissed${at}`;
+    }
     case "gone":
       return "No longer waiting";
     case "resolved":
@@ -198,7 +204,13 @@ export function CardShell({ card, look, children, actions, secondary, error, met
       {card.provenance && (
         <p className="px-3.5 pt-1.5 text-[11px] italic text-text-subtle" data-card-provenance="">{card.provenance}</p>
       )}
-      {children && <div className="space-y-2.5 px-3.5 pb-3 pt-2 text-sm leading-relaxed text-text-primary">{children}</div>}
+      {children && (
+        <div className="space-y-2.5 px-3.5 pb-3 pt-2 text-sm leading-relaxed text-text-primary">
+          {children}
+          <CardReplacesLine card={card} />
+          <CardTaskClosedLine card={card} />
+        </div>
+      )}
       {/* The manager's answer to the user's reply on this card, sent here and to where they replied. */}
       {card.followUp?.newCards?.length
         ? <FollowUpNewCards card={card} newCards={card.followUp.newCards} at={card.followUp.at} />
@@ -218,7 +230,12 @@ export function CardShell({ card, look, children, actions, secondary, error, met
         <p className="mx-3.5 mb-3 rounded-md bg-error/10 px-2.5 py-1.5 text-xs text-error" data-card-notice="">{card.answer.note}</p>
       )}
       {status
-        ? <p className="border-t border-border px-3.5 py-2 text-xs text-text-subtle" data-card-status-line="">{status}</p>
+        ? (
+          <>
+            <p className="border-t border-border px-3.5 py-2 text-xs text-text-subtle" data-card-status-line="">{status}</p>
+            {cardWithdrawal(card) && <WithdrawnCardActions card={card} />}
+          </>
+        )
         : (actions || secondary) && (
           // Laid out by the card's own width, not the screen's: a desktop Assistant window is
           // narrow too. Narrow, the answers take one row and the lesser actions another (above

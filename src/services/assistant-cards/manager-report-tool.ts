@@ -11,6 +11,8 @@ import { cleanCardBody, cleanCardTitle, cleanOptionLabel } from "./card-text-cle
 import { listsChoicesInText } from "./card-choices-in-text.ts";
 import { createLogger } from "../logger.ts";
 import type { NewCard } from "./assistant-cards.service.ts";
+import { describeOpenCards, describeWithdrawals, withdrawReason, withdrawRefs, type WithdrawItem } from "./card-withdraw.ts";
+import { REPORT_WITHDRAW_TOOL, WITHDRAW_CARDS_MAX } from "../../shared/card-withdraw.ts";
 
 /**
  * `report_to_assistant`: how a project's manager chat tells the user something through PPM
@@ -90,10 +92,31 @@ export interface ReportEnv {
    */
   digestAnswer(sessionId: string, items: string[]): { ok: true } | { ok: false; message: string };
   create(card: NewCard): AssistantCard;
+  /**
+   * Card withdrawal (`supersedes`, `task` and the list of open cards): on only when the user turned
+   * it on. Absent means off.
+   */
+  withdrawOn?(): boolean;
+  /** A task of the manager's project, by `ppm/76`, `#76` or `76`; a message saying why not otherwise. */
+  resolveTask?(projectPath: string, ref: string): { taskId: string; ref: string; title: string } | { error: string };
+  /** Withdraws `refs` for this manager, each replaced by `by`. */
+  withdraw?(caller: ReportCaller, refs: readonly string[], reason: string, by: { id: string; title: string } | undefined, dryRun?: boolean): WithdrawItem[];
+  /** Records on a card (one a report was merged into) which earlier cards it replaces. */
+  markSupersedes?(cardId: string, replaced: Array<{ id: string; title: string }>): void;
+  /** This manager's other cards it may still withdraw, oldest first. */
+  openOwnCards?(caller: ReportCaller, except: string): AssistantCard[];
 }
 
 /** A digest answer makes no card of its own: PPM puts every answer on one card later. */
-export type ReportResult = { ok: true; cardId?: string; kind: AssistantCardKind; note?: string } | { ok: false; message: string };
+export type ReportResult =
+  | { ok: true; cardId?: string; kind: AssistantCardKind; note?: string; withdrawn?: WithdrawItem[] }
+  | { ok: false; message: string };
+
+/** Told to a manager that used `supersedes` or `task` while the user has card withdrawal off. */
+export const WITHDRAW_OFF_NOTE = "The user has not turned on card withdrawal (Settings → Tools → Cards), so `supersedes` "
+  + "and `task` are not available: leave them out.";
+/** The longest task reference a report takes. */
+export const REPORT_TASK_MAX = 60;
 
 export const DIGEST_TAKEN = "Your answer is in the morning digest PPM is putting together. A second digest answer replaces this one.";
 export const DIGEST_NOT_ASKED = "No morning digest was asked of this chat; use done, failed, needs_decision or urgent.";
@@ -145,7 +168,7 @@ export function draftSha256(to: string, text: string): string {
 }
 
 function fieldError(args: Record<string, unknown>): string | null {
-  const allowed = new Set(["kind", "title", "body", "draft", "items", "images", "options", "chat"]);
+  const allowed = new Set(["kind", "title", "body", "draft", "items", "images", "options", "chat", "supersedes", "task"]);
   const extra = Object.keys(args).find((k) => !allowed.has(k));
   if (extra) return `Unknown field \`${extra.slice(0, 40)}\`.`;
   if (!REPORT_KINDS.includes(args.kind as ReportKind)) return `\`kind\` must be one of ${REPORT_KINDS.join(", ")}.`;
@@ -176,6 +199,15 @@ function fieldError(args: Record<string, unknown>): string | null {
     if (typeof args.chat !== "string" || !args.chat.trim() || args.chat.length > REPORT_CHAT_MAX) {
       return `\`chat\` is a chat's session id, at most ${REPORT_CHAT_MAX} characters.`;
     }
+  }
+  if (args.supersedes !== undefined) {
+    if (args.kind === "digest") return "`supersedes` does not go with digest.";
+    const refs = withdrawRefs(args.supersedes, "supersedes");
+    if (!refs.ok) return refs.message;
+  }
+  if (args.task !== undefined) {
+    if (args.kind === "digest") return "`task` does not go with digest.";
+    if (typeof args.task !== "string" || !args.task.trim() || args.task.length > REPORT_TASK_MAX) return "`task` is a task of this project, like `ppm/76` or `#76`.";
   }
   if (args.items !== undefined) {
     if (args.kind !== "digest") return "`items` go only with digest.";
@@ -260,11 +292,33 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     const taken = env.digestAnswer(caller.sessionId, items);
     return taken.ok ? { ok: true, kind: "digest", note: DIGEST_TAKEN } : refuse(caller, "digest", "digest not taken", taken.message);
   }
+  const withdrawing = args.supersedes !== undefined || args.task !== undefined;
+  const withdrawOn = env.withdrawOn?.() === true;
+  if (withdrawing && !withdrawOn) return refuse(caller, requested, "card withdrawal off", WITHDRAW_OFF_NOTE);
+  let aboutTask: { taskId: string; ref: string; title: string } | undefined;
+  if (typeof args.task === "string") {
+    const found = env.resolveTask?.(caller.projectPath, args.task.trim()) ?? { error: "Tasks are not available here." };
+    if ("error" in found) return refuse(caller, requested, "task not found", found.error);
+    aboutTask = found;
+  }
+  // What the new card replaces is known before it is made, so every surface shows it from the start
+  // (Telegram sends it under the replaced card's message); a dry run changes nothing.
+  let replaces: Array<{ id: string; title: string }> = [];
+  if (withdrawOn && Array.isArray(args.supersedes) && env.withdraw) {
+    const refs = withdrawRefs(args.supersedes, "supersedes");
+    if (refs.ok) {
+      replaces = env.withdraw(caller, refs.refs, "preview", undefined, true)
+        .flatMap((i) => (i.outcome === "withdrawn" && i.card ? [{ id: i.card.id, title: i.card.title }] : []));
+    }
+  }
+  const finish = (result: Extract<ReportResult, { ok: true }>, title: string, created = false): ReportResult =>
+    afterFiling(env, caller, args, result, title, withdrawOn, created);
+
   const about = chatCardFor(env, caller, args);
   if (about) {
     const { card: chatCard, inferred } = about;
     log.info(`report ${requested} from ${caller.projectName} (session ${caller.sessionId}) is about chat ${chatCard.sessionId}'s open card ${chatCard.id}${inferred ? " (named in its text)" : ""}: not filed`);
-    return { ok: true, cardId: chatCard.id, kind: chatCard.kind, note: inferred ? `${CHAT_CARD_NOTE} ${CHAT_CARD_INFERRED_NOTE}` : CHAT_CARD_NOTE };
+    return finish({ ok: true, cardId: chatCard.id, kind: chatCard.kind, note: inferred ? `${CHAT_CARD_NOTE} ${CHAT_CARD_INFERRED_NOTE}` : CHAT_CARD_NOTE }, chatCard.title);
   }
 
   const title = cleanCardTitle(args.title);
@@ -276,7 +330,7 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     const same = env.openUrgentTitled(caller.sessionId, title, windowStart ?? now - HOUR_MS);
     if (same) {
       logMerged(caller, "urgent", same.id);
-      return { ok: true, cardId: same.id, kind: "urgent", note: "The same urgent report is already on the user's card." };
+      return finish({ ok: true, cardId: same.id, kind: "urgent", note: "The same urgent report is already on the user's card." }, same.title);
     }
     if (windowStart !== null && env.countSince(caller.sessionId, ["urgent"], windowStart) >= URGENT_PER_MANAGER_PER_QUIET_WINDOW) {
       kind = "needs_decision";
@@ -323,6 +377,8 @@ ${typeof args.body === "string" ? args.body : ""}`);
       ...(options ? { options } : {}),
       ...(images?.length ? { images } : {}),
       ...(kind !== requested ? { urgentCapped: true } : {}),
+      ...(aboutTask ? { aboutTask } : {}),
+      ...(replaces.length ? { supersedes: replaces } : {}),
     },
     // A decision only waits for the user's answer; news wakes the Assistant.
     wake: kind === "done" || kind === "failed" || kind === "urgent",
@@ -331,7 +387,7 @@ ${typeof args.body === "string" ? args.body : ""}`);
   const identical = env.openIdentical(caller.sessionId, newCard);
   if (identical) {
     logMerged(caller, kind, identical.id);
-    return { ok: true, cardId: identical.id, kind, note: SAME_REPORT_NOTE };
+    return finish({ ok: true, cardId: identical.id, kind, note: SAME_REPORT_NOTE }, identical.title);
   }
   const card = env.create(newCard);
   if (options && card.okOffered !== true) {
@@ -341,7 +397,40 @@ ${typeof args.body === "string" ? args.body : ""}`);
     log.warn(`card ${card.id} from ${caller.projectName} (session ${caller.sessionId}) lists choices in its text without \`options\`: no buttons for them`);
     note = note ? `${note} ${CHOICES_IN_TEXT_NOTE}` : CHOICES_IN_TEXT_NOTE;
   }
-  return { ok: true, cardId: card.id, kind, ...(note ? { note } : {}) };
+  return finish({ ok: true, cardId: card.id, kind, ...(note ? { note } : {}) }, card.title, true);
+}
+
+/**
+ * What a filed report does next, when card withdrawal is on: withdraws the cards it `supersedes`
+ * (each replaced by the card the call returns), and tells the manager which of its other cards
+ * still wait, so it can withdraw what the new card made stale. The card the call returns is never
+ * withdrawn by it.
+ */
+function afterFiling(
+  env: ReportEnv, caller: ReportCaller, args: Record<string, unknown>, result: Extract<ReportResult, { ok: true }>,
+  title: string, withdrawOn: boolean, created: boolean,
+): ReportResult {
+  if (!withdrawOn || !result.cardId) return result;
+  const notes: string[] = result.note ? [result.note] : [];
+  let withdrawn: WithdrawItem[] | undefined;
+  if (args.supersedes !== undefined && env.withdraw) {
+    const refs = withdrawRefs(args.supersedes, "supersedes");
+    if (refs.ok) {
+      const reason = withdrawReason(`Replaced by "${title}"`);
+      withdrawn = env.withdraw(caller, refs.refs.filter((r) => r !== result.cardId), reason.ok ? reason.reason : "Replaced", { id: result.cardId, title });
+      if (withdrawn.length) notes.push(`Cards it replaces:\n${describeWithdrawals(withdrawn)}`);
+      // A card the report was merged into learns it now; a new card was made knowing it.
+      const replaced = withdrawn.flatMap((w) => (w.outcome === "withdrawn" && w.card ? [{ id: w.card.id, title: w.card.title }] : []));
+      if (!created && replaced.length) env.markSupersedes?.(result.cardId, replaced);
+    }
+  }
+  const others = env.openOwnCards?.(caller, result.cardId) ?? [];
+  if (others.length > 0) {
+    notes.push(`Your other cards still waiting on the user:\n${describeOpenCards(others, env.now())}\nIf this card replaces `
+      + `any of them, or the user has handled one, withdraw it with ${REPORT_WITHDRAW_TOOL} (\`superseded_by\` this card when it `
+      + "replaces it).");
+  }
+  return { ...result, ...(notes.length ? { note: notes.join("\n\n") } : {}), ...(withdrawn ? { withdrawn } : {}) };
 }
 
 export function reportToolDefinition() {
@@ -408,6 +497,18 @@ export function reportToolDefinition() {
           description: "needs_decision and urgent only: the session id of the chat this decision is about, when it is one "
             + "of this project's chats. If that chat is waiting on an approval or a question, the user already has its "
             + "card and this report is not filed.",
+        },
+        supersedes: {
+          type: "array", items: { type: "string" }, minItems: 1, maxItems: WITHDRAW_CARDS_MAX,
+          description: "Not with digest; only when the user turned on card withdrawal. Ids of your earlier cards this card "
+            + "replaces (the user asked again, or the question changed): they are withdrawn, and each says it was replaced "
+            + "by this one. Only your own open reports; at most 5 withdrawn per turn.",
+        },
+        task: {
+          type: "string",
+          description: "Not with digest; only when the user turned on card withdrawal. The PPM task of this project the card "
+            + "is about (`ppm/76`, `#76`). When the task is closed, a done or failed card about it is cleared, and a "
+            + "decision card says the task was closed.",
         },
         images: {
           type: "array", items: { type: "string" }, maxItems: REPORT_IMAGES_MAX,

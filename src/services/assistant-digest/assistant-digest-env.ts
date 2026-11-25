@@ -12,6 +12,9 @@ import { assistantCards } from "../assistant-cards/assistant-cards.service.ts";
 import { findOpenCardsBy } from "../assistant-cards/assistant-cards-db.ts";
 import { setDigestAnswerHandler } from "../assistant-cards/manager-report-env.ts";
 import { createLogger } from "../logger.ts";
+import { configService } from "../config.service.ts";
+import { ppmToolOn } from "../../shared/ppm-tools.ts";
+import { REPORT_WITHDRAW_TOOL } from "../../shared/card-withdraw.ts";
 import { normalizeFromSessionTitle } from "../../shared/chat-from-session.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import type { AssistantProvenance } from "../../shared/assistant-provenance.ts";
@@ -34,6 +37,19 @@ const log = createLogger("assistant-digest");
 export const DIGEST_ASK_TEXT = "Morning digest. When you are free, call `report_to_assistant` with kind `digest` and at most 12 short "
   + "items: what is waiting on the user, what is running, what finished since the last digest. Do not start other work for this.";
 
+/**
+ * Added to the ask while the user has card withdrawal on: fixed text too, so the manager looks up
+ * its own open cards with the tool rather than PPM pasting their titles (a model's words) in here.
+ */
+export const DIGEST_ASK_WITHDRAW_TEXT = "Also call `report_withdraw` with no `cards` to see your cards still waiting on the "
+  + "user, and withdraw the ones a newer card replaced or the user already handled (with a reason). Keep every card the "
+  + "user may still answer, however old.";
+
+/** The digest ask, with the withdrawal reminder when card withdrawal is on. */
+export function digestAskText(withdrawOn: boolean): string {
+  return withdrawOn ? `${DIGEST_ASK_TEXT} ${DIGEST_ASK_WITHDRAW_TEXT}` : DIGEST_ASK_TEXT;
+}
+
 /** PPM asked on its own, and nothing anyone else wrote is in the ask. */
 const ASK_PROVENANCE: AssistantProvenance = { startedBy: "ppm", untrusted: false, reason: "morning_digest" };
 
@@ -54,7 +70,7 @@ export const digestDeps: DigestDeps = {
     const out = await deliverToSession({
       targetSessionId: manager.sessionId, providerId: manager.providerId,
       projectName: manager.projectName, projectPath: manager.projectPath,
-      body: DIGEST_ASK_TEXT,
+      body: digestAskText(ppmToolOn(configService.get("ai") ?? {}, REPORT_WITHDRAW_TOOL)),
       fromSession: {
         version: 1, sessionId: from, providerId: "claude", projectName: ASSISTANT_PROJECT_NAME, kind: "assistant",
         title: normalizeFromSessionTitle(getSessionTitle(from) ?? "PPM Assistant"), sentAt: new Date(assistantClock.now()).toISOString(),

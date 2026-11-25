@@ -12,6 +12,7 @@ import { decisionTiles, sameAnswer, type DecisionAnswer } from "@/lib/decision-s
 import type { AssistantCard } from "../../../../../shared/assistant-cards";
 import { CardText, cardTime } from "../card-shell";
 import { CardImages } from "../card-images";
+import { CardReplacesLine, CardTaskClosedLine } from "../card-withdrawal-parts";
 import { CardDraft } from "../card-draft";
 import { CardHandedOffTasks, TaskCodeText } from "../card-task-items";
 import { DecisionReplyField, type ReplyValue } from "./decision-reply-field";
@@ -102,6 +103,8 @@ export function DecisionSetCard({
       <CardImages images={card.payload.images} />
       {card.payload.tasks && <CardHandedOffTasks projectName={card.projectName} tasks={card.payload.tasks} />}
       {draft && <CardDraft draft={draft} />}
+      <CardReplacesLine card={card} />
+      <CardTaskClosedLine card={card} />
       {card.payload.urgentCapped && (
         <p className="text-xs text-text-subtle">Held for the morning: this manager already raised its urgent reports tonight.</p>
       )}

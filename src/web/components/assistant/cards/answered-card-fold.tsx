@@ -50,7 +50,7 @@ export function AnsweredCardFold({ card }: { card: Card }) {
     revealInScrollList(box.current, "reveal");
   }, [open]);
   const panel = `answered-card-${card.id}`;
-  // Set aside (dismissed, or it stopped waiting by itself) reads differently from answered.
+  // Set aside (dismissed, withdrawn by its author, or it stopped waiting by itself) reads differently from answered.
   const setAside = card.status === "dismissed" || card.status === "gone";
   const Mark = setAside ? X : Check;
   return (

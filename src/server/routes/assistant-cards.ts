@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { assistantCards } from "../../services/assistant-cards/assistant-cards.service.ts";
-import { answerCard, dismissCard, type CardActionResult } from "../../services/assistant-cards/assistant-card-actions.ts";
+import { answerCard, dismissCard, restoreCard, type CardActionResult } from "../../services/assistant-cards/assistant-card-actions.ts";
 import { chooseCardOption, okCard, replyToCard } from "../../services/assistant-cards/card-reply-actions.ts";
 import type { CardActor } from "../../services/assistant-cards/forward-verbatim.ts";
 import { createLogger } from "../../services/logger.ts";
@@ -135,6 +135,17 @@ assistantCardRoutes.post("/cards/:id/dismiss", (c) => {
   if (!CARD_ID_RE.test(id)) return c.json(err("No such card"), 404);
   try {
     return respond(c, dismissCard(id), "dismiss", id);
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** The user bringing back a card its author withdrew (never a dismissal of their own). */
+assistantCardRoutes.post("/cards/:id/restore", (c) => {
+  const id = c.req.param("id");
+  if (!CARD_ID_RE.test(id)) return c.json(err("No such card"), 404);
+  try {
+    return respond(c, restoreCard(id), "restore", id);
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

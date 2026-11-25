@@ -5,6 +5,8 @@
  */
 import { createLogger } from "../logger.ts";
 import { configService } from "../config.service.ts";
+import { ppmToolOn } from "../../shared/ppm-tools.ts";
+import { REPORT_WITHDRAW_TOOL } from "../../shared/card-withdraw.ts";
 import { ppmTasksAttachFor } from "../ppm-tasks/tools/ppm-task-tool-caller.ts";
 import { RULES_FILE_MAX_BYTES } from "../../shared/assistant-limits.ts";
 import { managerChats, ManagerChatError } from "./manager-chats.service.ts";
@@ -54,7 +56,10 @@ export async function managerRulesEntryFor(sessionId: string, guard: ManagerRule
     rules = getManagerRules(row.projectKey);
   }
   const approved = rules?.approved ?? managerRulesTemplate();
-  return managerContextEntry(row.projectName, approved, rules?.accepted ?? approved, { tasks: managerTasksOn(row.projectPath) });
+  return managerContextEntry(row.projectName, approved, rules?.accepted ?? approved, {
+    tasks: managerTasksOn(row.projectPath),
+    withdraw: ppmToolOn(configService.get("ai") ?? {}, REPORT_WITHDRAW_TOOL),
+  });
 }
 
 /** Whether the manager is told about PPM Tasks: its project has Tasks on and a task tool is on. */

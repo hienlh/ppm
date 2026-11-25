@@ -16,7 +16,7 @@
  * buttons of a card that offers choices (one per choice, numbered as the text lists them);
  * "Approve change" meets the same bar on the rules diff. None ever stands for text the user did not see.
  */
-import type { AssistantCard, CardOption } from "../../shared/assistant-cards.ts";
+import { cardWithdrawal, type AssistantCard, type CardOption } from "../../shared/assistant-cards.ts";
 import {
   DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, DIGEST_RESURFACED_HEADING, DIGEST_VOICE_LEARNED_HINT, digestVoiceLearnedHeading,
   digestWaitingSummary, type DigestProject, type DigestResurfacedTask, type DigestVoiceLearned,
@@ -288,8 +288,11 @@ function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boole
 /** The line under a card's Telegram copy once it no longer waits. */
 export function cardEndLine(card: AssistantCard): string {
   const note = card.answer?.note;
+  const withdrawn = cardWithdrawal(card);
+  if (withdrawn?.supersededBy) return `↪️ <i>Replaced by: ${escapeTelegramHtml(withdrawn.supersededBy.title)}</i>`;
+  if (withdrawn) return `<i>Withdrawn by ${card.answer?.by === "assistant" ? "the Assistant" : "the manager"}: ${escapeTelegramHtml(withdrawn.reason)}</i>`;
   switch (card.status) {
-    case "dismissed": return "<i>Dismissed.</i>";
+    case "dismissed": return note && card.answer?.by === "ppm" ? `<i>${escapeTelegramHtml(note)}.</i>` : "<i>Dismissed.</i>";
     case "gone": return "<i>No longer waiting.</i>";
     default: return `<i>${escapeTelegramHtml(note ?? (card.status === "answered" ? "Answered." : "No longer waiting."))}</i>`;
   }

@@ -1,7 +1,7 @@
 import {
   CHAT_ANSWER_APPROVAL_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL,
   CHATS_ATTENTION_TOOL, DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, PPM_CLI_REFERENCE_TOOL, PROJECT_ADD_TOOL, PROJECTS_LIST_TOOL,
-  CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
+  CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL, CARD_WITHDRAW_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import { UI_TOOL_DEFINITIONS } from "./assistant-ui-tools.ts";
 import { MAX_ACTIVE_WATCHES, NOTIFY_KINDS } from "../assistant-watch/watch-state.ts";
@@ -176,6 +176,21 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
       answersById: { type: "object", additionalProperties: { type: "array", items: { type: "string" } }, description: "A question card's answers." },
     }, ["project", "sessionId", "requestId", "decision"]),
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  },
+  {
+    name: CARD_WITHDRAW_TOOL,
+    title: "Withdraw cards from Waiting on you",
+    description: "Only when the user turned on card withdrawal (Settings → Tools → Cards). Withdraws report cards "
+      + "(needs_decision, urgent, done, failed; ids from chats_attention, whole or the first 8 characters) that no longer "
+      + "need the user: a newer card replaced them, or the user says they handled it. In a turn the user started, any "
+      + "project's report cards; in a turn PPM started, only cards you wrote yourself. Never a chat's approval or question "
+      + "card, a rules change or a budget card. At most 5 per turn. Each card says why, and the user can bring it back.",
+    inputSchema: object({
+      cards: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 5, description: "The cards' ids." },
+      reason: { type: "string", description: "Why, in a few words the user reads on the card." },
+      supersededBy: { type: "string", description: "The id of an open card that replaces them, when one does." },
+    }, ["cards", "reason"]),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
   {
     name: PPM_CLI_REFERENCE_TOOL,
