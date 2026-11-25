@@ -9,16 +9,23 @@ import { useEffect, useRef } from "react";
 import { Square, X } from "@/lib/icons";
 import { formatVoiceDuration, VOICE_MAX_SECONDS } from "../../../shared/voice-message";
 import type { VoiceRecordingSession } from "@/hooks/use-voice-message-recorder";
+import { ICON_CONTROL_SIZE } from "@/lib/control-size";
 
 const BAR_COUNT = 28;
+const COMPACT_ICON = `inline-flex ${ICON_CONTROL_SIZE} shrink-0 items-center justify-center rounded-full transition-colors`;
 
 interface VoiceRecordingBarProps {
   session: VoiceRecordingSession;
   onStop: () => void;
   onCancel: () => void;
+  /**
+   * Inside a card's answer field: Cancel and Stop at the app's icon-button size (24px, 22px on a
+   * phone) rather than the composer toolbar's, which the button standard leaves as it is for now.
+   */
+  compact?: boolean;
 }
 
-export function VoiceRecordingBar({ session, onStop, onCancel }: VoiceRecordingBarProps) {
+export function VoiceRecordingBar({ session, onStop, onCancel, compact }: VoiceRecordingBarProps) {
   const timeRef = useRef<HTMLSpanElement>(null);
   const progressRef = useRef<HTMLElement>(null);
   const barsRef = useRef<HTMLDivElement>(null);
@@ -66,22 +73,24 @@ export function VoiceRecordingBar({ session, onStop, onCancel }: VoiceRecordingB
 
   return (
     <div data-voice-recording="" onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center gap-2 px-2 pb-1 pt-1">
+      <div className={compact ? "flex items-center gap-1.5 py-0.5" : "flex items-center gap-2 px-2 pb-1 pt-1"}>
         <button
           type="button"
           onClick={onCancel}
-          className="flex size-11 shrink-0 items-center justify-center rounded-[10px] text-text-3 transition-colors can-hover:hover:bg-surface-hover can-hover:hover:text-text md:size-[34px]"
+          className={compact
+            ? `${COMPACT_ICON} text-text-3 can-hover:hover:bg-surface-hover can-hover:hover:text-text`
+            : "flex size-11 shrink-0 items-center justify-center rounded-[10px] text-text-3 transition-colors can-hover:hover:bg-surface-hover can-hover:hover:text-text md:size-[34px]"}
           aria-label="Cancel recording"
           title="Cancel recording (Esc)"
         >
-          <X className="size-4" />
+          <X className={compact ? "size-3.5" : "size-4"} />
         </button>
         <span className="size-[9px] shrink-0 rounded-full bg-error motion-safe:animate-pulse" aria-hidden />
         <span className="shrink-0 font-mono text-xs tabular-nums text-text" role="timer" aria-label="Recording time">
           <span ref={timeRef}>0:00</span>
           <span className="text-text-3"> / {formatVoiceDuration(VOICE_MAX_SECONDS)}</span>
         </span>
-        <div ref={barsRef} className="flex h-[26px] min-w-0 flex-1 items-center justify-center gap-[2px] overflow-hidden" aria-hidden>
+        <div ref={barsRef} className={`flex ${compact ? "h-5" : "h-[26px]"} min-w-0 flex-1 items-center justify-center gap-[2px] overflow-hidden`} aria-hidden>
           {Array.from({ length: BAR_COUNT }, (_, i) => (
             <i key={i} className="block h-full w-[3px] shrink-0 origin-center rounded-sm bg-error transition-transform duration-75" style={{ transform: "scaleY(0.15)" }} />
           ))}
@@ -89,14 +98,16 @@ export function VoiceRecordingBar({ session, onStop, onCancel }: VoiceRecordingB
         <button
           type="button"
           onClick={onStop}
-          className="flex size-11 shrink-0 items-center justify-center rounded-[11px] bg-error text-white shadow-[var(--shadow-float)] transition-transform motion-safe:active:scale-[0.97] md:size-9"
+          className={compact
+            ? `${COMPACT_ICON} bg-error text-white motion-safe:active:scale-[0.97]`
+            : "flex size-11 shrink-0 items-center justify-center rounded-[11px] bg-error text-white shadow-[var(--shadow-float)] transition-transform motion-safe:active:scale-[0.97] md:size-9"}
           aria-label="Stop recording"
           title="Stop recording"
         >
-          <Square className="size-4" />
+          <Square className={compact ? "size-3.5" : "size-4"} />
         </button>
       </div>
-      <div className="mx-2.5 mb-2 h-[3px] overflow-hidden rounded-sm bg-border-soft">
+      <div className={compact ? "mb-0.5 h-[3px] overflow-hidden rounded-sm bg-border-soft" : "mx-2.5 mb-2 h-[3px] overflow-hidden rounded-sm bg-border-soft"}>
         <i ref={progressRef} className="block h-full w-0 rounded-sm bg-error" />
       </div>
     </div>

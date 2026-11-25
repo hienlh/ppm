@@ -25,7 +25,8 @@ import { CARD_REPLY_MAX_CHARS, STALE_REPLY_MS } from "../../shared/assistant-lim
 import { cardWithdrawal, OK_CARD_KINDS, type AssistantCard, type AssistantCardAnswer } from "../../shared/assistant-cards.ts";
 import { cardOkOffered } from "./card-ok-rule.ts";
 import { forwardUserWords, repliesToManager, type CardActor, type ForwardHow, type ForwardResult, type SpokenWords } from "./forward-verbatim.ts";
-import { isStoredVoicePath } from "../../shared/voice-message.ts";
+import { isStoredVoicePath, VOICE_MAX_SECONDS } from "../../shared/voice-message.ts";
+import { verifyVoiceUploadReceipt } from "../voice-message/voice-upload-receipt.ts";
 import { realForwardEnv } from "./forward-verbatim-env.ts";
 import { cardDelivery } from "./card-delivery.ts";
 import { validateReplyImages } from "./card-reply-images.ts";
@@ -234,18 +235,28 @@ function alreadyAnswered(card: AssistantCard, deps: CardReplyDeps): CardReplyRes
  * or answered by someone else in the same moment, is `already_answered` and nothing is sent.
  */
 /**
- * A reply's `voice` (a voice message the Telegram bridge stored and had read): null when there is
- * none, false when it is not acceptable — from anywhere but Telegram, or not naming a voice message
- * in PPM's uploads folder with a sane length.
+ * A reply's `voice`: null when there is none, false when it is not acceptable. Two sources may
+ * claim a reply was spoken, each with its own proof:
+ * - the Telegram bridge, which downloaded the voice message and stored its audio itself;
+ * - PPM's own screen, only with the receipt `POST /chat/upload` handed out for that very recording
+ *   (`voice-upload-receipt.ts`) and a length no longer than PPM records.
+ * Either way the path must name a voice message in PPM's uploads folder. Anything else — another
+ * REST caller, a receipt for another file, one from before a restart — is refused.
  */
 function spokenWords(raw: unknown, actor: CardActor): SpokenWords | null | false {
   if (raw === undefined) return null;
-  if (actor.channel !== "telegram" || !raw || typeof raw !== "object") return false;
-  const { path, durationSec } = raw as Record<string, unknown>;
+  if (!raw || typeof raw !== "object") return false;
+  const { path, durationSec, receipt } = raw as Record<string, unknown>;
   if (typeof path !== "string" || !isStoredVoicePath(path)) return false;
   if (typeof durationSec !== "number" || !Number.isFinite(durationSec) || durationSec < 0) return false;
-  return { path, durationSec };
+  if (actor.channel === "telegram") return { path, durationSec };
+  if (durationSec > VOICE_MAX_SECONDS + VOICE_DURATION_SLACK_SEC) return false;
+  // Wall time, as the upload route minted it with (not the Assistant's clock).
+  return verifyVoiceUploadReceipt(path, receipt) ? { path, durationSec } : false;
 }
+
+/** A browser's recorder stops a beat after the limit; anything longer was not recorded by PPM. */
+const VOICE_DURATION_SLACK_SEC = 5;
 
 export async function replyToCard(id: string, body: unknown, actor: CardActor, deps: CardReplyDeps = realDeps): Promise<CardReplyResult> {
   const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
@@ -253,10 +264,11 @@ export async function replyToCard(id: string, body: unknown, actor: CardActor, d
   if (b.text.length > CARD_REPLY_MAX_CHARS) return { ok: false, status: 400, error: `A reply may be at most ${CARD_REPLY_MAX_CHARS} characters` };
   if (b.force !== undefined && typeof b.force !== "boolean") return { ok: false, status: 400, error: "force must be true or false" };
   if (b.confirmAge !== undefined && typeof b.confirmAge !== "boolean") return { ok: false, status: 400, error: "confirmAge must be true or false" };
-  // Only the Telegram bridge reads a voice message (and stores its audio itself); a body from PPM's
-  // REST route may not claim one.
+  // Spoken words need their proof (`spokenWords`): a body from PPM's REST route may not simply claim them.
   const voice = spokenWords(b.voice, actor);
-  if (voice === false) return { ok: false, status: 400, error: "voice is not accepted here" };
+  if (voice === false) {
+    return { ok: false, status: 400, error: actor.channel === "ppm" ? "This recording could not be verified. Record it again." : "voice is not accepted here" };
+  }
   if (voice && !b.text.trim()) return { ok: false, status: 400, error: "text is required" };
   const card = deps.cards.get(id);
   if (!card) return { ok: false, status: 404, error: "No such card" };

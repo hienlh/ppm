@@ -1,7 +1,7 @@
 /**
  * A spoken reply to a card: the voice part the manager chat reads is built by the server from the
- * stored audio's path, after the transcript was neutralized, and only the Telegram bridge may claim
- * a reply was spoken.
+ * stored audio's path, after the transcript was neutralized. Only the Telegram bridge, or PPM's
+ * screen holding the upload route's receipt for that recording, may claim a reply was spoken.
  */
 import { describe, expect, it } from "bun:test";
 import "../../../test-setup.ts";
@@ -11,6 +11,7 @@ import { replyToCard, type CardReplyDeps } from "../../../../src/services/assist
 import { forwardUserWords, type ForwardEnv, type ForwardHow } from "../../../../src/services/assistant-cards/forward-verbatim.ts";
 import { decodeMessageBlocks } from "../../../../src/shared/chat-message-blocks.ts";
 import { splitVoiceMessage, VOICE_NOTE } from "../../../../src/shared/voice-message.ts";
+import { mintVoiceUploadReceipt, VOICE_RECEIPT_TTL_MS } from "../../../../src/services/voice-message/voice-upload-receipt.ts";
 import type { AssistantCard } from "../../../../src/shared/assistant-cards.ts";
 
 const AUDIO = join(process.env.PPM_HOME!, "uploads", "a1b2c3d4-telegram-voice.ogg");
@@ -75,6 +76,32 @@ describe("replyToCard with a voice", () => {
     expect(elsewhere).toMatchObject({ ok: false, status: 400 });
     const empty = await replyToCard("card-1", { text: " ", voice: { path: AUDIO, durationSec: 5 } }, { channel: "telegram" }, deps(forwarded));
     expect(empty).toMatchObject({ ok: false, status: 400 });
+    expect(forwarded).toEqual([]);
+  });
+
+  it("takes a voice from PPM's screen only with the receipt the upload route gave for that recording", async () => {
+    const forwarded: ForwardHow[] = [];
+    const receipt = mintVoiceUploadReceipt(AUDIO);
+    const ok = await replyToCard("card-1", { text: "Ship it.", voice: { path: AUDIO, durationSec: 5, receipt } }, { channel: "ppm" }, deps(forwarded));
+    expect(ok.ok).toBe(true);
+    // The receipt proves the claim and goes no further.
+    expect(forwarded[0]!.voice).toEqual({ path: AUDIO, durationSec: 5 });
+  });
+
+  it("refuses a receipt for another file, a forged or expired one, and a recording longer than PPM makes", async () => {
+    const forwarded: ForwardHow[] = [];
+    const other = join(process.env.PPM_HOME!, "uploads", "ffffffff-voice-other.webm");
+    const tries = [
+      { path: AUDIO, durationSec: 5, receipt: mintVoiceUploadReceipt(other) },
+      { path: AUDIO, durationSec: 5, receipt: `${Date.now()}.${"A".repeat(43)}` },
+      { path: AUDIO, durationSec: 5, receipt: mintVoiceUploadReceipt(AUDIO, Date.now() - VOICE_RECEIPT_TTL_MS - 1000) },
+      { path: AUDIO, durationSec: 600, receipt: mintVoiceUploadReceipt(AUDIO) },
+      { path: AUDIO, durationSec: 5 },
+    ];
+    for (const voice of tries) {
+      const result = await replyToCard("card-1", { text: "x", voice }, { channel: "ppm" }, deps(forwarded));
+      expect(result).toMatchObject({ ok: false, status: 400 });
+    }
     expect(forwarded).toEqual([]);
   });
 });

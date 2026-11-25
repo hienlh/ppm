@@ -10,7 +10,16 @@ export interface CardReplyTarget {
   cardId: string;
   projectName: string | null;
   title: string;
+  /** The chat the card came from: a spoken reply's tidy-up reads it (`useCardVoiceReply`). */
+  sessionId?: string | null;
+  providerId?: string;
 }
+
+/** The reply target for a card. */
+export const cardReplyTarget = (card: AssistantCard): CardReplyTarget => ({
+  cardId: card.id, projectName: card.projectName, title: card.title, sessionId: card.sessionId,
+  ...(card.payload.chat ? { providerId: card.payload.chat.providerId } : {}),
+});
 
 interface CardReplyState {
   target: CardReplyTarget | null;
@@ -20,6 +29,6 @@ interface CardReplyState {
 
 export const useCardReplyStore = create<CardReplyState>((set) => ({
   target: null,
-  replyTo: (card) => set({ target: { cardId: card.id, projectName: card.projectName, title: card.title } }),
+  replyTo: (card) => set({ target: cardReplyTarget(card) }),
   close: () => set({ target: null }),
 }));

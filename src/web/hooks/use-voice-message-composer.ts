@@ -1,10 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
-import { toast } from "sonner";
-import { openSettings } from "@/components/settings/open-settings";
-import { postVoiceLearn } from "@/lib/voice-message-client";
-import {
-  decideVoiceSend, shouldAutoSend, transcriptWasEdited, voiceGate,
-} from "@/lib/voice-message-compose";
+import { decideVoiceSend, shouldAutoSend, voiceGate } from "@/lib/voice-message-compose";
+import { learnFromSentTranscript } from "@/lib/voice-learn-after-send";
 import { useVoiceMessageSettings } from "./use-voice-message-settings";
 import { useVoiceMessageDraft, type VoiceDraftDeps } from "./use-voice-message-draft";
 import { useVoiceMessageRecorder } from "./use-voice-message-recorder";
@@ -59,17 +55,8 @@ export function useVoiceMessageComposer(options: VoiceComposerOptions) {
   const sent = useCallback(() => {
     const shown = draft?.transcript.shown ?? "";
     const final = voicePart()?.transcript ?? "";
-    const project = options.project;
     draftSent();
-    if (!project || !transcriptWasEdited(shown, final, draft?.transcript.raw)) return;
-    void postVoiceLearn({ project, before: shown, after: final })
-      .then((learned) => {
-        if (learned.length === 0) return;
-        toast.success(`Learned: ${learned.map((l) => l.word).join(", ")}`, {
-          action: { label: "Manage", onClick: () => openSettings("voice") },
-        });
-      })
-      .catch(() => { /* Learning is a bonus; a failure costs the user nothing they sent. */ });
+    learnFromSentTranscript(options.project, shown, final, draft?.transcript.raw);
   }, [draft, voicePart, draftSent, options.project]);
 
   const micBlockedReason = draft ? "One voice message per message. Remove this one to record another." : null;

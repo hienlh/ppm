@@ -179,6 +179,41 @@ async function testRoute(req: Request, path: string): Promise<Response> {
     return json({ mode: cleanupMode });
   }
   if (path === "/voice-state") return json({ cleanupMode, enabled: configService.get("voice_message")?.enabled ?? null });
+  // The card voice e2e (tests/e2e/card-voice-reply-e2e.mjs): a manager chat, its cards, the review switch.
+  if (path === "/manager" && req.method === "POST") {
+    const { managerChats } = await import("../../../src/services/assistant-managers/manager-chats.service");
+    const { setSessionMetadata, setSessionProvider } = await import("../../../src/services/db.service");
+    // Where and on what the chat runs, as a chat PPM started records it (the scripted provider has no transcript).
+    setSessionMetadata(String(body.sessionId), "alpha", alpha);
+    setSessionProvider(String(body.sessionId), "claude");
+    await managerChats.assign("alpha", String(body.sessionId), "user");
+    return json({ ok: true });
+  }
+  if (path === "/card" && req.method === "POST") {
+    const { assistantCards } = await import("../../../src/services/assistant-cards/assistant-cards.service");
+    const card = assistantCards.create({
+      kind: body.kind as never, projectName: "alpha", projectPath: alpha, sessionId: String(body.sessionId),
+      title: String(body.title), body: typeof body.body === "string" ? body.body : "", payload: (body.payload ?? {}) as never,
+    });
+    return json({ card });
+  }
+  if (path === "/clear-cards" && req.method === "POST") {
+    const { assistantCards } = await import("../../../src/services/assistant-cards/assistant-cards.service");
+    for (const c of assistantCards.openCards()) assistantCards.transition(c.id, "dismissed", { by: "user", channel: "ppm", at: Date.now() });
+    return json({ open: assistantCards.openCards().length });
+  }
+  if (path === "/card-state" && req.method === "POST") {
+    const { assistantCards } = await import("../../../src/services/assistant-cards/assistant-cards.service");
+    return json({ card: assistantCards.get(String(body.id)) });
+  }
+  if (path === "/review" && req.method === "POST") {
+    const { updateVoiceSettings } = await import("../../../src/services/voice-message/voice-settings");
+    return json({ review: updateVoiceSettings({ reviewBeforeSend: body.on === true }).review_before_send });
+  }
+  if (path === "/main") {
+    const { getMainSession } = await import("../../../src/services/assistant/assistant-main-session");
+    return json({ main: getMainSession() });
+  }
   if (path === "/voice-enabled" && req.method === "POST") {
     const { updateVoiceSettings } = await import("../../../src/services/voice-message/voice-settings");
     return json({ enabled: updateVoiceSettings({ enabled: body.enabled === true }).enabled ?? null });

@@ -4,7 +4,7 @@
  * the answers as the chat's question form draws them — a numbered tile per choice (or one OK), and
  * "Other" for the user's own words and pictures.
  */
-import type { KeyboardEvent, RefObject } from "react";
+import { useMemo, type KeyboardEvent, type RefObject } from "react";
 import { BellRing, ExternalLink, Lock, TriangleAlert, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { QuestionOptionTile, type QuestionTone } from "@/components/chat/question-form-parts";
@@ -17,6 +17,7 @@ import { CardDraft } from "../card-draft";
 import { CardHandedOffTasks, TaskCodeText } from "../card-task-items";
 import { DecisionReplyField, type ReplyValue } from "./decision-reply-field";
 import { SET_BUTTON, toneButtons } from "./decision-set-buttons";
+import { cardVoiceTarget } from "@/hooks/use-card-voice-reply";
 
 const EMPTY_REPLY: ReplyValue = { text: "", images: [] };
 
@@ -74,7 +75,7 @@ function Head({ card, onOpenChat, onDismiss, busy }: { card: AssistantCard; onOp
 }
 
 export function DecisionSetCard({
-  card, answer, onAnswer, focusedRow, setFocusedRow, replyRef, onReplyKeyDown, onOpenChat, onDismiss, busy, notice, confirm, onConfirm,
+  card, answer, onAnswer, focusedRow, setFocusedRow, replyRef, onReplyKeyDown, onOpenChat, onDismiss, busy, notice, confirm, onConfirm, onSendNow,
 }: {
   card: AssistantCard;
   answer: DecisionAnswer | undefined;
@@ -89,11 +90,17 @@ export function DecisionSetCard({
   notice?: string;
   confirm?: string;
   onConfirm: () => void;
+  /** Sends this card's answer now: a spoken answer with "Read the transcript before sending" off. */
+  onSendNow?: (answer: DecisionAnswer) => void;
 }) {
   const tone = toneOf(card);
   const tiles = decisionTiles(card);
   const draft = card.payload.draft;
   const reply = answer?.kind === "reply" ? answer : EMPTY_REPLY;
+  const voiceTarget = useMemo(() => (card.sessionId ? cardVoiceTarget(card) : null), [card.projectName, card.sessionId, card.payload.chat?.providerId]);
+  // Kept as typed (a first space included); whether it is enough to send is `answerIsReady`'s.
+  const asAnswer = (next: ReplyValue): DecisionAnswer | null =>
+    next.text.length || next.images.length ? { kind: "reply", text: next.text, images: next.images, ...(next.voice ? { voice: next.voice } : {}) } : null;
   return (
     <div className="space-y-2.5" data-decision-card={card.id} data-assistant-card={card.kind} data-card-status={card.status}>
       <Head card={card} onOpenChat={onOpenChat} onDismiss={onDismiss} busy={busy} />
@@ -135,6 +142,10 @@ export function DecisionSetCard({
           </QuestionOptionTile>
         ))}
         <DecisionReplyField
+          // A recording made on one card never carries over to the next tab.
+          key={card.id}
+          voiceTarget={voiceTarget}
+          onSendNow={onSendNow ? (next) => { const a = asAnswer(next); if (a) onSendNow(a); } : undefined}
           tone={tone}
           value={reply}
           disabled={busy || !card.sessionId}
@@ -143,8 +154,7 @@ export function DecisionSetCard({
           inputRef={replyRef}
           onKeyDown={onReplyKeyDown}
           placeholder={tiles.length ? "Other — your own words go to the manager chat as written…" : "Your answer, to the manager chat word for word…"}
-          // Kept as typed (a first space included); whether it is enough to send is `answerIsReady`'s.
-          onChange={(next) => onAnswer(next.text.length || next.images.length ? { kind: "reply", text: next.text, images: next.images } : null)}
+          onChange={(next) => onAnswer(asAnswer(next))}
         />
       </div>
       {tiles.length === 0 && (

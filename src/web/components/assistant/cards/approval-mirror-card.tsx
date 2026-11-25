@@ -7,6 +7,10 @@
  * the same options, the same "Other" field, several choices where allowed, the same Submit and
  * Skip, sending the same answers by question id. Only the frame is the card's own: who asked, and
  * Open chat. A question asking for a secret is answered in the chat itself.
+ *
+ * Its "Other" field also takes a voice answer, through the chat composer's voice flow: the
+ * transcript lands in the field (an answer to a question is words, as on Telegram), and with
+ * "Read the transcript before sending" off it is submitted at once when nothing else is missing.
  */
 import { Check, CircleHelp, ExternalLink, ShieldAlert, X } from "@/lib/icons";
 import { answerAssistantCard } from "@/lib/assistant-cards-api";
@@ -17,6 +21,9 @@ import { RememberApprovalControl } from "@/components/chat/remember-approval-con
 import { QuestionCard } from "@/components/chat/question-card";
 import { questionsFromWire } from "../../../../shared/approval-questions";
 import { openCardManagerChat, useCardAction } from "./use-card-action";
+import { useMemo } from "react";
+import { cardVoiceTarget } from "@/hooks/use-card-voice-reply";
+import { CardVoiceCapture } from "./card-voice-reply-parts";
 
 type Props = { card: AssistantCard; onCard?: (card: AssistantCard) => void };
 type Question = NonNullable<AssistantCard["payload"]["questions"]>[number];
@@ -176,6 +183,7 @@ export function QuestionMirrorCard({ card, onCard }: Props) {
   const queued = card.payload.queued === true;
   const answerHere = open && !queued && answerableOnCard(questions) && asked.length === questions.length;
   const many = questions.length > 1;
+  const voiceTarget = useMemo(() => (card.sessionId ? cardVoiceTarget(card) : null), [card.projectName, card.sessionId, card.payload.chat?.providerId]);
 
   return (
     <CardShell
@@ -191,6 +199,22 @@ export function QuestionMirrorCard({ card, onCard }: Props) {
             autoFocus={false}
             onSubmit={(answersById) => { if (!busy) void run(() => answerAssistantCard(card.id, { answersById })); }}
             onSkip={() => { if (!busy) void run(() => answerAssistantCard(card.id, { decision: "deny" })); }}
+            otherField={voiceTarget ? ({ input, typed, setTyped, submitWith }) => (
+              <CardVoiceCapture
+                target={voiceTarget}
+                typed={typed}
+                disabled={busy}
+                discardAfter
+                onReady={({ text }, autoSend) => (autoSend ? submitWith(text) : setTyped(text))}
+              >
+                {({ mic, area, on }) => (!on ? input : (
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <div className="flex min-w-0 items-center gap-1.5">{input}{mic}</div>
+                    {area}
+                  </div>
+                ))}
+              </CardVoiceCapture>
+            ) : undefined}
           />
         </div>
       ) : (

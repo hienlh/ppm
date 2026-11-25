@@ -14,6 +14,7 @@ import { applyAssistantCard } from "@/stores/assistant-cards-store";
 import { applyOpenCardResult, orderWaitingCards, useOpenCards } from "@/stores/assistant-open-cards-store";
 import { ANSWERABLE_CARD_KINDS, type AssistantCard } from "../../../shared/assistant-cards";
 import { CardReplyBar } from "./cards/card-reply-bar";
+import { cardReplyTarget } from "@/stores/assistant-card-reply-store";
 import { CardReplyHostContext, type CardReplyHost } from "./cards/card-reply-host";
 import { WaitingCardsBar } from "./waiting-cards-bar";
 import { AssistantCard as CardView } from "./cards/assistant-card";
@@ -68,7 +69,7 @@ export function ManagerChatWaitingCards({ sessionId }: { sessionId: string | nul
           >
             {(card) => replyId === card.id ? (
               <div className="pt-2">
-                <CardReplyBar target={{ cardId: card.id, projectName: card.projectName, title: card.title }} onClose={closeReply} />
+                <CardReplyBar target={cardReplyTarget(card)} onClose={closeReply} />
               </div>
             ) : null}
           </WaitingCardsBar>
