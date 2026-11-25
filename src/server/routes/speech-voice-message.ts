@@ -71,7 +71,8 @@ async function settingsView(project: string | undefined, whisperReady: boolean) 
     // A faded word is gone from the list even before the next voice message prunes the row.
     projectLearned: own.learned.filter((l) => !isFaded(l, Date.now())),
     projectBlocked: own.blocked ?? [],
-    // "Đang học": the pairs still being counted, newest first, with how many chats have read them.
+    // "Đang học": the pairs still being counted, newest first, with how many readings (a chat on a
+    // day) have counted for them.
     projectLearning: [...(own.candidates ?? [])].sort((a, b) => b.at.localeCompare(a.at)).map((c) => ({
       from: c.from, to: c.to, hits: c.hits, at: c.at, source: c.source ?? "cleanup", chats: c.chats?.length ?? 0,
     })),

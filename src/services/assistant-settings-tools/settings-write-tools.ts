@@ -47,7 +47,10 @@ export async function settingsSet(ctx: ToolContext, args: Record<string, unknown
         return errorResult(`"${key}" and "${part.key}" change the same setting; name one of them. Nothing was changed.`);
       }
       const before = await target.entry.read();
-      if (!sameValue(before, part.value)) planned.push({ entry: target.entry, before, after: part.value });
+      if (sameValue(before, part.value)) continue;
+      const refused = target.entry.validate?.(part.value, before);
+      if (refused) return errorResult(`${target.entry.label}: ${refused} Nothing was changed.`);
+      planned.push({ entry: target.entry, before, after: part.value });
     }
   }
   if (!planned.length) return result({ outcome: "unchanged", changes: [], note: "Every setting already has that value." });

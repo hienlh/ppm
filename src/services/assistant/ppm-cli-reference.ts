@@ -1083,6 +1083,19 @@ ppm speech install
 
 ppm speech remove
   Remove the Whisper build and models PPM installed
+
+ppm speech learned list
+  List a project's learned words, the pairs still being learned, and the undone ones
+  --project <name> — Which project's lists (default: the PPM Assistant, "__assistant__")
+  --json — Print JSON
+
+ppm speech learned remove <word>
+  Undo a learned word, or stop learning a pair (by the word it means); it is not learned again until restored
+  --project <name> — Which project's lists (default: the PPM Assistant, "__assistant__")
+
+ppm speech learned restore <word>
+  Bring back an undone word: learned again, or counted again where it left off
+  --project <name> — Which project's lists (default: the PPM Assistant, "__assistant__")
 \`\`\`
 ## ppm vault — The secret vault: status and lock (values are read only in PPM)
 \`\`\`

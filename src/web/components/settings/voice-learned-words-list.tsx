@@ -46,11 +46,12 @@ export function learnedSourceLabel(l: LearnedWord): string {
 }
 
 /**
- * How far a pair still being learned has got: "chat · 1 of 3 chats" (the chat counts distinct
- * chats), "clean-up · seen 2×" (the clean-up's threshold depends on the project, so no "of").
+ * How far a pair still being learned has got: "chat · 1 of 3 chats or days" (a chat counts once a
+ * day, so three chats or one chat on three days teach it), "clean-up · seen 2×" (the clean-up's
+ * threshold depends on the project, so no "of").
  */
 export function learningLabel(c: LearningPair): string {
-  return c.source === "chat" ? `chat · ${c.chats} of 3 chats` : `clean-up · seen ${c.hits}×`;
+  return c.source === "chat" ? `chat · ${c.chats} of 3 chats or days` : `clean-up · seen ${c.hits}×`;
 }
 
 /** The learned words of today (local day), for "Undo everything learned today". */
