@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.26.35] - 2026-11-25
+
+### Added
+
+- **Manager chats withdraw stale cards**: a card a newer one replaced, or one you handled elsewhere, leaves Waiting on you saying why and what replaced it, with Restore to bring it back; on by default, switch in Settings → Tools → Cards.
+- **On Telegram a replaced card is rewritten** and the new one arrives as a reply under it; a reply to a withdrawn card asks before sending, so your words are never lost.
+- **A manager's report can name its task**: closing the task clears that task's done and failed cards and marks its waiting ones.
+
 ## [0.26.34] - 2026-11-25
 
 ### Added
