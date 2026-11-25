@@ -133,9 +133,15 @@ export function applyNotificationSettingsPatch(
 /** One browser that receives push, as the Settings pane lists it. Keys never leave the server. */
 export interface PushDeviceInfo {
   id: string;
+  /** A browser (Web Push) or the PPM Android app through Firebase Cloud Messaging. */
+  kind: "webpush" | "fcm";
   label: string;
-  /** The push service URL. Not a secret without the server's VAPID key; it is how a browser finds its own row. */
+  /**
+   * The push service URL. Not a secret without the server's VAPID key; it is how a browser finds its own row.
+   * "" for an `fcm` device: its registration token is never sent back.
+   */
   endpoint: string;
+  /** Where push was turned on from; "" for an `fcm` device that did not say. */
   origin: string;
   createdAt: number;
   lastSuccessAt: number | null;

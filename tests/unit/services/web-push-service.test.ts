@@ -124,7 +124,7 @@ describe("webPushService.send", () => {
     await webPushService.send(message, (d) => d.id === newest!.id);
     expect(captured.map((c) => c.url)).toEqual(["https://push.example/b"]);
     // The endpoint is how a browser finds its own row; the keys that decrypt a push stay here.
-    expect(Object.keys(newest!).sort()).toEqual(["createdAt", "endpoint", "id", "label", "lastError", "lastSuccessAt", "origin"]);
+    expect(Object.keys(newest!).sort()).toEqual(["createdAt", "endpoint", "id", "kind", "label", "lastError", "lastSuccessAt", "origin"]);
   });
 
   it("keeps one row per endpoint and caps the list", async () => {

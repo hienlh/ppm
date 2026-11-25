@@ -6,17 +6,25 @@
  * Apple's), PPM signs each request with its own VAPID key, and nobody needs a
  * Firebase project. Push needs a secure origin, so a browser can only subscribe from
  * PPM reached over HTTPS or on localhost.
+ *
+ * The PPM Android app is the exception: it registers an FCM token (`kind: "fcm"`) in the same
+ * list, and those devices are sent the same payload through FCM HTTP v1 with the install's own
+ * Firebase project (`src/services/fcm/`).
  */
 import type { PushDeviceInfo } from "../../shared/notification-settings.ts";
 import type { WebPushPayload } from "../../shared/web-push-payload.ts";
 import { base64UrlDecode, encryptPushPayload, vapidAuthorization } from "./web-push-crypto.ts";
 import {
   getVapidKeys,
+  isFcmSubscription,
   listSubscriptions,
   removeSubscription,
   updateSubscription,
+  upsertFcmSubscription,
   upsertSubscription,
+  type StoredFcmSubscription,
   type StoredSubscription,
+  type StoredWebPushSubscription,
 } from "./web-push-store.ts";
 import { createLogger } from "../logger.ts";
 
@@ -28,6 +36,8 @@ const VAPID_SUBJECT = "https://github.com/hienlh/ppm";
 const TTL_SECONDS = 12 * 3600;
 const SEND_TIMEOUT_MS = 10_000;
 const MAX_ENDPOINT_LENGTH = 2048;
+/** An FCM registration token is ~160 printable ASCII characters; anything else is not one. */
+const FCM_TOKEN_RE = /^[\x21-\x7e]{20,4096}$/;
 
 export interface PushSubscriptionInput {
   endpoint: string;
@@ -86,6 +96,20 @@ export function parsePushSubscription(body: unknown): { ok: true; value: PushSub
   return { ok: true, value: { endpoint: sub.endpoint, keys: { p256dh, auth } } };
 }
 
+export interface FcmSubscriptionInput {
+  token: string;
+  /** The device's saved subscription id, replaced by this one (see `upsertFcmSubscription`). */
+  deviceId?: string;
+}
+
+/** Check what the Android app posted as `{ kind: "fcm", token, deviceId? }`. */
+export function parseFcmSubscription(body: unknown): { ok: true; value: FcmSubscriptionInput } | { ok: false; error: string } {
+  const b = body as { token?: unknown; deviceId?: unknown } | null;
+  if (!b || typeof b.token !== "string" || !FCM_TOKEN_RE.test(b.token)) return { ok: false, error: "Missing or invalid FCM token" };
+  if (b.deviceId !== undefined && b.deviceId !== null && typeof b.deviceId !== "string") return { ok: false, error: "deviceId must be a string" };
+  return { ok: true, value: { token: b.token, ...(typeof b.deviceId === "string" && b.deviceId ? { deviceId: b.deviceId } : {}) } };
+}
+
 /**
  * The URL a click opens, for a browser that subscribed from `origin`.
  *
@@ -107,8 +131,13 @@ export function pushTargetUrl(origin: string, path: string, currentTunnelUrl: st
 }
 
 function toDeviceInfo(s: StoredSubscription): PushDeviceInfo {
+  if (isFcmSubscription(s)) {
+    // The registration token stays here: it is what a sender needs, and the app keeps its id instead.
+    return { id: s.id, kind: "fcm", label: s.label, endpoint: "", origin: s.origin, createdAt: s.createdAt, lastSuccessAt: s.lastSuccessAt, lastError: s.lastError };
+  }
   return {
     id: s.id,
+    kind: "webpush",
     label: s.label,
     endpoint: s.endpoint,
     origin: s.origin,
@@ -125,6 +154,19 @@ async function currentTunnelUrl(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** What the device gets, whichever way it is reached. */
+function payloadFor(message: PushMessage, url: string): WebPushPayload {
+  return {
+    title: message.title,
+    body: message.body,
+    url,
+    tag: message.tag,
+    project: message.project,
+    sessionId: message.sessionId,
+    providerId: message.providerId,
+  };
 }
 
 class WebPushService {
@@ -150,7 +192,19 @@ class WebPushService {
     return toDeviceInfo(record);
   }
 
-  unsubscribe(match: { id?: string; endpoint?: string }): boolean {
+  /** The PPM Android app, through Firebase. `origin` may be "" when the app did not send one. */
+  subscribeFcm(input: FcmSubscriptionInput, label: string, origin: string): PushDeviceInfo {
+    const record = upsertFcmSubscription({
+      token: input.token,
+      label: label.trim().slice(0, 80) || "Android",
+      origin,
+      replaceId: input.deviceId,
+    });
+    log.info(`Firebase device saved: "${record.label}" id=${record.id}`);
+    return toDeviceInfo(record);
+  }
+
+  unsubscribe(match: { id?: string; endpoint?: string; token?: string }): boolean {
     const removed = removeSubscription(match);
     if (removed) log.info(`Subscription removed on request${match.id ? `: id=${match.id}` : ""}`);
     return removed;
@@ -177,6 +231,34 @@ class WebPushService {
     keys: Awaited<ReturnType<typeof getVapidKeys>>,
     tunnelUrl: string | null,
   ): Promise<keyof PushSendResult> {
+    return isFcmSubscription(sub) ? this.deliverFcm(sub, message, tunnelUrl) : this.deliverWebPush(sub, message, keys, tunnelUrl);
+  }
+
+  /** Same payload as a browser gets, sent through Firebase to the PPM Android app. */
+  private async deliverFcm(sub: StoredFcmSubscription, message: PushMessage, tunnelUrl: string | null): Promise<keyof PushSendResult> {
+    const { sendFcmMessage } = await import("../fcm/fcm-sender.ts");
+    const result = await sendFcmMessage(sub.token, payloadFor(message, sub.origin ? pushTargetUrl(sub.origin, message.path, tunnelUrl) : message.path));
+    if (result.outcome === "removed") {
+      removeSubscription({ id: sub.id });
+      log.info(`Firebase device removed (HTTP ${result.status}): "${sub.label}" id=${sub.id}`);
+      return "removed";
+    }
+    if (result.outcome === "failed") {
+      updateSubscription(sub.id, { lastError: result.error });
+      if (sub.lastError !== result.error) log.warn(`Device "${sub.label}" id=${sub.id}: ${result.error}`);
+      else log.debug(`Device "${sub.label}" id=${sub.id}: ${result.error} (again)`);
+      return "failed";
+    }
+    updateSubscription(sub.id, { lastSuccessAt: Date.now(), lastError: null });
+    return "sent";
+  }
+
+  private async deliverWebPush(
+    sub: StoredWebPushSubscription,
+    message: PushMessage,
+    keys: Awaited<ReturnType<typeof getVapidKeys>>,
+    tunnelUrl: string | null,
+  ): Promise<keyof PushSendResult> {
     if (sub.vapidKey !== keys.publicKey) {
       // The push service would refuse it (403). Opening PPM on that device subscribes it again.
       const lastError = "Subscribed with an old key — turn push on again on that device";
@@ -186,15 +268,7 @@ class WebPushService {
       return "failed";
     }
     try {
-      const payload = new TextEncoder().encode(JSON.stringify({
-        title: message.title,
-        body: message.body,
-        url: pushTargetUrl(sub.origin, message.path, tunnelUrl),
-        tag: message.tag,
-        project: message.project,
-        sessionId: message.sessionId,
-        providerId: message.providerId,
-      } satisfies WebPushPayload));
+      const payload = new TextEncoder().encode(JSON.stringify(payloadFor(message, pushTargetUrl(sub.origin, message.path, tunnelUrl))));
       const body = await encryptPushPayload(payload, base64UrlDecode(sub.p256dh), base64UrlDecode(sub.auth));
       const res = await fetch(sub.endpoint, {
         method: "POST",

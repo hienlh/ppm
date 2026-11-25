@@ -1,13 +1,15 @@
 /**
- * Settings → Notifications: what to notify about and when, browsers that receive
- * push, the Telegram chats that receive alerts, and the ntfy topic they are published to.
+ * Settings → Notifications: what to notify about and when, browsers (and PPM Android apps,
+ * through the install's own Firebase project) that receive push, the Telegram chats that
+ * receive alerts, and the ntfy topic they are published to.
  *
  * Saving the bot token and sending a Telegram test keep their existing routes under
  * /api/settings (`/telegram`, `/telegram/test`).
  */
 import { Hono } from "hono";
 import { configService } from "../../services/config.service.ts";
-import { parsePushSubscription, webPushService } from "../../services/web-push/web-push.service.ts";
+import { parseFcmSubscription, parsePushSubscription, webPushService } from "../../services/web-push/web-push.service.ts";
+import { clearFcmConfig, fcmStatus, loadFcmConfig, saveFcmConfig, validateFcmUpdate } from "../../services/fcm/fcm-config.ts";
 import { notifyConnect, TelegramConnectError } from "../../services/telegram-connect.service.ts";
 import { getPPMBotBot, listNotifyChats, removeNotifyChat, sameBot } from "../../services/telegram-bots.ts";
 import { checkNtfyServer, NtfyError, ntfyService } from "../../services/ntfy-notification.service.ts";
@@ -59,7 +61,16 @@ notificationRoutes.get("/push", async (c) => {
 });
 
 notificationRoutes.post("/push/subscribe", async (c) => {
-  const body = await c.req.json<{ subscription?: unknown; label?: unknown; origin?: unknown }>().catch(() => null);
+  const body = await c.req.json<{ kind?: unknown; subscription?: unknown; label?: unknown; origin?: unknown }>().catch(() => null);
+  if (body?.kind === "fcm") {
+    // The PPM Android app: a registration token instead of a browser subscription. Its origin is
+    // optional — without one a click opens the path on whichever server the app has.
+    const fcm = parseFcmSubscription(body);
+    if (!fcm.ok) return c.json(err(fcm.error), 400);
+    const label = typeof body.label === "string" ? body.label : "";
+    return c.json(ok(webPushService.subscribeFcm(fcm.value, label, pageOrigin(body.origin) ?? "")));
+  }
+  if (body?.kind !== undefined && body.kind !== "webpush") return c.json(err("Unknown push kind"), 400);
   const parsed = parsePushSubscription(body?.subscription);
   if (!parsed.ok) return c.json(err(parsed.error), 400);
   // Where a click on the notification should open PPM again — the page the user is on.
@@ -70,11 +81,12 @@ notificationRoutes.post("/push/subscribe", async (c) => {
 });
 
 notificationRoutes.post("/push/unsubscribe", async (c) => {
-  const body = await c.req.json<{ endpoint?: unknown; id?: unknown }>().catch(() => null);
+  const body = await c.req.json<{ endpoint?: unknown; id?: unknown; token?: unknown }>().catch(() => null);
   const endpoint = typeof body?.endpoint === "string" ? body.endpoint : undefined;
   const id = typeof body?.id === "string" ? body.id : undefined;
-  if (!endpoint && !id) return c.json(err("Pass an endpoint or a device id"), 400);
-  return c.json(ok({ removed: webPushService.unsubscribe({ endpoint, id }) }));
+  const token = typeof body?.token === "string" ? body.token : undefined;
+  if (!endpoint && !id && !token) return c.json(err("Pass an endpoint, a token or a device id"), 400);
+  return c.json(ok({ removed: webPushService.unsubscribe({ endpoint, id, token }) }));
 });
 
 notificationRoutes.post("/push/test", async (c) => {
@@ -101,6 +113,27 @@ notificationRoutes.post("/push/test", async (c) => {
     return c.json(err(message), 502);
   }
   return c.json(ok(result));
+});
+
+/**
+ * Firebase for the Android app. The answer is the app's public client config only: nothing
+ * from the service account ever leaves the server.
+ */
+notificationRoutes.get("/fcm", (c) => c.json(ok(fcmStatus())));
+
+/** Save `google-services.json` and the service-account key; a file left out keeps the saved one. */
+notificationRoutes.put("/fcm", async (c) => {
+  const body = await c.req.json<{ googleServices?: unknown; serviceAccount?: unknown }>().catch(() => null);
+  const checked = await validateFcmUpdate(body && typeof body === "object" ? body : null, loadFcmConfig());
+  if (!checked.ok) return c.json(err(checked.error), 400);
+  saveFcmConfig(checked.value);
+  return c.json(ok(fcmStatus(checked.value)));
+});
+
+/** Forget the project. Android devices stay listed, and get push again once it is set up. */
+notificationRoutes.delete("/fcm", (c) => {
+  clearFcmConfig();
+  return c.json(ok(fcmStatus(null)));
 });
 
 notificationRoutes.get("/telegram", async (c) => {

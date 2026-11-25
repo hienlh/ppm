@@ -35,6 +35,7 @@ import {
   type TelegramNotifyStatus,
 } from "../../../shared/notification-settings";
 import { NtfyServerForm } from "./ntfy-server-form";
+import { FirebasePushCard } from "./firebase-push-card";
 import { IconButton, SectionHeader, SwitchRow } from "./settings-rows";
 import { ConnectCard, TelegramChatList, useTelegramConnect } from "./telegram-connect";
 import { TelegramBotTokenField } from "./telegram-bot-token-field";
@@ -267,7 +268,7 @@ function PushSection() {
                       )}
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {hostOf(device.origin)} · {device.lastSuccessAt ? `delivered ${ago(device.lastSuccessAt)}` : `added ${ago(device.createdAt)}`}
+                      {device.kind === "fcm" ? "Android app via Firebase" : hostOf(device.origin)} · {device.lastSuccessAt ? `delivered ${ago(device.lastSuccessAt)}` : `added ${ago(device.createdAt)}`}
                     </p>
                     {device.lastError && <p className="break-words text-xs text-error">{device.lastError}</p>}
                   </div>
@@ -283,6 +284,8 @@ function PushSection() {
           </ul>
         </div>
       )}
+
+      <FirebasePushCard />
     </section>
   );
 }

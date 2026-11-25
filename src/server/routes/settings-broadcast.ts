@@ -47,6 +47,9 @@ const WRITES: ReadonlyArray<{ method: string; path: RegExp; section: SettingsSec
   { method: "PUT", path: /^\/api\/notifications\/ntfy$/, section: "notifications" },
   { method: "DELETE", path: /^\/api\/notifications\/ntfy$/, section: "notifications" },
   { method: "POST", path: /^\/api\/notifications\/push\/(subscribe|unsubscribe)$/, section: "notifications" },
+  // The Firebase project the Android app gets push through.
+  { method: "PUT", path: /^\/api\/notifications\/fcm$/, section: "notifications" },
+  { method: "DELETE", path: /^\/api\/notifications\/fcm$/, section: "notifications" },
   // The notification bot: its token, its chats and its connect link.
   { method: "PUT", path: /^\/api\/settings\/telegram$/, section: "telegram" },
   { method: "POST", path: /^\/api\/notifications\/telegram\/connect$/, section: "telegram" },
