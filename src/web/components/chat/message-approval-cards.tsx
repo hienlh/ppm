@@ -14,12 +14,13 @@ import { sessionCollabApprovalInput } from "../../../shared/session-collab";
 import { CollabApprovalCard } from "./collab-approval-card";
 import { vaultCardInput } from "@/lib/vault-tool-call";
 import { VaultUnlockCard } from "./vault-unlock-card";
+import { PlanApprovalCard, planOf } from "./plan-approval-card";
 
 /** A question card answers by question id; every other card only says yes or no. */
-type Respond = (requestId: string, approved: boolean, answersById?: AnswersById, remember?: boolean) => void;
+type Respond = (requestId: string, approved: boolean, answersById?: AnswersById, choice?: { scope?: "chat"; message?: string }, remember?: boolean) => void;
 
 /** The card a waiting call needs: the question form, a database change to approve, or Allow/Deny. */
-export function PendingApprovalCard({ approval, onRespond }: { approval: ApprovalRequest; onRespond: Respond }) {
+export function PendingApprovalCard({ approval, onRespond, projectName }: { approval: ApprovalRequest; onRespond: Respond; projectName?: string }) {
   if (approval.tool === "AskUserQuestion") return <AskUserQuestionCard approval={approval} onRespond={onRespond} />;
   // PPM's own approvals are answered over HTTP by their own cards, never through `onRespond`.
   const db = dbExecuteApprovalInput(approval.tool, approval.input);
@@ -28,7 +29,9 @@ export function PendingApprovalCard({ approval, onRespond }: { approval: Approva
   if (collab) return <CollabApprovalCard requestId={approval.requestId} input={collab} {...(approval.remember ? { remember: approval.remember } : {})} />;
   const vault = vaultCardInput(approval.tool, approval.input);
   if (vault) return <VaultUnlockCard requestId={approval.requestId} input={vault} />;
-  return <ApprovalCard approval={approval} onRespond={(id, approved, remember) => onRespond(id, approved, undefined, remember)} />;
+  const plan = planOf(approval.tool, approval.input);
+  if (plan) return <PlanApprovalCard requestId={approval.requestId} plan={plan} projectName={projectName} onRespond={(id, approved, choice) => onRespond(id, approved, undefined, choice)} />;
+  return <ApprovalCard approval={approval} onRespond={(id, approved, choice, remember) => onRespond(id, approved, undefined, choice, remember)} />;
 }
 
 /** Interactive quiz form for AskUserQuestion — renders questions with selectable options + Other */

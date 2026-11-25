@@ -26,6 +26,7 @@ import {
   renameSession as mergeRename,
   replaceSessionId as mergeReplaceId,
   setPinned as mergeSetPinned,
+  setSessionArchive as mergeSetArchive,
   setSessionTag as mergeSetTag,
   clearDeletedTag as mergeClearTag,
   removeOlderThan as mergeRemoveOlderThan,
@@ -111,6 +112,7 @@ interface SessionListStore {
   renameSession: (project: ProjectCacheRef, id: string, title: string) => void;
   replaceSessionId: (project: ProjectCacheRef, oldId: string, newId: string) => void;
   setPinned: (project: ProjectCacheRef, id: string, pinned: boolean) => void;
+  setArchive: (project: ProjectCacheRef, id: string, archive: SessionInfo["archive"]) => void;
   setSessionTag: (project: ProjectCacheRef, id: string, tag: Tag | null) => void;
   removeOlderThan: (project: ProjectCacheRef, days: number) => void;
   seedTags: (project: ProjectCacheRef, tags: SessionTagsState) => void;
@@ -227,6 +229,7 @@ export const useSessionListStore = create<SessionListStore>((set, get) => {
       patchList(project, (list) => mergeReplaceId(list, oldId, newId));
     },
     setPinned: (project, id, pinned) => patchList(project, (list) => mergeSetPinned(list, id, pinned)),
+    setArchive: (project, id, archive) => patchList(project, (list) => mergeSetArchive(list, id, archive)),
     setSessionTag: (project, id, tag) => patchList(project, (list) => mergeSetTag(list, id, tag)),
     removeOlderThan: (project, days) => patchList(project, (list) => mergeRemoveOlderThan(list, days)),
     onTagDeleted: (project, tagId) => patchList(project, (list) => mergeClearTag(list, tagId)),

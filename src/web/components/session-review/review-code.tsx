@@ -4,7 +4,7 @@
  * and, on a desktop, its Keep and Revert; a decided one shows only the lines that stay. Each
  * block names the turns that wrote it, and a turn opens to the prompt that asked for it.
  */
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ThemedToken } from "shiki";
 import { Button } from "@/components/ui/button";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
@@ -16,6 +16,14 @@ import { turnLabel, turnTime, type SessionTurn } from "@/lib/session-turns";
 import type { ReviewRow } from "../../../shared/review-blocks";
 import type { SessionFileChange } from "../../../shared/session-file-changes";
 import { CodeLine, useTokenLines } from "./review-tokens";
+import { LineCommentBox } from "@/components/shared/line-comment-box";
+import { reviewCommentId, useReviewComments, useSessionReviewComments } from "@/stores/review-comments-store";
+
+/**
+ * Where a line comment belongs: this chat and the file on screen. Absent (no comments offered)
+ * when the review has no session to send them to.
+ */
+export const ReviewCommentScope = createContext<{ sessionId: string; path: string } | null>(null);
 
 type BlockItem = Extract<PaneItem, { kind: "block" }>;
 
@@ -463,6 +471,14 @@ function Rows({ rows, state, compact, lang, plain }: {
     return out.filter((d) => keep.has(d.row));
   }, [rows, state, oldTokens, newTokens]);
 
+  const scope = useContext(ReviewCommentScope);
+  const comments = useSessionReviewComments(scope?.sessionId);
+  const saveComment = useReviewComments((s) => s.save);
+  const removeComment = useReviewComments((s) => s.remove);
+  /** The line whose comment box is open for writing. */
+  const [editing, setEditing] = useState<string | null>(null);
+  const commentable = !!scope && state === "open";
+
   const grid = compact ? "grid-cols-[28px_28px_14px_minmax(0,1fr)]" : "grid-cols-[40px_40px_18px_minmax(0,1fr)]";
   if (drawn.length === 0) {
     return (
@@ -480,15 +496,36 @@ function Rows({ rows, state, compact, lang, plain }: {
       {drawn.map(({ row, at, tokens }) => {
         const add = state === "open" && row.k === "+";
         const del = state === "open" && row.k === "-";
+        const side = row.n != null ? "new" as const : "old" as const;
+        const line = row.n ?? row.o ?? 0;
+        const id = commentable ? reviewCommentId(scope!.path, side, line) : "";
+        const comment = commentable ? comments.find((c) => c.id === id) : undefined;
+        const open = commentable && (editing === id || !!comment);
+        const gutter = cn("select-none text-right text-[0.92em] text-text-subtle", compact ? "pr-[5px]" : "pr-2");
+        const numbers = (
+          <>
+            <span className={gutter}>{state === "kept" && !plain ? "" : row.o ?? ""}</span>
+            <span className={gutter}>{state === "reverted" ? "" : row.n ?? ""}</span>
+          </>
+        );
         return (
-          <div key={at} className={cn("grid", grid, add && "bg-diff-added", del && "bg-diff-removed")}>
-            <span className={cn("select-none text-right text-[0.92em] text-text-subtle", compact ? "pr-[5px]" : "pr-2")}>
-              {state === "kept" && !plain ? "" : row.o ?? ""}
-            </span>
-            <span className={cn("select-none text-right text-[0.92em] text-text-subtle", compact ? "pr-[5px]" : "pr-2")}>
-              {state === "reverted" ? "" : row.n ?? ""}
-            </span>
-            <span className={cn("select-none text-center", add ? "text-success" : del ? "text-error" : "text-text-subtle")}>
+          <div key={at}>
+          <div className={cn("group/line grid", grid, add && "bg-diff-added", del && "bg-diff-removed")} data-review-line={commentable ? id : undefined}>
+            {commentable ? (
+              // The line numbers are the comment button: a tap on a phone, a click (or the icon on hover) on a desktop.
+              <button
+                type="button"
+                onClick={() => setEditing(id)}
+                aria-label={"Comment on line " + line}
+                title="Comment on this line"
+                data-comment-line={id}
+                className="col-span-2 grid cursor-pointer grid-cols-subgrid hover:bg-primary/10"
+              >
+                {numbers}
+              </button>
+            ) : numbers}
+            <span className={cn("relative select-none text-center", add ? "text-success" : del ? "text-error" : "text-text-subtle")}>
+              {commentable && !add && !del && <MessageCircle className="absolute inset-0 m-auto hidden size-3 text-primary group-hover/line:block" aria-hidden="true" />}
               {add ? "+" : del ? "−" : ""}
             </span>
             <span className={cn("min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]", compact ? "pr-2.5" : "pr-3.5", decided && "opacity-[.78]")}>
@@ -499,6 +536,22 @@ function Rows({ rows, state, compact, lang, plain }: {
                 spanClass={cn("rounded-[2px]", row.k === "+" ? "bg-diff-added-word" : "bg-diff-removed-word")}
               />
             </span>
+          </div>
+          {open && (
+            <LineCommentBox
+              key={id}
+              body={comment?.body ?? ""}
+              editing={editing === id}
+              onEdit={() => setEditing(id)}
+              onSave={(body) => {
+                saveComment(scope!.sessionId, { id, path: scope!.path, line, side, quote: row.text, body });
+                setEditing(null);
+              }}
+              onCancel={() => setEditing(null)}
+              onDelete={() => { removeComment(scope!.sessionId, id); setEditing(null); }}
+              className={compact ? "mx-2 my-1.5" : "my-1.5 mr-3.5 ml-[98px]"}
+            />
+          )}
           </div>
         );
       })}

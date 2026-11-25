@@ -35,13 +35,17 @@ export type ChatWsClientMessage =
   /** Uploaded paths for the same images, for providers that take a file not a payload. */
   imagePaths?: string[]; model?: string; effort?: string; thinking?: boolean;
   /** An Assistant session's message: what the sending device shows, validated by the server. */
-  uiSummary?: UiSummary }
+  uiSummary?: UiSummary;
+  /** A new Claude chat's first message: run the chat in a git worktree of its own with this name. */
+  worktree?: string }
   | { type: "cancel" }
   | { type: "set_model"; model: string }
   | { type: "set_effort"; effort: string }
   | { type: "set_thinking"; enabled: boolean }
   | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown; remember?: boolean }
   | { type: "kill_background_shell"; shellId: string }
+  /** Stop one of the CLI's background tasks (`background_tasks`) directly, with no model turn. */
+  | { type: "stop_background_task"; taskId: string }
   | { type: "ready" }
   /** Replay an in-progress turn after a downstream WebSocket content gap. */
   | { type: "resync" }

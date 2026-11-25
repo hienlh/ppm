@@ -670,6 +670,177 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(passedMcpServers(design)?.["ppm-tabs"]).toBeUndefined();
     });
 
+    describe("rules saved from an approval card", () => {
+      const allow = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } };
+      async function askTurn() {
+        mockQueryFn.mockClear();
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) { /* consume */ }
+        return { hook: permissionHook(mockQueryFn.mock.calls[0]![0].options), sessionId: session.id };
+      }
+      /** Calls the hook and answers the card it raises with `approved` and `data`. */
+      async function answered(hook: (i: unknown) => Promise<unknown>, input: unknown, approved: boolean, data?: unknown) {
+        const pending = (provider as any).pendingApprovals as Map<string, unknown>;
+        const before = new Set(pending.keys());
+        const verdict = hook(input);
+        await new Promise((r) => setTimeout(r, 0));
+        const requestId = [...pending.keys()].find((k) => !before.has(k));
+        if (!requestId) return verdict; // allowed without asking
+        provider.resolveApproval(requestId, approved, data);
+        return verdict;
+      }
+
+      it("Allow for this chat lets later calls of the same command run without a card, in that chat only", async () => {
+        const { hook } = await askTurn();
+        const gitStatus = { tool_name: "Bash", tool_input: { command: "git status" } };
+        expect(await answered(hook, gitStatus, true, { scope: "chat" })).toEqual(allow);
+        const pending = (provider as any).pendingApprovals as Map<string, unknown>;
+        const size = pending.size;
+        expect(await hook({ tool_name: "Bash", tool_input: { command: "git status --short" } })).toEqual(allow);
+        expect(pending.size).toBe(size);
+        // A chained command is never covered by a prefix rule.
+        const chained = hook({ tool_name: "Bash", tool_input: { command: "git status; rm -rf /tmp/x" } });
+        await new Promise((r) => setTimeout(r, 0));
+        expect(pending.size).toBe(size + 1);
+        provider.resolveApproval([...pending.keys()].at(-1)!, false);
+        await chained;
+        // Another chat still asks.
+        const other = await askTurn();
+        const asked = other.hook(gitStatus);
+        await new Promise((r) => setTimeout(r, 0));
+        expect(pending.size).toBe(size + 1);
+        provider.resolveApproval([...pending.keys()].at(-1)!, false);
+        await asked;
+      });
+
+      it("a denial carries what the person typed to Claude", async () => {
+        const { hook } = await askTurn();
+        expect(await answered(hook, { tool_name: "Bash", tool_input: { command: "npm install" } }, false, { message: "use bun install" })).toEqual({
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse", permissionDecision: "deny",
+            permissionDecisionReason: "User denied tool execution and said what to do instead: use bun install",
+          },
+        });
+      });
+
+    });
+
+    describe("side questions and prompt suggestions", () => {
+      it("asks for prompt suggestions and passes the one that follows a turn's result", async () => {
+        mockQueryFn.mockClear();
+        mockQueryFn.mockReturnValue(createMockQueryIterator([
+          { type: "result" },
+          { type: "prompt_suggestion", suggestion: "  run the tests  " } as any,
+        ]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        const events: any[] = [];
+        for await (const ev of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) events.push(ev);
+        expect(mockQueryFn.mock.calls[0]![0].options.promptSuggestions).toBe(true);
+        expect(events.filter((e) => e.type === "prompt_suggestion")).toEqual([{ type: "prompt_suggestion", suggestion: "run the tests" }]);
+        expect(events.findIndex((e) => e.type === "done")).toBeLessThan(events.findIndex((e) => e.type === "prompt_suggestion"));
+      });
+
+      it("asks a side question of the session's live CLI, and says when there is none", async () => {
+        const asked: unknown[] = [];
+        const streaming = (provider as any).streamingSessions as Map<string, unknown>;
+        streaming.set("side-1", { query: { askSideQuestion: async (q: string, o: unknown) => { asked.push([q, o]); return { response: "It is in src/a.ts." }; } } });
+        try {
+          expect(await provider.askSideQuestion("side-1", "where is a?")).toEqual({ live: true, response: "It is in src/a.ts." });
+          expect((asked[0] as [string, { signal?: AbortSignal }])[0]).toBe("where is a?");
+          expect((asked[0] as [string, { signal?: AbortSignal }])[1].signal).toBeInstanceOf(AbortSignal);
+          expect(await provider.askSideQuestion("no-such-session", "x")).toEqual({ live: false });
+        } finally {
+          streaming.delete("side-1");
+        }
+      });
+
+      it("stops a background task through the live CLI's stopTask, and says when there is none", async () => {
+        const stopped: string[] = [];
+        const streaming = (provider as any).streamingSessions as Map<string, unknown>;
+        streaming.set("bg-1", { query: { stopTask: async (id: string) => { stopped.push(id); } } });
+        try {
+          expect(await provider.stopBackgroundTask("bg-1", "bgljg8lcw")).toBe(true);
+          expect(stopped).toEqual(["bgljg8lcw"]);
+          expect(await provider.stopBackgroundTask("no-such-session", "x")).toBe(false);
+        } finally {
+          streaming.delete("bg-1");
+        }
+      });
+
+      it("forwards background_tasks_changed as the visible task list", async () => {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([
+          { type: "system", subtype: "background_tasks_changed", tasks: [
+            { task_id: "b1", task_type: "local_bash", description: "Run sleep 300" },
+            { task_id: "w1", task_type: "monitor", description: "watch", ambient: true },
+          ] } as any,
+          { type: "result" } as any,
+        ]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        const events: any[] = [];
+        for await (const ev of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) events.push(ev);
+        expect(events.filter((e) => e.subtype === "background_tasks_changed")).toEqual([{
+          type: "system", subtype: "background_tasks_changed",
+          tasks: [{ taskId: "b1", taskType: "local_bash", description: "Run sleep 300" }],
+        }]);
+      });
+
+      it("starts a new chat in the worktree it asked for, and reports the worktree the CLI runs in", async () => {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([
+          { type: "system", subtype: "init", session_id: "x", cwd: "/tmp/my-project/.claude/worktrees/chat-1" } as any,
+          { type: "result" } as any,
+        ]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        const events: any[] = [];
+        for await (const ev of provider.sendMessage(session.id, "hi", { permissionMode: "default", worktree: "chat-1" })) events.push(ev);
+        expect(mockQueryFn.mock.calls[0]![0].options.extraArgs?.worktree).toBe("chat-1");
+        expect(events.filter((e) => e.subtype === "worktree")).toEqual([{
+          type: "system", subtype: "worktree",
+          worktree: { name: "chat-1", path: "/tmp/my-project/.claude/worktrees/chat-1", branch: "worktree-chat-1" },
+        }]);
+      });
+
+      it("reports the context the last call held, not the tokens summed over every call of the turn", async () => {
+        const call = (cacheRead: number) => ({
+          type: "assistant",
+          message: { model: "claude-opus-5-5", content: [{ type: "text", text: "." }], usage: { input_tokens: 10, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: 0, output_tokens: 5 } },
+        });
+        mockQueryFn.mockReturnValue(createMockQueryIterator([
+          call(269_990), call(269_990), call(269_990), call(279_990),
+          { type: "result", subtype: "success", num_turns: 4, modelUsage: {
+            "claude-opus-5-5": { inputTokens: 40, cacheReadInputTokens: 1_089_960, cacheCreationInputTokens: 0, outputTokens: 20, contextWindow: 500_000 },
+            "claude-haiku-5-5": { inputTokens: 900, outputTokens: 10, contextWindow: 200_000 },
+          } } as any,
+        ] as any));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        const events: any[] = [];
+        for await (const ev of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) events.push(ev);
+        expect(events.find((e) => e.type === "done")?.contextWindowPct).toBe(56);
+      });
+
+      it("measures against the CLI's own window when a setting makes it smaller than the model's", async () => {
+        const it2 = createMockQueryIterator([
+          { type: "system", subtype: "init", session_id: "x", model: "claude-opus-5-5" } as any,
+          { type: "assistant", message: { model: "claude-opus-5-5", content: [{ type: "text", text: "." }], usage: { input_tokens: 10, cache_read_input_tokens: 279_990, cache_creation_input_tokens: 0, output_tokens: 5 } } } as any,
+          { type: "result", subtype: "success", num_turns: 1, modelUsage: { "claude-opus-5-5": { inputTokens: 10, cacheReadInputTokens: 279_990, outputTokens: 5, contextWindow: 1_000_000 } } } as any,
+        ]);
+        // CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000: /context measures against 500k, modelUsage says 1M.
+        (it2 as any).getContextUsage = async () => ({ categories: [], totalTokens: 280_000, maxTokens: 500_000, percentage: 56, model: "claude-opus-5-5" });
+        mockQueryFn.mockReturnValue(it2);
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        const events: any[] = [];
+        for await (const ev of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) events.push(ev);
+        expect(events.find((e) => e.type === "done")?.contextWindowPct).toBe(56);
+      });
+
+      it("refuses a worktree name that is not one PPM makes", async () => {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" } as any]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "default", worktree: "../escape" })) { /* consume */ }
+        expect(mockQueryFn.mock.calls[0]![0].options.extraArgs?.worktree).toBeUndefined();
+      });
+    });
+
     describe("design session", () => {
       const designOpts = { designSession: true, designInstructions: "# Design mode", permissionMode: "acceptEdits" };
 

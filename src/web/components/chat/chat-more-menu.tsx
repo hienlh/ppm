@@ -7,7 +7,8 @@
  * under "More" and open in place, so the menu stays short until they are wanted.
  */
 import { useState, type ReactNode } from "react";
-import { BellOff, Bug, ChevronDown, ChevronRight, Circle, MoreHorizontal, RefreshCw, ScrollText, Settings2, Users } from "@/lib/icons";
+import { BellOff, Bookmark, Bug, ChevronDown, ChevronRight, Circle, Download, Eye, MoreHorizontal, RefreshCw, ScrollText, Settings2, Users } from "@/lib/icons";
+import { CHAT_VIEW_MODE_LABELS, useChatViewMode } from "@/stores/chat-view-mode-store";
 import { cn } from "@/lib/utils";
 import { ProviderBadge } from "./provider-selector";
 import { UsageMeter } from "./usage-meters";
@@ -38,13 +39,18 @@ export interface ChatMoreMenuProps {
     onOpenDebug: () => void;
     onShowLogs: () => void;
   } | null;
+  /** This chat's bookmarked turns (a drill-in), and its export; absent before there is a session. */
+  bookmarks?: { count: number | null; onOpen: () => void } | null;
+  onExportMarkdown?: () => void;
 }
 
 export function ChatMoreMenu({
   who, fiveHourPct = null, weekPct = null, fiveHourResetsAt = null, weekResetsAt = null, sessionCostUsd, accountCount, onSwitchAccount, providerId,
-  onOpenAISettings, team, isConnected, onReload, session,
+  onOpenAISettings, team, isConnected, onReload, session, bookmarks, onExportMarkdown,
 }: ChatMoreMenuProps) {
   const [moreOpen, setMoreOpen] = useState(false);
+  const viewMode = useChatViewMode((s) => s.mode);
+  const cycleViewMode = useChatViewMode((s) => s.cycle);
   const showsUsage = who !== undefined;
   return (
     <div className="flex min-h-0 flex-col overflow-y-auto" data-chat-more-menu="">
@@ -74,6 +80,17 @@ export function ChatMoreMenu({
         >
           AI settings
         </MenuItem>
+        <MenuItem icon={<Eye />} onClick={cycleViewMode} hint={<span data-view-mode={viewMode}>{CHAT_VIEW_MODE_LABELS[viewMode]} · Ctrl+O</span>}>
+          View
+        </MenuItem>
+        {bookmarks && (
+          <MenuItem icon={<Bookmark />} onClick={bookmarks.onOpen} hint={<>{bookmarks.count ? <span className="tabular-nums">{bookmarks.count}</span> : null}<ChevronRight className="!size-3" /></>}>
+            Bookmarks
+          </MenuItem>
+        )}
+        {onExportMarkdown && (
+          <MenuItem icon={<Download />} onClick={onExportMarkdown}>Export as Markdown</MenuItem>
+        )}
         {team && (
           <MenuItem icon={<Users />} onClick={team.onOpen} hint={team.unread > 0 ? <span className="size-2 rounded-full bg-primary" aria-label={`${team.unread} unread`} /> : undefined}>
             Team activity

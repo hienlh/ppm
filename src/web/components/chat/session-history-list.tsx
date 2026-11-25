@@ -1,4 +1,6 @@
-import { Loader2, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Bot, Tags, CalendarX2, BotMessageSquare } from "@/lib/icons";
+import { Archive, Loader2, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Bot, Tags, CalendarX2, BotMessageSquare } from "@/lib/icons";
+import { AUTO_ARCHIVE_DAYS, useChatHistoryFilter } from "@/stores/chat-history-filter-store";
+import { SESSION_STATUS_FILTERS, SESSION_STATUS_LABELS } from "../../../shared/session-archive";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { cn } from "@/lib/utils";
 import { useNotificationStore, notificationTint } from "@/stores/notification-store";
@@ -77,6 +79,10 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
     enableKeyboardShortcuts: variant === "bar",
   });
   const notifications = useNotificationStore((s) => s.notifications);
+  const statusFilter = useChatHistoryFilter((s) => s.status);
+  const setStatusFilter = useChatHistoryFilter((s) => s.setStatus);
+  const autoArchiveDays = useChatHistoryFilter((s) => s.autoArchiveDays);
+  const setAutoArchiveDays = useChatHistoryFilter((s) => s.setAutoArchiveDays);
 
   const project = useProjectRef(projectName);
   const isSidebar = variant === "sidebar";
@@ -136,6 +142,33 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
         </button>
       </div>
 
+      {/* Status filter (Active hides archived chats) and the device's auto-archive rule */}
+      <div className="flex items-center gap-1 px-2 pb-1.5 overflow-x-auto scrollbar-none shrink-0" role="radiogroup" aria-label="Show sessions">
+        {SESSION_STATUS_FILTERS.map((f) => (
+          <button
+            key={f}
+            role="radio"
+            aria-checked={statusFilter === f}
+            onClick={() => setStatusFilter(f)}
+            className={cn(
+              "shrink-0 rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+              statusFilter === f ? "border-primary/40 bg-primary/10 text-primary" : "border-border text-text-subtle hover:bg-surface-elevated",
+            )}
+          >{SESSION_STATUS_LABELS[f]}</button>
+        ))}
+        <label className="ml-auto flex shrink-0 items-center gap-1 text-[11px] text-text-subtle" title="Archive chats idle this long (pinned chats never)">
+          <Archive className="size-3" />
+          <select
+            value={autoArchiveDays}
+            onChange={(e) => setAutoArchiveDays(Number(e.target.value))}
+            className="bg-transparent text-[11px] outline-none"
+            aria-label="Auto-archive"
+          >
+            {AUTO_ARCHIVE_DAYS.map((d) => <option key={d} value={d}>{d === 0 ? "Never" : d + " days"}</option>)}
+          </select>
+        </label>
+      </div>
+
       {/* Tag filter chips */}
       {h.projectTags.length > 0 && (
         <div className="flex items-center gap-1 px-2 py-2 overflow-x-auto scrollbar-none shrink-0">
@@ -193,7 +226,7 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
           </div>
         ) : h.filteredSessions.length === 0 ? (
           <div className="flex items-center justify-center py-3 text-[11px] text-text-subtle">
-            {h.searchQuery ? "No matching sessions" : "No sessions yet"}
+            {h.searchQuery ? "No matching sessions" : statusFilter === "active" || statusFilter === "all" ? "No sessions yet" : "No " + SESSION_STATUS_LABELS[statusFilter].toLowerCase() + " sessions"}
           </div>
         ) : (
           <>
@@ -210,6 +243,8 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
                   onStartEditing={h.startEditing}
                   onDeleteSession={h.deleteSession}
                   onTagChanged={h.handleTagChanged}
+                  onArchive={(s, state) => void h.setArchive(s, state)}
+                  archived={h.isArchived(session)}
                 >
                   <div
                     className={cn(
@@ -264,6 +299,7 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
                                   : session.title || "Untitled"}
                               </span>
                               <ManagerChatBadge session={session} />
+                              {h.isArchived(session) && <Archive className="size-3 shrink-0 text-text-subtle" aria-label="Archived" />}
                             </span>
                             {session.updatedAt && (
                               <span className="block text-[11px] text-text-subtle">{formatRelativeDate(session.updatedAt)}</span>
@@ -283,6 +319,16 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
                           {session.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
                         </button>
                         <span className="flex items-center shrink-0 can-hover:hidden can-hover:group-hover:flex">
+                          {!session.manager && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); void h.setArchive(session, h.isArchived(session) ? "kept" : "archived"); }}
+                              className="p-0.5 rounded text-text-subtle hover:text-text-secondary transition-colors"
+                              title={h.isArchived(session) ? "Unarchive session" : "Archive session"}
+                              data-archive-session=""
+                            >
+                              <Archive className="size-3" />
+                            </button>
+                          )}
                           <button
                             onClick={(e) => h.startEditing(session, e)}
                             className="p-0.5 rounded text-text-subtle hover:text-text-secondary transition-colors"

@@ -16,7 +16,7 @@ import { AsyncQuestionCard } from "./async-question-card";
 
 export function HistoryWindowPendingPrompts({ approval, onRespond, question }: {
   approval: ApprovalRequest | null;
-  onRespond: (requestId: string, approved: boolean, answersById?: AnswersById, remember?: boolean) => void;
+  onRespond: (requestId: string, approved: boolean, answersById?: AnswersById, choice?: { scope?: "chat"; message?: string }, remember?: boolean) => void;
   question: PendingAsyncQuestion | null;
 }) {
   if (!approval && !question) return null;

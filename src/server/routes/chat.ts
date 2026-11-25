@@ -18,6 +18,7 @@ import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts
 import { chatPrepareRoutes } from "./chat-prepare.ts";
 import { chatFileChangesRoutes } from "./chat-file-changes.ts";
 import { chatSessionTurnsRoutes } from "./chat-session-turns.ts";
+import { chatSessionBookmarksRoutes } from "./chat-session-bookmarks.ts";
 import { chatTurnWindowRoutes } from "./chat-turn-window.ts";
 import { chatSessionCollabRoutes } from "./session-collab.ts";
 import { chatSessionDeleteRoutes } from "./chat-session-delete.ts";
@@ -46,6 +47,7 @@ import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionT
 import { setSessionTag, bulkSetSessionTag, getTagById } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
 import { listProjectSessions, searchProjectChats } from "../../services/chat-session-queries.service.ts";
+import { setSessionArchiveState } from "../../services/session-archive.service.ts";
 import { managerChats } from "../../services/assistant-managers/manager-chats.service.ts";
 import { antigravitySessionOutsideProject, historyProviderFor, readSessionHistory } from "../../services/chat-history-read.service.ts";
 import { parseHistoryPageQuery } from "./chat-history-page.ts";
@@ -68,6 +70,7 @@ chatRoutes.route("/prepare", chatPrepareRoutes);
 chatRoutes.route("/", chatSessionDeleteRoutes);
 chatRoutes.route("/", chatFileChangesRoutes);
 chatRoutes.route("/", chatSessionTurnsRoutes);
+chatRoutes.route("/", chatSessionBookmarksRoutes);
 chatRoutes.route("/", chatTurnWindowRoutes);
 chatRoutes.route("/", chatSessionCollabRoutes);
 chatRoutes.route("/", chatHeadlessRoutes);
@@ -488,6 +491,23 @@ chatRoutes.delete("/sessions/:id/pin", (c) => {
   }
 });
 
+/**
+ * PUT /chat/sessions/:id/archive { state: "archived" | "kept" | null } — archive a chat, keep it
+ * out of auto-archive (`kept`), or forget either. The list leaves archived chats out by default.
+ */
+chatRoutes.put("/sessions/:id/archive", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ state?: unknown }>().catch(() => ({}) as { state?: unknown });
+  const state = body.state === "archived" || body.state === "kept" ? body.state : body.state === null ? null : undefined;
+  if (state === undefined) return c.json(err('state must be "archived", "kept" or null'), 400);
+  try {
+    setSessionArchiveState(id, state);
+    return c.json(ok({ id, archive: state }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** GET /chat/sessions/unread — get all sessions with unread notifications */
 chatRoutes.get("/sessions/unread", (c) => {
   try {
@@ -811,6 +831,52 @@ chatRoutes.get("/sessions/:id/usage", (c) => {
       } satisfies TurnUsage,
     })),
   }));
+});
+
+/**
+ * GET /chat/sessions/:id/context-usage?detail=summary|full — what fills the session's context
+ * window, asked of its live CLI (the chat footer's context meter). `usage` is null when the
+ * session has no live Claude process or its provider cannot say.
+ */
+chatRoutes.get("/sessions/:id/context-usage", async (c) => {
+  const sessionId = c.req.param("id");
+  const provider = providerRegistry.get(getSessionProvider(sessionId) ?? "claude") as
+    | { readContextUsage?: (id: string, detail: "summary" | "full") => Promise<unknown> }
+    | undefined;
+  const detail = c.req.query("detail") === "summary" ? "summary" : "full";
+  const usage = (await provider?.readContextUsage?.(sessionId, detail)) ?? null;
+  return c.json(ok({ usage }));
+});
+
+/** A `/btw` question is a line or two; this keeps a pasted file from becoming one. */
+const MAX_SIDE_QUESTION_CHARS = 8_000;
+
+/**
+ * POST /chat/sessions/:id/side-question { question } — Claude Code's `/btw`: answered from the
+ * session's context by its live CLI, with no tools, even mid-turn, and never added to the chat.
+ * 409 when no Claude process runs for the session (send a message first), 400 for a provider
+ * that has no side questions.
+ */
+chatRoutes.post("/sessions/:id/side-question", async (c) => {
+  const sessionId = c.req.param("id");
+  const body = await c.req.json<{ question?: unknown }>().catch(() => ({}) as { question?: unknown });
+  const question = typeof body.question === "string" ? body.question.trim() : "";
+  if (!question || question.length > MAX_SIDE_QUESTION_CHARS) {
+    return c.json(err(`question must be 1–${MAX_SIDE_QUESTION_CHARS} characters`), 400);
+  }
+  const provider = providerRegistry.get(getSessionProvider(sessionId) ?? "claude") as
+    | { askSideQuestion?: (id: string, q: string, signal?: AbortSignal) => Promise<{ live: boolean; response?: string | null }> }
+    | undefined;
+  if (!provider?.askSideQuestion) return c.json(err("Side questions (/btw) need a Claude chat"), 400);
+  // One model call can outlast Bun.serve's 10 s idle timeout.
+  (c.env as { timeout?: (request: Request, seconds: number) => void } | undefined)?.timeout?.(c.req.raw, 150);
+  try {
+    const answer = await provider.askSideQuestion(sessionId, question, c.req.raw.signal);
+    if (!answer.live) return c.json(err("This chat's Claude process is not running. Send a message first, then ask with /btw."), 409);
+    return c.json(ok({ response: answer.response ?? null }));
+  } catch (e) {
+    return c.json(err((e as Error).message || "Claude did not answer"), 502);
+  }
 });
 
 /** Recompute from stored counts — the rate is derived, so it is never persisted. */

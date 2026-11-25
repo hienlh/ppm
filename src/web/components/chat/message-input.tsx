@@ -1,7 +1,7 @@
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
-import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock, Bot, X } from "@/lib/icons";
+import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock, Bot, X, Sparkles } from "@/lib/icons";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useWhisperVoiceInput } from "@/hooks/use-whisper-voice-input";
 import { useVoiceMessageComposer } from "@/hooks/use-voice-message-composer";
@@ -206,6 +206,8 @@ interface MessageInputProps {
   offline?: boolean;
   /** Placeholder while idle, when the chat has something to say about the next message. */
   idlePlaceholder?: string;
+  /** Claude's guess at the next prompt: the empty composer shows it, Tab (or a tap on a phone) takes it. */
+  suggestion?: string | null;
 }
 
 export const MessageInput = memo(function MessageInput({
@@ -265,6 +267,7 @@ export const MessageInput = memo(function MessageInput({
   offline = false,
   idlePlaceholder,
   configurationPending = false,
+  suggestion = null,
 }: MessageInputProps) {
   // A chat an extension bound runs in the mode the server clamped it to, and offers only those modes.
   const { mode: boundAwareMode, allowedModeIds } = composerModeFor(permissionMode, boundPermissionMode);
@@ -966,6 +969,42 @@ export const MessageInput = memo(function MessageInput({
   }, [voiceMsg.autoSendReady, voiceMsg.draft?.id, autoSentVoiceId, pendingSend, autoSendBlocked, handleSend]);
   const autoSendStalled = !!voiceMsg.draft && autoSentVoiceId === voiceMsg.draft.id && !pendingSend;
 
+  // Alt+T and Alt+P (`use-global-keybindings.ts`) reach the composer of the chat that owns the keys.
+  const composerRootRef = useRef<HTMLDivElement>(null);
+  const thinkingRef = useRef({ thinking, onThinkingChange, isStreaming });
+  thinkingRef.current = { thinking, onThinkingChange, isStreaming };
+  useEffect(() => {
+    const owns = () => ownsGlobalShortcut(composerRootRef.current);
+    const onThinking = () => {
+      const t = thinkingRef.current;
+      if (!owns() || t.isStreaming || !t.onThinkingChange) return;
+      t.onThinkingChange(!t.thinking);
+      toast(`Thinking ${t.thinking ? "off" : "on"} for the next message`, { duration: 1500 });
+    };
+    const onModelPicker = () => {
+      if (!owns()) return;
+      composerRootRef.current?.querySelector<HTMLButtonElement>("[data-model-chip]:not(:disabled)")?.click();
+    };
+    window.addEventListener("chat-toggle-thinking", onThinking);
+    window.addEventListener("chat-model-picker", onModelPicker);
+    return () => {
+      window.removeEventListener("chat-toggle-thinking", onThinking);
+      window.removeEventListener("chat-model-picker", onModelPicker);
+    };
+  }, []);
+
+  /** The suggestion is offered only on an empty, idle composer. */
+  const offeredSuggestion = !isStreaming && !offline && !disabled && !hasText && !agentTag && suggestion ? suggestion : null;
+  const acceptSuggestion = useCallback(() => {
+    if (!offeredSuggestion) return;
+    writeTextareas(offeredSuggestion);
+    onContentChange?.(offeredSuggestion, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
+    const ta = getVisibleTextarea();
+    if (!ta) return;
+    ta.focus();
+    requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = offeredSuggestion.length; });
+  }, [offeredSuggestion, writeTextareas, onContentChange, attachments, getVisibleTextarea]);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -984,6 +1023,12 @@ export const MessageInput = memo(function MessageInput({
         if (recallHistory(e.key === "ArrowUp" ? 1 : -1)) e.preventDefault();
         return;
       }
+      // Tab on an empty composer takes Claude's suggested next prompt.
+      if (e.key === "Tab" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && offeredSuggestion && valueRef.current === "") {
+        e.preventDefault();
+        acceptSuggestion();
+        return;
+      }
       // Shift+Tab: cycle permission mode (nothing to cycle when the server fixes it)
       if (e.shiftKey && e.key === "Tab") {
         e.preventDefault();
@@ -995,7 +1040,7 @@ export const MessageInput = memo(function MessageInput({
         onModeChange?.(next);
       }
     },
-    [handleSend, boundAwareMode, allowedModeIds, onModeChange, permissionLocked, recallHistory, agentTag, turnChips],
+    [handleSend, boundAwareMode, allowedModeIds, onModeChange, permissionLocked, recallHistory, agentTag, turnChips, offeredSuggestion, acceptSuggestion],
   );
 
   const updatePickerState = useCallback(
@@ -1139,10 +1184,10 @@ export const MessageInput = memo(function MessageInput({
   // Review on and the transcript not there yet: nothing to read, so nothing to send.
   const voiceHolds = voiceMsg.decide() === "hold";
   const showCancel = isStreaming && !hasContent;
-  const placeholder = offline ? "Will send when reconnected..." : isStreaming ? "Follow-up or Stop..." : idlePlaceholder ?? "Ask anything...";
+  const placeholder = offline ? "Will send when reconnected..." : isStreaming ? "Follow-up or Stop..." : offeredSuggestion ?? idlePlaceholder ?? "Ask anything...";
 
   return (
-    <div data-onboarding="chat-input">
+    <div data-onboarding="chat-input" ref={composerRootRef}>
       {/* Rounded input container */}
       <div
         className="cursor-text rounded-[18px] border border-border bg-panel shadow-[var(--shadow-float)] transition-[border-color] duration-150 focus-within:border-accent-wash-border"
@@ -1183,6 +1228,19 @@ export const MessageInput = memo(function MessageInput({
           onRemove={removeAttachment}
           extra={voiceMsg.draft ? <VoiceMessageChip draft={voiceMsg.draft} onRemove={voiceMsg.remove} /> : null}
         />
+        {/* A phone has no Tab: the suggestion is a tap above the textarea there. */}
+        {offeredSuggestion && (
+          <button
+            type="button"
+            data-testid="prompt-suggestion-chip"
+            onClick={(e) => { e.stopPropagation(); acceptSuggestion(); }}
+            className="mx-2 mt-2 flex h-[26px] max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 text-xs text-text-secondary md:hidden"
+            title="Use this suggestion"
+          >
+            <Sparkles className="size-3.5 shrink-0" />
+            <span className="truncate">{offeredSuggestion}</span>
+          </button>
+        )}
         {/* The textarea on top — one per layout, since a phone keeps it shorter — and one bar below. */}
         <textarea
           ref={mobileTextareaRef}
@@ -1204,7 +1262,7 @@ export const MessageInput = memo(function MessageInput({
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           onDragOver={handleDragOver}
-          placeholder={placeholder}
+          placeholder={offeredSuggestion ? placeholder + "  (Tab)" : placeholder}
           disabled={disabled}
           rows={1}
           aria-label="Message"

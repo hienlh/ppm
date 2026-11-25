@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AlertCircle, ShieldAlert } from "@/lib/icons";
 import { hasHiddenCharacters, revealHiddenCharacters } from "@/lib/reveal-hidden-characters";
 import type { ApprovalSummary } from "../../../shared/assistant-approval";
@@ -33,6 +34,14 @@ export interface ApprovalCardRequest {
   summary?: ApprovalSummary;
   /** What "Allow & remember" would remember; absent when the card offers nothing to remember. */
   remember?: CardRememberOffer;
+  /** Claude tool cards: what "for this chat" would allow from now on. */
+  rule?: { label: string };
+}
+
+/** What a tool card sends besides yes or no: a permission for this chat, or what to do instead. */
+export interface ApprovalCardChoice {
+  scope?: "chat";
+  message?: string;
 }
 
 const WRAPPED_BLOCK = "text-xs font-mono whitespace-pre-wrap break-words bg-background rounded p-2 border border-border max-h-80 overflow-y-auto select-text";
@@ -151,10 +160,15 @@ export function ApprovalCard({
   onRespond,
 }: {
   approval: ApprovalCardRequest;
-  onRespond: (requestId: string, approved: boolean, remember?: boolean) => void;
+  onRespond: (requestId: string, approved: boolean, choice?: ApprovalCardChoice, remember?: boolean) => void;
 }) {
   const summary = approval.summary;
   const assistantName = useAssistantDisplayName(!!summary);
+  const rule = summary ? undefined : approval.rule;
+  /** Deny was pressed on a card that can carry instructions: the box to type them is open. */
+  const [denying, setDenying] = useState(false);
+  const [instead, setInstead] = useState("");
+  const deny = () => onRespond(approval.requestId, false, instead.trim() ? { message: instead.trim() } : undefined);
   return (
     <div className="rounded-lg border-2 border-warning/40 bg-warning/10 p-3 space-y-2" data-approval-request={approval.requestId}>
       <div className="flex items-center gap-2 text-warning text-sm font-medium">
@@ -162,22 +176,58 @@ export function ApprovalCard({
         <span>{summary ? `${assistantName} asks for approval` : "Tool Approval Required"}</span>
       </div>
       {summary ? <SummaryBody summary={summary} /> : <RawInputBody tool={approval.tool} input={approval.input} />}
-      <div className="flex gap-2">
-        <button
-          onClick={() => onRespond(approval.requestId, true)}
-          className={cn(APPROVAL_BUTTON, "bg-success text-white hover:bg-success/80")}
-        >
-          Allow
-        </button>
-        <button
-          onClick={() => onRespond(approval.requestId, false)}
-          className={cn(APPROVAL_BUTTON, "bg-error text-white hover:bg-error/80")}
-        >
-          Deny
-        </button>
-      </div>
-      {approval.remember && (
-        <RememberApprovalControl offer={approval.remember} onRemember={() => onRespond(approval.requestId, true, true)} />
+      {denying ? (
+        <div className="space-y-2" data-approval-deny="">
+          <textarea
+            autoFocus
+            value={instead}
+            onChange={(e) => setInstead(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); deny(); }
+              if (e.key === "Escape") { e.preventDefault(); setDenying(false); }
+            }}
+            rows={2}
+            placeholder="Tell Claude what to do instead (optional)"
+            aria-label="Tell Claude what to do instead"
+            className="w-full resize-y rounded border border-border bg-background p-2 text-xs text-text-primary placeholder:text-text-secondary focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <div className="flex flex-wrap gap-2">
+            <button onClick={deny} className={cn(APPROVAL_BUTTON, "bg-error text-white hover:bg-error/80")}>
+              {instead.trim() ? "Deny and send" : "Deny"}
+            </button>
+            <button onClick={() => setDenying(false)} className={cn(APPROVAL_BUTTON, "border border-border text-text-secondary hover:text-text-primary")}>
+              Back
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => onRespond(approval.requestId, true)}
+            className={cn(APPROVAL_BUTTON, "bg-success text-white hover:bg-success/80")}
+          >
+            Allow
+          </button>
+          {rule && (
+            <button
+              onClick={() => onRespond(approval.requestId, true, { scope: "chat" })}
+              title={`Allow ${rule.label} without asking again in this chat`}
+              data-approval-scope="chat"
+              className={cn(APPROVAL_BUTTON, "border border-success/60 text-success hover:bg-success/10")}
+            >
+              Allow {rule.label} for this chat
+            </button>
+          )}
+          <button
+            onClick={() => (rule ? setDenying(true) : onRespond(approval.requestId, false))}
+            className={cn(APPROVAL_BUTTON, "bg-error text-white hover:bg-error/80")}
+          >
+            {rule ? "Deny…" : "Deny"}
+          </button>
+        </div>
+      )}
+      {approval.remember && !denying && (
+        <RememberApprovalControl offer={approval.remember} onRemember={() => onRespond(approval.requestId, true, undefined, true)} />
       )}
     </div>
   );

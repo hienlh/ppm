@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   assessTurnCost,
   buildTurnUsage,
+  contextWindowOf,
   fmtTokens,
   messageContextTokens,
   messageCacheTtl,
@@ -216,5 +217,23 @@ describe("messageCacheTtl", () => {
     expect(messageCacheTtl({ cache_read_input_tokens: 58_000 })).toBeUndefined();
     expect(messageCacheTtl({ cache_creation: null })).toBeUndefined();
     expect(messageCacheTtl(undefined)).toBeUndefined();
+  });
+});
+
+describe("contextWindowOf", () => {
+  const usage = {
+    "claude-haiku-5-5": { contextWindow: 200_000 },
+    "claude-opus-5-5[1m]": { contextWindow: 1_000_000 },
+    "claude-sonnet-5-5": { contextWindow: 500_000 },
+  };
+  test("takes the window of the model the call ran on, suffix or not", () => {
+    expect(contextWindowOf(usage, "claude-sonnet-5-5")).toBe(500_000);
+    expect(contextWindowOf(usage, "claude-opus-5-5")).toBe(1_000_000);
+  });
+  test("falls back to the largest window listed, and to 0 with nothing listed", () => {
+    expect(contextWindowOf(usage, "unknown")).toBe(1_000_000);
+    expect(contextWindowOf(usage)).toBe(1_000_000);
+    expect(contextWindowOf(undefined, "x")).toBe(0);
+    expect(contextWindowOf({ a: {} }, "a")).toBe(0);
   });
 });

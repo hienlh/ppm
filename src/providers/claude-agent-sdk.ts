@@ -1,4 +1,7 @@
 import { decodeMessageBlocks } from "../shared/chat-message-blocks.ts";
+import { liveTasksFrom } from "../shared/background-tasks.ts";
+import { WORKTREE_NAME_RE } from "../shared/session-worktree.ts";
+import { excludeWorktreesFromGit, getSessionWorktree, recordSessionWorktree, worktreeOfCwd } from "../services/session-worktree.service.ts";
 import { isMinimalMode } from "../services/runtime-mode.ts";
 import type { StripMode } from "../services/transcript-images.ts";
 import {
@@ -29,6 +32,8 @@ import { CONTINUE_NUDGE } from "../shared/user-prompt-kind.ts";
 import { APPROVAL_WAKE, ApprovalQueue } from "./claude-approval-queue.ts";
 import { EFFORT_ENV_VAR, effortStatusFromCli, estimateEffortStatus, userSettingsFile, type EffortSettingsQuery } from "./claude-effort-status.ts";
 import type { EffortStatus } from "../shared/effort-status.ts";
+import { toContextUsageView, type ContextUsageAnswer, type ContextUsageView } from "../shared/context-usage.ts";
+import { allowForChat, approvalChoiceFrom, approvalRuleFor, chatAllows } from "../services/chat-approval-rules.ts";
 import { withTimeout } from "../services/mcp-oauth/mcp-control-query.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
@@ -61,7 +66,7 @@ import { listInheritedClaudeMcpServers } from "../services/claude-code-mcp.servi
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
 import { getSessionProjectPath, setSessionMetadata, getSessionTitle, setSessionTitle, getSessionTitles, insertTurnUsage, getSessionAccount } from "../services/db.service.ts";
 import { SUBSCRIPTION_PROMPT_CACHE_TTL_MS, API_KEY_PROMPT_CACHE_TTL_MS } from "../services/subprocess-retention.ts";
-import { buildTurnUsage, formatTurnUsageLog, messageContextTokens, messageCacheTtl } from "../shared/turn-usage.ts";
+import { buildTurnUsage, formatTurnUsageLog, messageContextTokens, messageCacheTtl, contextWindowOf } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
 import { parseSessionMessage, mergeToolResultMessages, nestChildEventsAcrossMessages, parseJsonlTranscript, fullParseWindow } from "../services/jsonl-transcript-parser.ts";
@@ -88,6 +93,13 @@ const mcpControlLog = createLogger("mcp-control");
 const claudeProjectsDir = (): string => resolve(claudeProjectsRoot());
 /** A running CLI answers `get_settings` in a few ms; this only bounds one that never does. */
 const EFFORT_READ_TIMEOUT_MS = 5_000;
+/** `detail: "full"` asks the token-count API for every category, which can take a few seconds. */
+const CONTEXT_USAGE_TIMEOUT_MS = 20_000;
+/** A side question is one model call with no tools; this only bounds one that never answers. */
+const SIDE_QUESTION_TIMEOUT_MS = 120_000;
+
+/** `/btw`'s answer: `live: false` when no Claude process runs for the session; `response` null when it gave none. */
+export type SideQuestionAnswer = { live: false } | { live: true; response: string | null };
 
 /**
  * Resolve the Claude CLI the SDK should spawn.
@@ -1052,6 +1064,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // subprocess. Entitled OAuth accounts still get 1M context via the [1m] model suffix.
       ...(mqo.use1m && !!p.env.ANTHROPIC_API_KEY && { betas: ["context-1m-2025-08-07"] }),
       includePartialMessages: true,
+      // After each turn the CLI guesses the next prompt, which the composer offers (Tab).
+      promptSuggestions: true,
       stderr: p.stderr,
     };
   }
@@ -1347,13 +1361,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     /**
      * Helper: send approval request to FE and wait for response.
      */
-    const waitForApproval = (toolName: string, input: unknown): Promise<{ approved: boolean; data?: unknown }> => {
+    const waitForApproval = (toolName: string, input: unknown, rule?: { label: string }): Promise<{ approved: boolean; data?: unknown }> => {
       const requestId = crypto.randomUUID();
       // No timeout — approval waits indefinitely until user responds or session cleanup resolves it.
       const promise = new Promise<{ approved: boolean; data?: unknown }>((resolve) => {
         this.pendingApprovals.set(requestId, { resolve, sessionId });
       });
-      approvals.push({ type: "approval_request", requestId, tool: toolName, input });
+      approvals.push({ type: "approval_request", requestId, tool: toolName, input, ...(rule ? { rule } : {}) });
       return promise;
     };
 
@@ -1442,10 +1456,27 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         return {};
       }
 
-      // Non-bypass mode: ask FE for approval on write/execute tools
-      const result = await waitForApproval(toolName, hookInput?.tool_input);
-      if (result.approved) return preToolUseDecision("allow");
-      return preToolUseDecision("deny", "User denied tool execution");
+      // Non-bypass mode: ask FE for approval on write/execute tools — unless the person already
+      // allowed calls like this one for this chat from an earlier card. The Assistant's and a
+      // design chat's cards stay per call: their policies are the boundary.
+      const toolInput = hookInput?.tool_input;
+      const ruled = !assistantPolicy && !designPolicy;
+      if (ruled) {
+        if (chatAllows(sessionId, toolName, toolInput)) {
+          log.info(`session=${sessionId} ${toolName} allowed by a rule saved for this chat`);
+          return preToolUseDecision("allow");
+        }
+      }
+      const rule = ruled ? approvalRuleFor(toolName, toolInput) : null;
+      const result = await waitForApproval(toolName, toolInput, rule ? { label: rule.label } : undefined);
+      const choice = approvalChoiceFrom(result.data);
+      if (result.approved) {
+        if (rule && choice.scope === "chat") allowForChat(sessionId, rule.key);
+        return preToolUseDecision("allow");
+      }
+      return preToolUseDecision("deny", choice.message
+        ? `User denied tool execution and said what to do instead: ${choice.message}`
+        : "User denied tool execution");
     };
 
     /**
@@ -1546,6 +1577,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
      * tools grew between its calls and the next message replays the grown transcript.
      */
     let lastContextTokens: number | undefined;
+    /** The model of the last top-level API call, to pick its window out of `modelUsage`. */
+    let lastContextModel: string | undefined;
     /**
      * Cache window the API reported, rather than the one `promptCacheTtlMs` infers from the
      * credential. Sticky across turns for the same reason as `lastContextTokens`: a turn that
@@ -1707,6 +1740,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         providerConfig,
         stderr: stderrCallback,
       });
+      // A new chat asked to run in a worktree of its own: the CLI creates it and, from then on,
+      // resumes the session there by itself, so only the session's first spawn carries the flag.
+      if (isFirstMessage && !shouldFork && opts?.worktree && WORKTREE_NAME_RE.test(opts.worktree)) {
+        queryOptions.extraArgs = { ...(queryOptions.extraArgs ?? {}), worktree: opts.worktree };
+      }
       // Every retry below restarts the CLI with these same options.
       this.startedEffort.set(sessionId, (queryOptions.effort as string | undefined) ?? null);
 
@@ -2004,6 +2042,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               subtype,
               ...(Array.isArray(initServers) && { mcpServers: initServers }),
             } as any;
+            // Working in one of the project's worktrees: record it (the transcript now lives
+            // under the worktree's path) and tell the chat which branch it is on.
+            const worktree = meta.projectPath ? worktreeOfCwd(meta.projectPath, (msg as any).cwd) : null;
+            if (worktree) {
+              if (!getSessionWorktree(sessionId)) {
+                recordSessionWorktree(sessionId, meta.projectPath!, worktree);
+                void excludeWorktreesFromGit(meta.projectPath!);
+                log.info(`session=${sessionId} runs in worktree ${worktree.path} (${worktree.branch})`);
+              }
+              yield { type: "system" as any, subtype: "worktree", worktree } as any;
+            }
+            this.learnCliContextWindow(sessionId, (msg as any).model);
             continue;
           }
 
@@ -2074,6 +2124,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               taskStatus: (msg as any).status ?? (msg as any).patch?.status,
               outputFile: (msg as any).output_file,
             } as any;
+            continue;
+          }
+
+          // Every live background task, replacing the last list (a level, not an edge).
+          if (subtype === "background_tasks_changed") {
+            yield { type: "system" as any, subtype, tasks: liveTasksFrom((msg as any).tasks) } as any;
             continue;
           }
 
@@ -2202,6 +2258,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const usage = (msg as any).message?.usage;
             const ctx = messageContextTokens(usage);
             if (ctx != null) lastContextTokens = ctx;
+            const callModel = (msg as any).message?.model;
+            if (ctx != null && typeof callModel === "string") lastContextModel = callModel;
             const ttl = messageCacheTtl(usage);
             if (ttl) lastCacheTtlMs = ttl === "1h" ? SUBSCRIPTION_PROMPT_CACHE_TTL_MS : API_KEY_PROMPT_CACHE_TTL_MS;
             // This call ran against the post-compaction prefix and cached it, so the
@@ -2510,6 +2568,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           continue;
         }
 
+        // The CLI's guess at the next prompt, sent after a turn's result (`promptSuggestions`).
+        if ((msg as any).type === "prompt_suggestion") {
+          const suggestion = (msg as any).suggestion;
+          if (typeof suggestion === "string" && suggestion.trim()) yield { type: "prompt_suggestion", suggestion: suggestion.trim() };
+          continue;
+        }
+
         if (msg.type === "result") {
           // Account error detection — only act on pre-stream 429/401
           if (account) {
@@ -2701,24 +2766,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             : subtype;
           resultNumTurns = result.num_turns as number | undefined;
 
-          // Extract context window usage from modelUsage.
-          // Cached prefix tokens occupy the context window exactly like fresh ones — they are
-          // only cheaper, not absent. Leaving them out made a warm session, where most of the
-          // prefix arrives as a cache read, report a fraction of the context it truly holds,
-          // so the meter stayed low while the session grew past the point of being affordable.
+          // How full the context is: the last top-level API call's own input side (cache reads
+          // included — a cached prefix occupies the window like a fresh one) over that model's
+          // window. Never `modelUsage`'s token counts: they are summed over every API call of
+          // the turn, so a turn of ten tool calls on a 270k context read as 2.7M, i.e. 100%.
+          // The window is the CLI's own when it told us (what its /context and autocompact use, which
+          // CLAUDE_CODE_AUTO_COMPACT_WINDOW can set below the model's), else the model's.
           const modelUsage = (result.modelUsage ?? result.model_usage) as Record<string, any> | undefined;
-          if (modelUsage) {
-            for (const usage of Object.values(modelUsage)) {
-              const cw = usage.contextWindow ?? 0;
-              if (cw > 0) {
-                const total = (usage.inputTokens ?? 0)
-                  + (usage.cacheReadInputTokens ?? 0)
-                  + (usage.cacheCreationInputTokens ?? 0)
-                  + (usage.outputTokens ?? 0);
-                resultContextWindowPct = Math.min(Math.round((total / cw) * 100), 100);
-                break;
-              }
-            }
+          const contextWindow = this.cliContextWindow.get(sessionId)?.window ?? contextWindowOf(modelUsage, lastContextModel);
+          if (lastContextTokens != null && contextWindow > 0) {
+            resultContextWindowPct = Math.min(Math.round((lastContextTokens / contextWindow) * 100), 100);
           }
 
           // Token split for this turn. The transcript is replayed on every turn, so whether
@@ -2994,6 +3051,80 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       log.debug(`session=${sessionId} effort status unavailable: ${(e as Error).message}`);
       return null;
     }
+  }
+
+  /**
+   * The context window each session's CLI measures against, by model: a settings override
+   * (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`) makes it smaller than the window `modelUsage` reports, and
+   * the meter has to agree with the CLI's own `/context`. Asked once per CLI and model, in the
+   * background, so no turn waits for it.
+   */
+  private cliContextWindow = new Map<string, { model: string | undefined; window: number }>();
+  private cliContextWindowAsked = new Map<string, string | undefined>();
+
+  private learnCliContextWindow(sessionId: string, model: string | undefined): void {
+    if (this.cliContextWindowAsked.has(sessionId) && this.cliContextWindowAsked.get(sessionId) === model) return;
+    this.cliContextWindowAsked.set(sessionId, model);
+    void this.readContextUsage(sessionId, "summary").then((u) => {
+      if (u && u.maxTokens > 0 && this.cliContextWindowAsked.get(sessionId) === model) this.cliContextWindow.set(sessionId, { model, window: u.maxTokens });
+      else if (!u) this.cliContextWindowAsked.delete(sessionId);
+    });
+  }
+
+  /**
+   * What fills this session's context window (Claude's `/context`), asked of its live CLI. Null
+   * when the session has no live subprocess or the CLI does not answer in time.
+   */
+  async readContextUsage(sessionId: string, detail: "summary" | "full" = "full"): Promise<ContextUsageView | null> {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss) return null;
+    try {
+      const q = ss.query as unknown as { getContextUsage(opts?: { detail?: "summary" | "full" }): Promise<ContextUsageAnswer> };
+      const answer = await withTimeout(q.getContextUsage({ detail }), CONTEXT_USAGE_TIMEOUT_MS, "Claude did not report its context usage");
+      return toContextUsageView(answer);
+    } catch (e) {
+      log.debug(`session=${sessionId} context usage unavailable: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Claude Code's `/btw`: a quick question answered from the session's context by its live CLI,
+   * with no tools, while a turn may be running, and kept out of the session's history. Uses the
+   * SDK's `askSideQuestion` (in `sdk.mjs`, not in `sdk.d.ts`). `live: false` when the session
+   * has no running Claude process to ask.
+   */
+  async askSideQuestion(sessionId: string, question: string, signal?: AbortSignal): Promise<SideQuestionAnswer> {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss) return { live: false };
+    const q = ss.query as unknown as {
+      askSideQuestion?(question: string, opts?: { signal?: AbortSignal }): Promise<{ response: string; synthetic?: boolean } | null>;
+    };
+    if (typeof q.askSideQuestion !== "function") return { live: false };
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), SIDE_QUESTION_TIMEOUT_MS);
+    const onAbort = () => stop.abort();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      const answer = await q.askSideQuestion(question, { signal: stop.signal });
+      return { live: true, response: answer?.response ?? null };
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /**
+   * Stop one background task (a shell, agent, monitor or workflow) of the session's live CLI with
+   * the SDK's `stop_task` control request — no model turn. False when no live CLI holds the session
+   * or this SDK cannot do it; the task then ends with the CLI's own `task_updated` / `task_notification`.
+   */
+  async stopBackgroundTask(sessionId: string, taskId: string): Promise<boolean> {
+    const ss = this.streamingSessions.get(sessionId);
+    const q = ss?.query as unknown as { stopTask?(taskId: string): Promise<void> } | undefined;
+    if (typeof q?.stopTask !== "function") return false;
+    await q.stopTask(taskId);
+    return true;
   }
 
   /** What the settings files say about effort for a chat in `projectPath` no CLI has answered for yet. */

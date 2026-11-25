@@ -226,6 +226,24 @@ why. A revert is journalled like a revert answer, before any file is written, so
 puts it back. Answering one edit is per block: a block that
 holds two calls' lines goes back whole.
 
+**Rewind code.** Every prompt the person sent offers *Rewind code* (`rewind-code-button.tsx`), PPM's
+answer to Claude Code's checkpoint rewind: the same `revert-turn` with the calls of that turn and
+every turn after it (`rewindFrom` in `src/shared/session-turns.ts`, over the turns the open chat
+published), previewed, written only once confirmed, and undoable with the same journal. Built on
+PPM's own history rather than the SDK's `rewindFiles`, so it works for Codex sessions too, keeps
+lines changed outside the chat, and needs no checkpointing turned on before the turn ran. The chat
+itself is left alone; *Rewind and fork* also forks the conversation from that message.
+
+**Line comments.** In an open block, a line's numbers are a button (a tap on a phone, the comment
+icon on hover on a desktop) that opens a comment under it (`LineCommentBox`, shared with the plan
+card). Comments are per session and per device (`review-comments-store.ts`, `localStorage`, one per
+line and side, a removed line by its base number) and the block's Keep/Revert are unaffected.
+*Send N comments to chat* in the tab's header (a badge on a phone) turns them into one message
+(`formatReviewComments` in `src/web/lib/line-comments.ts`: by file, in line order, each line quoted
+beside its comment), puts it in that chat's composer as a chip through `sendToChat`, so the person
+can add to it before sending, and clears them. Decided blocks take no comments: their lines are
+either the file's again or gone.
+
 Not covered, and said in the list (`shellChangesHint`, which knows the provider): files a
 shell command changed that git ignores or that sit outside any repository, anything a
 background command writes after its call returns, and every Codex shell command — Codex

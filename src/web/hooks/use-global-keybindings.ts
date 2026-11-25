@@ -11,6 +11,9 @@ import { listCommands, runCommandInBackground } from "@/lib/commands/command-reg
 import { readCommandContext } from "@/lib/commands/read-command-context";
 import { extensionKeyCombo, runExtensionCommand } from "@/lib/commands/extension-commands";
 import { openSettings } from "@/components/settings/open-settings";
+import { useChatViewMode } from "@/stores/chat-view-mode-store";
+import { takeLastClosedChat } from "@/lib/closed-chats";
+import { openChatSession } from "@/lib/open-chat-session";
 
 /**
  * The keybinding actions that run a command-registry command (the command declaring that
@@ -72,6 +75,36 @@ export function useGlobalKeybindings() {
       return true;
     }
 
+    /**
+     * Chat keys that fire from the composer too, where focus sits for most of a chat: the view
+     * mode, thinking and the model picker of the chat that owns the keyboard (its composer
+     * listens for the window event), and reopening the chat closed last. True when consumed.
+     */
+    function dispatchChatKeys(e: KeyboardEvent, m: (ev: KeyboardEvent, id: string) => boolean) {
+      if (m(e, "chat-view-mode")) {
+        e.preventDefault();
+        useChatViewMode.getState().cycle();
+        return true;
+      }
+      // Typed into another field, these keys stay that field's own.
+      const target = e.target as HTMLElement | null;
+      const inField = target?.tagName === "TEXTAREA" || target?.tagName === "INPUT" || !!target?.isContentEditable;
+      const inComposer = !!target?.closest?.('[data-onboarding="chat-input"]');
+      for (const id of ["chat-toggle-thinking", "chat-model-picker"] as const) {
+        if (!m(e, id) || (inField && !inComposer)) continue;
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent(id));
+        return true;
+      }
+      if (m(e, "reopen-closed-chat")) {
+        e.preventDefault();
+        const chat = takeLastClosedChat();
+        if (chat) void openChatSession(chat);
+        return true;
+      }
+      return false;
+    }
+
     /** Mod+1..9: the project at that place in the list. Returns true when the event was consumed. */
     function dispatchSwitchProject(e: KeyboardEvent, m: (ev: KeyboardEvent, id: string) => boolean) {
       for (let i = 1; i <= 9; i++) {
@@ -92,6 +125,7 @@ export function useGlobalKeybindings() {
         if (e.type !== "keydown" || composing || e.isComposing) return;
         const { matchesEvent: match } = useKeybindingsStore.getState();
         if (dispatchChatNav(e, match)) return;
+        if (dispatchChatKeys(e, match)) return;
         if (match(e, "save-prevent")) e.preventDefault();
         // Like full mode below: inside a text field only the locked shortcuts fire.
         const target = e.target as HTMLElement | null;
@@ -183,7 +217,8 @@ export function useGlobalKeybindings() {
         }
         // The composer holds focus for most of a chat session, so the transcript
         // jumps have to survive this early return or they are unreachable.
-        dispatchChatNav(e, m);
+        if (dispatchChatNav(e, m)) return;
+        dispatchChatKeys(e, m);
         return;
       }
 
@@ -195,6 +230,8 @@ export function useGlobalKeybindings() {
         e.preventDefault();
         return;
       }
+
+      if (dispatchChatKeys(e, match)) return;
 
       // Command palette
       if (match(e, "command-palette")) {

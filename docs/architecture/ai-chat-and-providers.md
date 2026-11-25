@@ -700,6 +700,114 @@ type ChatWsClientMessage =
 
 Images are passed to provider's message context and included in tool input/output.
 
+### Side questions (`/btw`) and suggested prompts
+
+Claude chats only, both from the Claude CLI itself.
+
+- **`/btw <question>`** is intercepted by `chat-tab.tsx` (`sideQuestionOf` in
+  `side-question-panel.tsx`) and never sent as a message: it goes to
+  `POST /chat/sessions/:id/side-question`, which calls the SDK's `askSideQuestion` (in `sdk.mjs`,
+  not in `sdk.d.ts`) on the session's live CLI. Claude answers from the chat's context with no
+  tools, even mid-turn, and neither question nor answer joins the history; the answer shows above
+  the composer until closed. With no live CLI for the session (after a restart, before the first
+  message) the route answers 409 and the panel says to send a message first.
+- **Suggested prompt**: the provider passes `promptSuggestions: true`, and the CLI sends a
+  `prompt_suggestion` after a turn's `result` (never on the first turn, in plan mode, or near the
+  plan's usage limit; `promptSuggestionEnabled: false` in a settings file turns it off). The
+  provider yields it after `done`, `ws/chat.ts` broadcasts it without touching the turn, and
+  `useChat` keeps it until a turn starts or a message is sent. The empty, idle composer shows it
+  as its placeholder; Tab takes it, and a phone gets a chip to tap instead.
+
+### View modes and chat keys
+
+Claude Code's transcript modes, per device (`src/web/stores/chat-view-mode-store.ts`): **Normal**
+(thinking folds once done, tool cards one line unless a diff), **Thinking** (every thinking block
+stays open) and **Verbose** (every tool card open too). Ctrl+O cycles them, and so does *View* in
+the chat's ··· menu. Keys in `keybindings-store.ts`, answered by `use-global-keybindings.ts`
+(`dispatchChatKeys`) from the composer too and in minimal mode: `chat-view-mode` Ctrl+O,
+`chat-toggle-thinking` Alt+T and `chat-model-picker` Alt+P (window events the composer of the chat
+owning the keyboard answers; typed into another field they are that field's own), and
+`reopen-closed-chat` Alt+Shift+T (browsers keep Ctrl+Shift+T), which reopens the last chat tab
+closed with a session (`src/web/lib/closed-chats.ts`, recorded by `panel-store.closeTab`). An Alt
+combo on a letter also matches by `e.code`, since a Mac's Option key types another character.
+
+### Archived chats and the status filter
+
+A chat is archived by hand (*Archive* in its context menu, or the hover button in the history list)
+or automatically once it has been idle the number of days chosen beside the filter (Never, 7, 14,
+30, 90; per device). A pinned chat, the manager chat and one marked `kept` (unarchived by hand after
+the rule caught it) are never auto-archived. The rule is `isSessionArchived` in
+`src/shared/session-archive.ts`; the history list filters by `matchesStatusFilter` — **Active**
+(the default) hides archived chats unless one is running or unread, and **Running**, **Unread**,
+**Archived** and **All** show their own. A search under Active looks at every chat, archived ones included.
+The state is one row per session in `session_archive` (`src/services/session-archive.service.ts`,
+created on first use rather than by a numbered migration), set by
+`PUT /chat/sessions/:id/archive { state: "archived" | "kept" | null }` and returned on every
+`SessionInfo` as `archive`; the filter and the day count live in
+`src/web/stores/chat-history-filter-store.ts`. Archiving never deletes or stops anything.
+
+### Background tasks and their Stop
+
+The Claude CLI reports every background task it runs (a `run_in_background` shell, a backgrounded
+agent, a monitor, a workflow) as a level signal, `background_tasks_changed`, each payload replacing
+the last. The provider forwards it minus the `ambient` entries (`liveTasksFrom` in
+`src/shared/background-tasks.ts`), `ws/chat.ts` keeps it on the session entry as `liveTasks`,
+broadcasts `background_tasks` and replays it to a reconnecting client, and forgets it when the
+subprocess is torn down. The footer's activity chip counts them and lists them in a **Tasks** tab,
+each with a Stop that sends `stop_background_task`; the server calls the SDK's `stopTask` (the
+`stop_task` control request), which ends the task in milliseconds with no model turn, and the CLI's
+own `task_updated` / `background_tasks_changed` then remove the row. With no live CLI the row is
+dropped as stale. The background-command bar's Stop (`kill_background_shell`) tries the same direct
+stop first, since a shell's id is its task id, and falls back to asking the model to call KillShell
+only when no live CLI holds it. PPM does not declare `perTaskStopAffordance`, so the chat's Stop
+still ends background tasks along with the turn.
+
+### Plan review with comments
+
+An `ExitPlanMode` call in plan mode reaches the person through the PreToolUse approval like any
+other tool (it is never offered as an "allow for this chat" rule), and `PendingApprovalCard` draws
+it as `PlanApprovalCard` instead of raw JSON: the plan line by line, each line's number opening a
+comment under it, *Preview* for the rendered Markdown, and a box for anything else. *Approve plan*
+allows the call; *Send feedback* (or *Keep planning* with nothing written) denies it with
+`formatPlanComments` as the deny message — each commented line quoted with its number and the
+comment under it — which the provider hands Claude as "said what to do instead", so it revises the
+plan and presents it again.
+
+### Bookmarks and Markdown export
+
+A **bookmark** marks a turn, never a message: the turn id is the one name of a place in a chat that
+survives a reload, a compaction and the history window (a Codex message id is a position). *Bookmark*
+sits in the action bar under each prompt (`bookmark-turn-button.tsx`; a just-sent prompt waits for
+its turn id the way Copy turn link does) and is labelled with the prompt's first line. The list is
+the ··· menu → **Bookmarks** (`bookmarks-view.tsx`), whose rows jump through `chat-jump-store` —
+the history window opens when the turn is not loaded. Bookmarks are per session in `ppm.db`
+(`session_bookmarks`, created on first use, at most 200 a chat; `session-bookmarks.service.ts`),
+behind `GET/PUT/DELETE /chat/sessions/:id/bookmarks[/:turnId]`, and the browser keeps them in
+`session-bookmarks-store.ts`. **Export as Markdown** in the same menu downloads
+`GET /chat/sessions/:id/export.md` (Claude and Codex): every turn under a heading, prompts and answers
+in full, one line per tool call with its status — never thinking and never tool output or input
+bodies (`turn-markdown.ts` over `readAllSessionTurns`, the turn reader that also serves
+`read_session_turns`, 20 turns a read against one scan).
+
+### Worktree per chat
+
+Before a new Claude chat's first message, the footer's **Worktree** chip (`worktree-chip.tsx`) is a
+switch; on, the first message carries `worktree: chat-YYMMDD-HHMM-xxxx` (`newWorktreeName`, checked
+against `WORKTREE_NAME_RE` on the server) and the provider passes it to the CLI as `--worktree`
+(`extraArgs`), on the session's first spawn only. The CLI itself creates
+`<project>/.claude/worktrees/<name>` on branch `worktree-<name>`, runs the chat there, and on every
+later resume with the project as cwd goes back into it — PPM never runs `git worktree` itself. The
+CLI's `init` reports that cwd; `worktreeOfCwd` accepts only a direct child of the project's worktree
+folder, and the provider records it in `session_worktrees` (created on first use;
+`session-worktree.service.ts`), adds `/.claude/worktrees/` to the repository's `info/exclude` so
+the worktrees stay out of Source Control, and yields `system/worktree`; `chat.ts` sends
+`session_worktree` (also on every `ready`), and the chip then names the branch and copies the path.
+Two consequences: the transcript lives under the **worktree's** slug in `~/.claude/projects`, so
+`pinClaudeSessionDir` (`session-ownership.ts`) falls back to the recorded worktree — only when it was
+recorded for the same project and lies inside its worktree folder; and the session list finds such
+chats through the SDK's `listSessions` (`includeWorktrees` is on by default). Leaving the worktree
+behind when the chat is deleted is deliberate: it may hold the only copy of the chat's work.
+
 ## Voice messages
 
 The chat mic records a voice message instead of dictating, once the install has said yes to the `voice-messages-2026-11` feature intro (config `voice_message.enabled`; Settings → Voice Input has the same switch). Off, the mic dictates exactly as before.

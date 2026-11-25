@@ -12,6 +12,7 @@ import { ReplyCard } from "./reply-card";
 import { TurnRefChipRow } from "./turn-ref-chip";
 import { TaskRefChipRow } from "./task-ref-chip";
 import { CopyTurnLinkButton } from "./copy-turn-link-button";
+import { BookmarkTurnButton } from "./bookmark-turn-button";
 import type { ChatMessage } from "../../../types/chat";
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -24,6 +25,7 @@ import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
 import { parseUserMessage, typedText, type ParsedUserMessage, type SystemTag } from "../../../shared/user-message-parse";
 import { FromSessionBubble } from "./from-session-bubble";
+import { RewindCodeButton } from "./rewind-code-button";
 import { ScheduleRunLine } from "./schedule-run-line";
 import type { VersionGroup } from "../../../types/api";
 import { useTabStore } from "@/stores/tab-store";
@@ -44,7 +46,7 @@ type UserBubbleProps = {
   /** False for a user message that is not a prompt the person sent: its turn chips are not drawn. */
   prompt?: boolean;
   /** What names this message's turn, for Copy turn link; without it there is no such action. */
-  turn?: Pick<ChatMessage, "turnId" | "clientId" | "sdkUuid">;
+  turn?: Pick<ChatMessage, "turnId" | "turnN" | "clientId" | "sdkUuid">;
   timestamp: string;
   projectName?: string;
   onFork?: () => void;
@@ -90,7 +92,7 @@ export function UserBubble(props: UserBubbleProps) {
 }
 
 /** User message bubble — full width, collapsible, with system tag badges */
-function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: UserBubbleProps & {
+function OwnUserBubble({ content, messageId, parsed, prompt = true, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: UserBubbleProps & {
   parsed: ParsedUserMessage;
 }) {
   const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo, turnRefs, taskRefs } = parsed;
@@ -217,6 +219,9 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
           {turn && projectName && sessionId && (providerId === "claude" || providerId === "codex") && (
             <CopyTurnLinkButton message={turn} projectName={projectName} sessionId={sessionId} providerId={providerId} />
           )}
+          {turn && projectName && sessionId && (providerId === "claude" || providerId === "codex") && (
+            <BookmarkTurnButton message={turn} text={typedText(parsed)} projectName={projectName} sessionId={sessionId} providerId={providerId} />
+          )}
           {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} standardSize />}
           {onEdit && (
             <ActionButton
@@ -234,6 +239,7 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
               onClick={onFork}
             />
           )}
+          {prompt && messageId && <RewindCodeButton messageId={messageId} onFork={onFork} />}
         </MessageActionBar>
       )}
     </div>

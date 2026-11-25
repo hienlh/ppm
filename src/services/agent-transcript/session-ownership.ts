@@ -17,6 +17,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { getSessionProjectPath } from "../db.service.ts";
+import { getSessionWorktree, worktreesRoot } from "../session-worktree.service.ts";
 import { codexSessionsDirs as realCodexSessionsDirs } from "../../providers/codex-app-server/codex-provider.ts";
 import { findRolloutByThreadId, isCodexRolloutPath } from "../../providers/codex-app-server/codex-history.ts";
 import { findAntigravityTranscriptPath, isAntigravitySessionInProject } from "../../providers/antigravity/antigravity-history.ts";
@@ -117,10 +118,21 @@ export function pinClaudeSessionDir(sessionId: string, projectPath: string): str
   const root = claudeProjectsRoot();
   let jsonlFile = join(root, encodeClaudeSlug(projectPath), `${sessionId}.jsonl`);
   if (!existsSync(jsonlFile)) {
-    const recorded = getSessionProjectPath(sessionId);
-    if (!recorded || normalizeProjectPath(recorded) !== normalizeProjectPath(projectPath)) return null;
-    jsonlFile = join(root, encodeClaudeSlug(recorded), `${sessionId}.jsonl`);
-    if (!existsSync(jsonlFile)) return null;
+    // A chat running in one of this project's worktrees keeps its transcript under the
+    // worktree's slug; PPM recorded that worktree, for this project, when the CLI reported it.
+    const worktree = getSessionWorktree(sessionId);
+    const inWorktree = worktree && normalizeProjectPath(worktree.projectPath) === normalizeProjectPath(projectPath)
+      && isWithin(normalizeProjectPath(worktree.path), normalizeProjectPath(worktreesRoot(projectPath)))
+      ? join(root, encodeClaudeSlug(worktree.path), `${sessionId}.jsonl`)
+      : null;
+    if (inWorktree && existsSync(inWorktree)) {
+      jsonlFile = inWorktree;
+    } else {
+      const recorded = getSessionProjectPath(sessionId);
+      if (!recorded || normalizeProjectPath(recorded) !== normalizeProjectPath(projectPath)) return null;
+      jsonlFile = join(root, encodeClaudeSlug(recorded), `${sessionId}.jsonl`);
+      if (!existsSync(jsonlFile)) return null;
+    }
   }
   const real = realpathContained(jsonlFile, root);
   if (!real) return null;

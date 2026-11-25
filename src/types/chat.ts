@@ -12,6 +12,11 @@ export interface SendMessageOpts {
   imagePaths?: string[];
   /** Per-session model override; falls back to provider config model when absent */
   model?: string;
+  /**
+   * Claude only, honoured on a new session's first turn: run the chat in a git worktree of its
+   * own with this name (`--worktree`; `src/shared/session-worktree.ts`).
+   */
+  worktree?: string;
   /** Override the provider's 1M-context setting for this call (false = never add the
    *  [1m] suffix). Used by lightweight calls (e.g. the group-chat router) whose small
    *  model may not support a 1M window. Falls back to provider config when absent. */
@@ -339,6 +344,10 @@ export interface SessionInfo {
   spawnedBy?: string | null;
   /** That session's title, when PPM has one for it. */
   parentTitle?: string | null;
+  /** Archived by hand, or `kept` once un-archived (`src/shared/session-archive.ts`). */
+  archive?: import("../shared/session-archive").SessionArchiveState | null;
+  /** The git worktree the chat runs in, when it has one of its own (`src/shared/session-worktree.ts`). */
+  worktree?: import("../shared/session-worktree").SessionWorktree | null;
 }
 
 /**
@@ -544,8 +553,10 @@ export type ChatEvent =
       /** A PPM Assistant command that ran without a card because PPM showed it only reads. */
       autoApproved?: "readonly";
     }
-  | { type: "approval_request"; requestId: string; tool: string; input: unknown; questions?: import("../shared/approval-questions").NormalizedQuestion[] }
+  | { type: "approval_request"; requestId: string; tool: string; input: unknown; questions?: import("../shared/approval-questions").NormalizedQuestion[]; /** Claude tool cards: what "Allow for this chat" would allow. */ rule?: { label: string } }
   | { type: "error"; message: string }
+  /** Claude's guess at the person's next prompt, after a turn; the composer offers it. */
+  | { type: "prompt_suggestion"; suggestion: string }
   | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; costUsd?: number; lastMessageUuid?: string; usage?: import("../shared/turn-usage").TurnUsage }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "account_retry"; reason: string; accountId?: string; accountLabel?: string }

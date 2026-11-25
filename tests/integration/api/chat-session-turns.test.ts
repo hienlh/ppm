@@ -145,3 +145,52 @@ describe("GET /chat/sessions/:id/messages — turn stamps", () => {
     expect(gone.status).toBe(410);
   });
 });
+
+describe("GET /chat/sessions/:id/export.md and the bookmarks routes", () => {
+  it("exports every turn as Markdown, prompts and answers in full, a line per tool call, no tool output", async () => {
+    const id = randomUUID();
+    writeFileSync(join(slugDir, id + ".jsonl"), chained([
+      claude.prompt("Fix the login bug", P(1)),
+      // The fixture's tool result answers toolu_1, and a call's id is toolu_ + its uuid's first 8 characters.
+      claude.assistant("", "1", { file_path: "src/login.ts", content: "SECRET-TOOL-INPUT-BODY" }),
+      claude.toolResult(P(1), randomUUID(), "TOOL-OUTPUT-NOT-EXPORTED"),
+      claude.assistant("Fixed it in **src/login.ts**."),
+      claude.prompt("Now add a test", P(2)),
+      claude.assistant("Added `login.test.ts`."),
+    ]));
+    const res = await app.request("/api/project/" + PROJECT + "/chat/sessions/" + id + "/export.md?providerId=claude");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/markdown");
+    expect(res.headers.get("content-disposition")).toContain("fix-the-login-bug.md");
+    const md = await res.text();
+    expect(md.startsWith("# Fix the login bug\n")).toBe(true);
+    expect(md).toContain("## Turn 1 · ");
+    expect(md).toContain("## Turn 2 · ");
+    expect(md).toContain("**You**\n\nFix the login bug");
+    expect(md).toContain("**Claude**");
+    expect(md).toContain("- `Write` `src/login.ts` · ok");
+    expect(md).toContain("Fixed it in **src/login.ts**.");
+    expect(md).toContain("Added `login.test.ts`.");
+    expect(md).not.toContain("TOOL-OUTPUT-NOT-EXPORTED");
+    expect(md).not.toContain("SECRET-TOOL-INPUT-BODY");
+
+    const missing = await app.request("/api/project/" + PROJECT + "/chat/sessions/" + randomUUID() + "/export.md?providerId=claude");
+    expect(missing.status).toBe(404);
+  });
+
+  it("bookmarks a turn, renames it, lists in turn order, and takes it off", async () => {
+    const id = randomUUID();
+    const url = (turnId = "") => "/api/project/" + PROJECT + "/chat/sessions/" + id + "/bookmarks" + (turnId ? "/" + turnId : "");
+    const put = (turnId: string, body: unknown) => app.request(url(turnId), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const data = async (r: Response) => ((await r.json()) as any).data;
+
+    expect(await data(await app.request(url()))).toEqual([]);
+    await put(P(3), { turnN: 3, label: "third" });
+    const list = await data(await put(P(1), { turnN: 1, label: "  first  " }));
+    expect(list.map((b: any) => [b.turnId, b.turnN, b.label])).toEqual([[P(1), 1, "first"], [P(3), 3, "third"]]);
+    expect((await data(await put(P(1), { label: "renamed" })))[0]).toMatchObject({ turnId: P(1), turnN: 1, label: "renamed" });
+    expect((await put("not an id", { label: "x" })).status).toBe(400);
+    const after = await data(await app.request(url(P(1)), { method: "DELETE" }));
+    expect(after.map((b: any) => b.turnId)).toEqual([P(3)]);
+  });
+});

@@ -62,7 +62,7 @@ export function shortToolArg(input: unknown): string {
 
 type ToolResult = Extract<ChatEvent, { type: "tool_result" }>;
 
-function resultStatus(result: ToolResult | undefined): string {
+export function resultStatus(result: ToolResult | undefined): string {
   if (!result) return "no result";
   if (result.isError) return "error";
   if (typeof result.exitCode === "number" && result.exitCode !== 0) return `exit ${result.exitCode}`;
@@ -70,7 +70,7 @@ function resultStatus(result: ToolResult | undefined): string {
 }
 
 /** Every tool result of the turn by its call id, wherever the history put it. */
-function resultsById(messages: ChatMessage[]): Map<string, ToolResult> {
+export function resultsById(messages: ChatMessage[]): Map<string, ToolResult> {
   const out = new Map<string, ToolResult>();
   const visit = (events: ChatEvent[] | undefined) => {
     for (const ev of events ?? []) {

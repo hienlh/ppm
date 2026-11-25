@@ -3,6 +3,7 @@
  * Handles summary + details for all SDK tool types.
  */
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
+import { useChatViewMode } from "@/stores/chat-view-mode-store";
 import type { BashPartialEntry } from "../../hooks/use-chat";
 import { MiniMarkdown } from "./mini-markdown";
 import {
@@ -194,7 +195,8 @@ export function ToolCard({
    *  default `"chat"` variant. */
   variant?: "chat" | "window";
 }) {
-  const [expanded, setExpanded] = useState(() => {
+  const verbose = useChatViewMode((s) => s.mode === "verbose");
+  const openByDefault = () => {
     // Edit/MultiEdit cards open by default so the inline diff is visible without
     // a click — unless the edit failed (diff was never applied, so it's noise).
     const t = tool.type === "tool_use" ? tool.tool : (tool as any).tool;
@@ -203,7 +205,15 @@ export function ToolCard({
     // Same reasoning for reading an image: the thumbnail is the point of the card,
     // so show it without requiring a click.
     return !!imageReadPath(tool);
-  });
+  };
+  // The Verbose view mode opens every card.
+  const [expanded, setExpanded] = useState(() => verbose || openByDefault());
+  // A change of view mode opens every card, or puts each back the way it starts.
+  const firstMode = useRef(true);
+  useEffect(() => {
+    if (firstMode.current) { firstMode.current = false; return; }
+    setExpanded(verbose || openByDefault());
+  }, [verbose]); // eslint-disable-line react-hooks/exhaustive-deps
   // Called unconditionally (Rules of Hooks) even for tool types that never reach the
   // subagent-summary branch below — cheap, and `variant`/tool type are stable for the
   // life of one ToolCard instance, same as the `tool.type === "error"` early return above.

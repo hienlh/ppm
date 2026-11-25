@@ -56,7 +56,7 @@ interface MessageListProps {
   keepStaleWhileLoading?: boolean;
   pendingApproval: ApprovalRequest | null;
   /** `answersById` answers a question card, by question id. */
-  onApprovalResponse: (requestId: string, approved: boolean, answersById?: AnswersById, remember?: boolean) => void;
+  onApprovalResponse: (requestId: string, approved: boolean, answersById?: AnswersById, choice?: { scope?: "chat"; message?: string }, remember?: boolean) => void;
   isStreaming: boolean;
   phase?: SessionPhase;
   connectingElapsed?: number;
@@ -764,7 +764,7 @@ export function MessageList({
             <div className={cn("px-4 pt-4 pb-3 flex flex-col gap-4 select-none", dockApproval && "max-md:mt-auto")} data-chat-trailing="">
               {liveApproval && (
                 <div className="max-md:order-last" data-live-approval="">
-                  <PendingApprovalCard approval={liveApproval} onRespond={onApprovalResponse} />
+                  <PendingApprovalCard approval={liveApproval} onRespond={onApprovalResponse} projectName={projectName} />
                 </div>
               )}
               {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}

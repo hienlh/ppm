@@ -12,6 +12,9 @@ import type { SessionTurn } from "@/lib/session-turns";
 import { useChatJumpStore } from "@/stores/chat-jump-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
+import { useReviewComments, useSessionReviewComments } from "@/stores/review-comments-store";
+import { formatReviewComments } from "@/lib/line-comments";
+import { sendToChat } from "@/lib/send-to-chat";
 import { nameAndDir } from "./review-parts";
 import { reviewView } from "./review-view";
 import { ReviewDesktop } from "./review-desktop";
@@ -35,9 +38,9 @@ export function SessionReviewTab({ metadata }: { metadata?: Record<string, unkno
     select: metadata?.select as { path?: string; at?: number } | undefined,
   });
 
-  const openChat = useCallback(() => {
+  const openChat = useCallback((): string | undefined => {
     if (!projectName || !sessionId) return;
-    useTabStore.getState().openTab({
+    return useTabStore.getState().openTab({
       type: "chat",
       title: chatTitle || "Chat",
       projectId: projectName,
@@ -64,9 +67,23 @@ export function SessionReviewTab({ metadata }: { metadata?: Record<string, unkno
     });
   }, [projectName]);
 
+  const lineComments = useSessionReviewComments(sessionId);
+  const sendComments = useCallback(() => {
+    const text = formatReviewComments(lineComments);
+    if (!text || !sessionId) return;
+    const tabId = openChat();
+    if (!tabId) return;
+    // Into the chat's composer as a chip, so the person can add to it before it goes.
+    sendToChat({ text, label: lineComments.length + (lineComments.length === 1 ? " review comment" : " review comments"), projectName, targetTabId: tabId });
+    useReviewComments.getState().clear(sessionId);
+  }, [lineComments, sessionId, projectName, openChat]);
+
   if (!projectName || !sessionId) {
     return <div className="flex h-full items-center justify-center text-sm text-text-3">No chat session.</div>;
   }
-  const view = reviewView({ review, projectPath, providerId, chatTitle, openChat, openFile, turns, showInChat });
+  const view = reviewView({
+    review, projectPath, providerId, chatTitle, openChat, openFile, turns, showInChat, sessionId,
+    comments: { count: lineComments.length, send: sendComments },
+  });
   return isMobile ? <ReviewPhone view={view} /> : <ReviewDesktop view={view} />;
 }

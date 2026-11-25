@@ -1,4 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo, startTransition } from "react";
+import type { LiveBackgroundTask } from "../../shared/background-tasks";
+import { newWorktreeName, type SessionWorktree } from "../../shared/session-worktree";
 import { ChatAttemptLifecycle, type ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useWebSocket } from "./use-websocket";
 import { api, projectUrl } from "@/lib/api-client";
@@ -155,6 +157,13 @@ interface UseChatReturn {
    * the transcript, so every history reload would otherwise wipe it.
    */
   turnStop: TurnStop | null;
+  /** Claude's guess at the next prompt, until a turn starts or a message is sent. */
+  promptSuggestion: string | null;
+  /** The git worktree this chat runs in, once its CLI reported one. */
+  worktree: SessionWorktree | null;
+  /** A new Claude chat's choice to run in a worktree of its own, sent with its first message. */
+  worktreeWanted: boolean;
+  setWorktreeWanted: (wanted: boolean) => void;
   /**
    * The mode an extension-bound chat really runs in ("default" or "acceptEdits" — the server
    * clamps out bypass and plan), from the server's own `session_state`. Null for every other
@@ -201,6 +210,9 @@ interface UseChatReturn {
   /** Background commands (Bash run_in_background) tracked for this session */
   backgroundShells: BackgroundShell[];
   killBackgroundShell: (shellId: string) => void;
+  /** The CLI's background tasks right now (shells, agents, monitors, workflows), each stoppable. */
+  liveTasks: LiveBackgroundTask[];
+  stopBackgroundTask: (taskId: string) => void;
   findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
   sendMessage: (content: string, opts?: SendMessageOptions) => void;
   /**
@@ -209,7 +221,7 @@ interface UseChatReturn {
    */
   currentTurnIdRef: { readonly current: string | null };
   /** `answersById` answers a question card by question id; the server converts it for the provider. */
-  respondToApproval: (requestId: string, approved: boolean, answersById?: AnswersById, remember?: boolean) => void;
+  respondToApproval: (requestId: string, approved: boolean, answersById?: AnswersById, choice?: { scope?: "chat"; message?: string }, remember?: boolean) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
   refetchMessages: () => void;
@@ -291,6 +303,15 @@ export function useChat(
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
   const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
+  /** Claude's guess at the next prompt, offered by the composer until a turn starts. */
+  const [promptSuggestion, setPromptSuggestion] = useState<string | null>(null);
+  const [worktree, setWorktree] = useState<SessionWorktree | null>(null);
+  const [worktreeWanted, setWorktreeWantedState] = useState(false);
+  const worktreeWantedRef = useRef(false);
+  const setWorktreeWanted = useCallback((wanted: boolean) => {
+    worktreeWantedRef.current = wanted;
+    setWorktreeWantedState(wanted);
+  }, []);
   /** The permission mode the server holds for the chat, from its connect greeting. */
   const [sessionPermission, setSessionPermission] = useState<SessionPermissionState | null>(null);
   // A ref, not state: nothing draws it, and every `turn_started` would redraw the whole chat tab.
@@ -298,6 +319,7 @@ export function useChat(
   const [boundPermissionMode, setBoundPermissionMode] = useState<string | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
+  const [liveTasks, setLiveTasks] = useState<LiveBackgroundTask[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -962,6 +984,22 @@ export function useChat(
         break;
       }
 
+      case "session_worktree": {
+        const wt = ev.worktree as SessionWorktree | undefined;
+        if (wt && typeof wt.path === "string") {
+          setWorktree(wt);
+          // Made: later messages of this chat carry no request.
+          worktreeWantedRef.current = false;
+          setWorktreeWantedState(false);
+        }
+        break;
+      }
+
+      case "background_tasks": {
+        setLiveTasks(Array.isArray(ev.tasks) ? ev.tasks as LiveBackgroundTask[] : []);
+        break;
+      }
+
       case "done": {
         // A nested completion must never finalize or reset the root stream.
         if (ev.parentToolUseId) break;
@@ -1226,6 +1264,12 @@ export function useChat(
       return;
     }
 
+    if ((data as any).type === "prompt_suggestion") {
+      const suggestion = (data as any).suggestion;
+      if (typeof suggestion === "string" && phaseRef.current === "idle") setPromptSuggestion(suggestion);
+      return;
+    }
+
     if ((data as any).type === "effort_status") {
       setEffortStatus(((data as any).status as EffortStatus | undefined) ?? null);
       return;
@@ -1258,6 +1302,7 @@ export function useChat(
       if (p !== "idle") historyActivityRef.current++;
       // A new turn is running, so the last one's stop no longer describes the session.
       if (p !== "idle") setTurnStop(null);
+      if (p !== "idle") setPromptSuggestion(null);
       setPhase(p);
       phaseRef.current = p;
       setConnectingElapsed(p === "connecting" ? ((data as any).elapsed ?? 0) : 0);
@@ -1537,6 +1582,8 @@ export function useChat(
     // Another session's subprocess saw another MCP state; its session_state brings its own.
     setMcpNeedsAuth([]);
     setTurnStop(null);
+    setPromptSuggestion(null);
+    setWorktree(null);
     currentTurnIdRef.current = null;
     setEffortStatus(undefined);
     // Clear ephemeral pre-compact expansions on session change
@@ -1698,6 +1745,7 @@ export function useChat(
       historyActivityRef.current++;
       // Whatever ended the last turn, this message moves the session past it.
       setTurnStop(null);
+      setPromptSuggestion(null);
 
       const isFollowUp = phaseRef.current !== "idle";
       if (sessionIdRef.current) attemptRef.current?.start(sessionIdRef.current, !isFollowUp, isConnected && connectedSessionId === sessionIdRef.current);
@@ -1775,6 +1823,8 @@ export function useChat(
         ...(turnRefs ? { turnRefs } : {}),
         ...(taskRefs ? { taskRefs } : {}),
         ...turnSettings(),
+        // Asked for once, by the chat's first message; the server ignores it on any later one.
+        ...(worktreeWantedRef.current ? { worktree: newWorktreeName() } : {}),
         // An Assistant session tells the agent what this device shows, with every message.
         ...(isAssistantProject(projectNameRef.current) ? { uiSummary: readUiSummary() } : {}),
       }));
@@ -1811,7 +1861,7 @@ export function useChat(
   );
 
   const respondToApproval = useCallback(
-    (requestId: string, approved: boolean, answersById?: AnswersById, remember?: boolean) => {
+    (requestId: string, approved: boolean, answersById?: AnswersById, choice?: { scope?: "chat"; message?: string }, remember?: boolean) => {
       send(
         JSON.stringify({
           type: "approval_response",
@@ -1820,6 +1870,8 @@ export function useChat(
           ...(answersById ? { answersById } : {}),
           // "Allow & remember": the server works out what is remembered from the card itself.
           ...(remember && approved ? { remember: true } : {}),
+          // A tool card's "for this chat" or a denial's instructions.
+          ...(choice ? { data: choice } : {}),
         }),
       );
 
@@ -1868,6 +1920,11 @@ export function useChat(
   const killBackgroundShell = useCallback((shellId: string) => {
     if (!shellId) return;
     send(JSON.stringify({ type: "kill_background_shell", shellId }));
+  }, [send]);
+
+  const stopBackgroundTask = useCallback((taskId: string) => {
+    if (!taskId) return;
+    send(JSON.stringify({ type: "stop_background_task", taskId }));
   }, [send]);
 
   /** Resolve a `.output` basename (e.g. "b7z9yvujn.output" or "b7z9yvujn") to a tracked shell. */
@@ -2069,6 +2126,10 @@ export function useChat(
     promptCache,
     mcpNeedsAuth,
     turnStop,
+    promptSuggestion,
+    worktree,
+    worktreeWanted,
+    setWorktreeWanted,
     sessionPermission,
     boundPermissionMode,
     statusMessage,
@@ -2089,6 +2150,8 @@ export function useChat(
     bashPartialOutput: bashOutputRef,
     backgroundShells,
     killBackgroundShell,
+    liveTasks,
+    stopBackgroundTask,
     findBackgroundShellByOutput,
     sendMessage,
     currentTurnIdRef,

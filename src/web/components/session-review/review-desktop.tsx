@@ -98,6 +98,11 @@ export function ReviewDesktop({ view }: { view: ReviewView }) {
           >
             <FolderTree />{plural(reviews.length, "file")}
           </Button>
+          {view.comments.count > 0 && (
+            <Button variant="default" size="sm" onClick={view.comments.send} data-send-review-comments="">
+              <MessageCircle />Send {view.comments.count} {view.comments.count === 1 ? "comment" : "comments"} to chat
+            </Button>
+          )}
           {progress.open > 0 && (
             <Button variant="ghost" size="sm" className="text-text-secondary" onClick={() => void review.keepAll()}>
               <ListChecks />Keep all remaining

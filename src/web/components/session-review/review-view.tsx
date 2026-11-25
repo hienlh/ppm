@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { fileOutcome, railOrder, type BlockState, type FileReview } from "@/lib/session-review-model";
 import type { SessionReview } from "@/hooks/use-session-review";
 import type { SessionTurn } from "@/lib/session-turns";
-import { ReviewCode, type ReviewCodeActions } from "./review-code";
+import { ReviewCode, type ReviewCodeActions, ReviewCommentScope } from "./review-code";
 import { reviewLanguage } from "./review-tokens";
 
 export interface ReviewView {
@@ -34,6 +34,10 @@ export interface ReviewView {
   /** Open the decided block in focus again: a kept one is reopened, a reverted one's revert undone. */
   changeFocused: (() => void) | null;
   codeActions: ReviewCodeActions;
+  /** The chat whose changes these are: line comments are offered only with one. */
+  sessionId?: string;
+  /** The line comments written so far, and sending them to the chat's composer. */
+  comments: { count: number; send: () => void };
 }
 
 export function reviewView(p: Omit<ReviewView, "focusState" | "place" | "nextFile" | "keepFocused" | "revertFocused" | "changeFocused" | "codeActions">): ReviewView {
@@ -87,7 +91,7 @@ export function reviewView(p: Omit<ReviewView, "focusState" | "place" | "nextFil
 export function PaneBody({ view, compact, onRevertFile }: { view: ReviewView; compact: boolean; onRevertFile: () => void }) {
   const { pane, focus } = view.review;
   if (pane.kind === "blocks") {
-    return (
+    const code = (
       <ReviewCode
         key={pane.review.path}
         file={pane.review.file}
@@ -99,6 +103,9 @@ export function PaneBody({ view, compact, onRevertFile }: { view: ReviewView; co
         actions={view.codeActions}
       />
     );
+    return view.sessionId
+      ? <ReviewCommentScope.Provider value={{ sessionId: view.sessionId, path: pane.review.path }}>{code}</ReviewCommentScope.Provider>
+      : code;
   }
   if (pane.kind === "whole") return <WholeFile view={view} review={pane.review} compact={compact} onRevertFile={onRevertFile} />;
   if (pane.kind === "error") {

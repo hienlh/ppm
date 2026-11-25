@@ -19,6 +19,8 @@ export interface ApprovalRequest {
   questions?: NormalizedQuestion[];
   /** What "Allow & remember" would remember, worked out by the server; absent when it offers nothing. */
   remember?: CardRememberOffer;
+  /** Set on a Claude tool card: what "Allow for this chat" covers. */
+  rule?: { label: string };
 }
 
 function rememberFromWire(raw: unknown): CardRememberOffer | undefined {
@@ -50,11 +52,15 @@ export function approvalFromWire(raw: unknown): ApprovalRequest | null {
   const summary = summaryFromWire(r.summary);
   const questions = questionsFromWire(r.questions);
   const remember = rememberFromWire(r.remember);
+  const rule = r.rule && typeof r.rule === "object" && typeof (r.rule as { label?: unknown }).label === "string"
+    ? { label: (r.rule as { label: string }).label }
+    : undefined;
   return {
     requestId: r.requestId, tool: typeof r.tool === "string" ? r.tool : "Tool", input: r.input,
     ...(summary ? { summary } : {}),
     ...(questions ? { questions } : {}),
     ...(remember ? { remember } : {}),
+    ...(rule ? { rule } : {}),
   };
 }
 

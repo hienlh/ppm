@@ -30,6 +30,12 @@ export function ReviewPhone({ view }: { view: ReviewView }) {
         {progress.total > 0 && (
           <span className="mr-0.5 text-xs text-text-2"><b className="font-semibold text-text">{decided}</b>/{progress.total} blocks</span>
         )}
+        {view.comments.count > 0 && (
+          <button type="button" className={cn(iconButton, "relative text-primary")} aria-label={"Send " + view.comments.count + " comments to chat"} onClick={view.comments.send} data-send-review-comments="">
+            <MessageCircle className="size-5" />
+            <span className="absolute top-1 right-1 min-w-4 rounded-full bg-primary px-1 text-[10px] font-semibold leading-4 text-primary-foreground">{view.comments.count}</span>
+          </button>
+        )}
         <button type="button" className={iconButton} aria-label="All files" onClick={() => setSheet("files")}>
           <FolderTree className="size-5" />
         </button>
