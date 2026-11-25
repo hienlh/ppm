@@ -19,7 +19,7 @@ import { findCardByTelegramRef } from "../assistant-cards/assistant-cards-outbou
 import { chooseCardOption, okCard, replyToCard, type CardReplyResult } from "../assistant-cards/card-reply-actions.ts";
 import { assistantCards } from "../assistant-cards/assistant-cards.service.ts";
 import { cardWithdrawal, type AssistantCard } from "../../shared/assistant-cards.ts";
-import type { CardActor } from "../assistant-cards/forward-verbatim.ts";
+import type { CardActor, SpokenWords } from "../assistant-cards/forward-verbatim.ts";
 import { decideManagerRules } from "../assistant-managers/manager-rules.service.ts";
 import { escapeTelegramHtml } from "../notification-format.ts";
 import type { InlineKeyboardMarkup } from "../telegram/telegram-types.ts";
@@ -82,10 +82,12 @@ export interface CardReplyMessage {
   messageId?: number;
   /** Forwarded from someone, or sent through an inline bot. */
   notTheUsers: boolean;
+  /** The reply was a voice message the bridge stored and read; `text` is its transcript. */
+  voice?: SpokenWords;
 }
 
 export class AssistantTelegramCardReplies {
-  private readonly pending = new Map<string, { chatId: string; cardId: string; text: string; images: Image[]; messageId?: number }>();
+  private readonly pending = new Map<string, { chatId: string; cardId: string; text: string; images: Image[]; messageId?: number; voice?: SpokenWords }>();
 
   constructor(private readonly deps: CardRepliesDeps) {}
 
@@ -120,8 +122,11 @@ export class AssistantTelegramCardReplies {
     }
     this.answer(
       chatId, row.id,
-      await (this.deps.replyTo ?? replyToCard)(row.id, { text: m.text, ...(images.length ? { images } : {}) }, this.actor(chatId, m.replyToMessageId, m.messageId)),
-      m.text, images, m.messageId,
+      await (this.deps.replyTo ?? replyToCard)(
+        row.id, { text: m.text, ...(images.length ? { images } : {}), ...(m.voice ? { voice: m.voice } : {}) },
+        this.actor(chatId, m.replyToMessageId, m.messageId),
+      ),
+      m.text, images, m.messageId, m.voice,
     );
     return true;
   }
@@ -134,7 +139,7 @@ export class AssistantTelegramCardReplies {
     }
   }
 
-  private answer(chatId: string, cardId: string, result: CardReplyResult, text: string, images: Image[], messageId?: number): void {
+  private answer(chatId: string, cardId: string, result: CardReplyResult, text: string, images: Image[], messageId?: number, voice?: SpokenWords): void {
     if (result.ok) {
       this.deps.reply(chatId, result.to === "manager"
         ? `Sent to the <b>${escapeTelegramHtml(result.projectName ?? "project")}</b> manager, word for word. ${ANSWER_FOLLOWS}`
@@ -150,7 +155,7 @@ export class AssistantTelegramCardReplies {
       this.makeRoom(images.reduce((n, i) => n + i.data.length, 0));
       const pendingId = crypto.randomUUID();
       // The photos are kept with the words: "Send anyway" sends the reply as it was written.
-      this.pending.set(pendingId, { chatId, cardId, text, images, ...(messageId ? { messageId } : {}) });
+      this.pending.set(pendingId, { chatId, cardId, text, images, ...(messageId ? { messageId } : {}), ...(voice ? { voice } : {}) });
       const code = this.deps.codes.mint(chatId, `anyway:${pendingId}`, { kind: "mcard", cardId, op: "send_anyway", pendingId });
       this.deps.reply(chatId, escapeTelegramHtml(result.question), { inline_keyboard: [[{ text: "Send anyway", callback_data: code }]] });
       return;
@@ -180,7 +185,7 @@ export class AssistantTelegramCardReplies {
       // Looked at as it is now, not as it was when the question was asked.
       const now = (this.deps.getCard ?? ((id) => assistantCards.get(id)))(press.cardId);
       if (now && cardDecided(now)) {
-        this.answer(chatId, press.cardId, { ok: false, status: 409, error: "already_answered", card: now }, waiting.text, waiting.images, waiting.messageId);
+        this.answer(chatId, press.cardId, { ok: false, status: 409, error: "already_answered", card: now }, waiting.text, waiting.images, waiting.messageId, waiting.voice);
         return "Not sent.";
       }
       // A card still waiting: the same confirmation as PPM's set of decisions, its age only, so a
@@ -188,10 +193,10 @@ export class AssistantTelegramCardReplies {
       // the conversation goes on, which only `force` sends.
       const confirm = now && now.status !== "open" ? { force: true } : { confirmAge: true };
       const result = await (this.deps.replyTo ?? replyToCard)(
-        press.cardId, { text: waiting.text, ...confirm, ...(waiting.images.length ? { images: waiting.images } : {}) },
+        press.cardId, { text: waiting.text, ...confirm, ...(waiting.images.length ? { images: waiting.images } : {}), ...(waiting.voice ? { voice: waiting.voice } : {}) },
         this.actor(chatId, undefined, waiting.messageId),
       );
-      this.answer(chatId, press.cardId, result, waiting.text, waiting.images, waiting.messageId);
+      this.answer(chatId, press.cardId, result, waiting.text, waiting.images, waiting.messageId, waiting.voice);
       return result.ok ? "Sent." : "Not sent.";
     }
     if (!press.rulesHash || !press.projectName) return "This button is no longer valid.";

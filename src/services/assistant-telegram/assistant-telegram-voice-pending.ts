@@ -17,14 +17,23 @@ const log = createLogger("assistant-telegram");
 
 export type BundleImage = { data: string; mediaType: string };
 
-/** What a chat gathered into one message. `voice`: the id of the voice message that owns it. */
+/**
+ * What a chat gathered into one message. `voice`: the id of the voice message that owns it.
+ * `words`: the voice answers a card or a task (a reply to one, or the message after ✏️ Other or
+ * "Message about this task"), so it is a bundle of its own and its transcript goes where typed
+ * words to that message would have gone.
+ */
 export interface VoiceBundle {
   updateIds: number[];
   parts: string[];
   images: BundleImage[];
   quote: TelegramQuote | null;
   voice?: string;
+  words?: VoiceWordsAim;
 }
+
+/** The voice message itself, and the bot message it replies to (none after Other or "Message about this task"). */
+export interface VoiceWordsAim { messageId: number; replyToMessageId?: number }
 
 export interface VoiceJob {
   id: string;
@@ -86,6 +95,12 @@ export class PendingVoices {
     job.state = "done";
     this.jobs.delete(job.id);
     if (!keepAudio) removeAudio(job);
+  }
+
+  /** Whether any voice message is still being read. */
+  reading(): boolean {
+    for (const job of this.jobs.values()) if (job.state === "processing") return true;
+    return false;
   }
 
   forgetChat(chatId: string): void {

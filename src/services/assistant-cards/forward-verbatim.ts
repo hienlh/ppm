@@ -19,6 +19,7 @@ import type { SessionDelivery } from "../../shared/session-collab.ts";
 import type { DeliverUserWordsInput, DeliverUserWordsResult } from "../../server/ws/chat-user-words.ts";
 import type { FollowupHandle, FollowupOrigin } from "./card-reply-followup-tracker.ts";
 import { writeReplyImages, type ReplyImage, type ValidReplyImage } from "./card-reply-images.ts";
+import { encodeVoicePart } from "../../shared/voice-message.ts";
 import { unlinkSync } from "node:fs";
 
 export interface ForwardTarget {
@@ -53,7 +54,12 @@ export interface ForwardHow {
   followUp?: FollowupOrigin;
   /** Images sent with a reply, already checked (`validateReplyImages`); written to disk only here. */
   images?: readonly ValidReplyImage[];
+  /** The words were a voice message, the text its transcript (a Telegram reply; see `DeliverUserWordsInput.voice`). */
+  voice?: SpokenWords;
 }
+
+/** A voice message the server stored and had read; the words sent are its transcript. */
+export interface SpokenWords { path: string; durationSec: number }
 
 export interface ForwardEnv {
   now(): number;
@@ -116,7 +122,9 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
     if (actor.channel !== "telegram") return { ok: false, error: "This card has no manager chat: write to the Assistant instead." };
     const project = card.projectName ? ` for ${card.projectName}` : "";
     const images = how.images?.map(({ data, mediaType }) => ({ data, mediaType }));
-    const sent = await env.sendToAssistant(`(My reply to the ${kindName(card)} card${project}.)\n\n${text}`, card, images?.length ? images : undefined);
+    // Spoken, the transcript goes as the voice part a voice message to the Assistant always carries.
+    const said = how.voice ? encodeVoicePart({ path: how.voice.path, durationSec: how.voice.durationSec, transcript: text }) : text;
+    const sent = await env.sendToAssistant(`(My reply to the ${kindName(card)} card${project}.)\n\n${said}`, card, images?.length ? images : undefined);
     return sent.ok ? { ok: true, to: "assistant" } : sent;
   }
   const target = env.managerTarget(card);
@@ -149,6 +157,7 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
       targetSessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName,
       projectPath: target.projectPath, text, userWords, supersede: how.supersede, clientMessageId,
       ...(written.length ? { images: written } : {}),
+      ...(how.voice ? { voice: how.voice } : {}),
     });
   } catch (e) {
     // A send that threw delivered nothing: a reply left followed would wait 12 hours for a turn.
@@ -167,13 +176,14 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
     cardId: card.id, channel: actor.channel, ok: how.ok === true,
     ...(how.choice ? { choice: how.choice.id } : {}),
     ...(written.length ? { imageCount: written.length } : {}),
+    ...(how.voice ? { voice: true } : {}),
     ...(actor.deviceId ? { deviceId: actor.deviceId } : {}),
     ...(actor.fetchSite ? { fetchSite: actor.fetchSite } : {}),
     ...(actor.telegramChatId ? { telegramChatId: actor.telegramChatId } : {}),
   });
   const main = env.mainSession();
   if (main) {
-    const what = how.ok ? "gave their OK on" : how.choice ? `picked the choice with id "${how.choice.id}" on` : "answered";
+    const what = how.ok ? "gave their OK on" : how.choice ? `picked the choice with id "${how.choice.id}" on` : how.voice ? "answered by voice message" : "answered";
     env.note(main, `The user ${what} the ${kindName(card)} card ${card.id} for ${target.projectName} ${where(actor.channel)}; `
       + `PPM forwarded it word for word to ${card.payload.chat ? "the chat it came from" : "that project's manager chat"}.`);
   }
@@ -198,6 +208,8 @@ export interface TaskWordsInput {
   actor: CardActor;
   /** Where the chat's answer goes back once the turn that reads the words ends (Telegram). */
   followUp?: TaskFollowupContext;
+  /** The words were a voice message, `text` its transcript. */
+  voice?: SpokenWords;
 }
 
 export type TaskWordsResult =
@@ -227,6 +239,7 @@ export async function forwardUserWordsAboutTask(input: TaskWordsInput, env: Forw
       targetSessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName,
       projectPath: target.projectPath, text: input.text, userWords, supersede: false, clientMessageId,
       ...(input.chatKind === "manager" ? { taskRefs: [taskRef] } : {}),
+      ...(input.voice ? { voice: input.voice } : {}),
     });
   } catch (e) {
     following?.abandon();
@@ -240,12 +253,13 @@ export async function forwardUserWordsAboutTask(input: TaskWordsInput, env: Forw
   env.userWrote(delivered.sessionId);
   env.trace(delivered.sessionId, target.providerId, {
     taskId: taskRef.taskId, channel: actor.channel,
+    ...(input.voice ? { voice: true } : {}),
     ...(actor.telegramChatId ? { telegramChatId: actor.telegramChatId } : {}),
     ...(actor.deviceId ? { deviceId: actor.deviceId } : {}),
   });
   const main = env.mainSession();
   if (main) {
-    env.note(main, `The user wrote about task ${taskRef.ref} (${taskRef.taskId}) ${where(actor.channel)}; `
+    env.note(main, `The user ${input.voice ? "sent a voice message" : "wrote"} about task ${taskRef.ref} (${taskRef.taskId}) ${where(actor.channel)}; `
       + `PPM forwarded it word for word to ${input.chatKind === "manager" ? `the ${target.projectName} manager chat` : `the chat working on it in ${target.projectName}`}.`);
   }
   return { ok: true, sessionId: delivered.sessionId, delivered: delivered.delivered };

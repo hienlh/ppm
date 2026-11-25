@@ -14,7 +14,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { ensureUploadsDir } from "../chat-upload-storage.service.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
-import { encodeVoicePart } from "../../shared/voice-message.ts";
+import type { VoicePart } from "../../shared/voice-message.ts";
 import type { TelegramBotClient } from "../telegram/telegram-bot-client.ts";
 import type { InlineKeyboardMarkup, TelegramMessage } from "../telegram/telegram-types.ts";
 import { outcomeOf, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
@@ -42,8 +42,8 @@ export interface VoiceHost {
   onLane(chatId: string, work: () => Promise<void>): void;
   /** Nothing more joins the bundle: it leaves the chat's gather. */
   release(chatId: string, bundle: VoiceBundle): void;
-  /** Sends the bundle as one message, `voicePart` last, and confirms its updates. */
-  deliverBundle(chatId: string, bundle: VoiceBundle, voicePart: string | null): Promise<void>;
+  /** Sends the bundle as one message, the voice part last (or, for `bundle.words`, as an answer), and confirms its updates. */
+  deliverBundle(chatId: string, bundle: VoiceBundle, voice: VoicePart | null): Promise<void>;
   /** The bundle's updates are handed on (it now waits in memory for the user's answer). */
   confirm(bundle: VoiceBundle): void;
   /** "16:10" when a photo went to the Assistant a moment ago, so the voice is its follow-up. */
@@ -71,7 +71,7 @@ export class TelegramVoiceMessages {
     };
     bundle.voice = job.id;
     this.pending.add(job);
-    this.show(job, voiceStatusHtml(this.host.recentPhotoAt(chatId), !!audioExt));
+    this.show(job, voiceStatusHtml(bundle.words ? null : this.host.recentPhotoAt(chatId), !!audioExt, !!bundle.words));
     void this.read(job, media?.file_id ?? "").then(
       (result) => this.host.onLane(chatId, () => this.ready(job, result)),
       (e) => this.host.onLane(chatId, () => this.failed(job, e)),
@@ -117,6 +117,11 @@ export class TelegramVoiceMessages {
 
   forgetChat(chatId: string): void {
     this.pending.forgetChat(chatId);
+  }
+
+  /** Whether a voice message is still being downloaded or read (not one waiting on the user). */
+  reading(): boolean {
+    return this.pending.reading();
   }
 
   stop(): void {
@@ -204,15 +209,16 @@ export class TelegramVoiceMessages {
       ...(noCard && job.timing ? { timing: job.timing } : {}),
       ...(job.learned ? { learned: job.learned } : {}),
     };
-    this.show(job, voiceSentHtml(transcript, extras));
+    // An answer to a card is not "Sent" yet: where it goes, or why it does not, is said next.
+    const answers = !!job.bundle.words;
+    this.show(job, voiceSentHtml(transcript, answers ? { ...extras, answers } : extras));
     job.bundle.voice = undefined;
-    const part = encodeVoicePart({ path: job.path!, durationSec: job.durationSec, transcript });
-    await this.host.deliverBundle(job.chatId, job.bundle, part);
+    await this.host.deliverBundle(job.chatId, job.bundle, { path: job.path!, durationSec: job.durationSec, transcript });
     if (transcript === job.proposed) return;
     // Learned after the message went: the user waits for nothing, and a failure costs only a hint.
     void this.host.deps.learn({ project: ASSISTANT_PROJECT_NAME, before: job.proposed, after: transcript })
       .then((words) => {
-        if (words.length) this.show(job, voiceSentHtml(transcript, { ...extras, learned: [...(job.learned ?? []), ...words] }));
+        if (words.length) this.show(job, voiceSentHtml(transcript, { ...extras, ...(answers ? { answers } : {}), learned: [...(job.learned ?? []), ...words] }));
       })
       .catch((err) => log.warn(`Telegram chat ${job.chatId}: learning from a corrected transcript failed: ${(err as Error)?.message ?? err}`));
   }

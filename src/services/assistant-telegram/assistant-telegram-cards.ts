@@ -473,24 +473,12 @@ ${rememberLine(remember)}`;
    */
   typed(chatId: string, m: TypedAnswerMessage): string | null {
     if (m.notTheUsers) return null;
-    const armed = this.armed.get(chatId, this.deps.now());
-    let card: ShownCard | undefined;
-    if (m.replyToMessageId !== undefined) {
-      const to = m.replyToMessageId;
-      card = [...this.cards.values()].find((c) => c.chatId === chatId && c.isQuestion && !c.done
-        && (c.messageId === to || (armed?.cardKey === keyOf(c) && armed.promptMessageId === to)));
-    } else if (armed) {
-      card = this.cards.get(armed.cardKey);
-    }
-    if (!card || card.done) {
-      if (card) this.armed.endCard(keyOf(card), "ended");
-      return null;
-    }
-    const viaOther = armed?.cardKey === keyOf(card);
+    const aimed = this.aimedCard(chatId, m.replyToMessageId);
+    if (!aimed) return null;
+    const { card, armed, viaOther, q } = aimed;
     const text = m.text.trim();
-    const q = card.wizard ? card.questions[card.wizard.step] : card.questions[0];
     if (!viaOther) {
-      if (m.hasPhoto || !text || !card.takesWords || !q?.allowsFreeText || needsPpm(q)) return null;
+      if (m.hasPhoto || !text || !this.takesPlainReply(card, q)) return null;
     } else {
       if (m.hasPhoto) return "Send your answer as text, without a photo.";
       if (!text) return "Send your answer as text.";
@@ -507,6 +495,44 @@ ${rememberLine(remember)}`;
     if (error) return escapeTelegramHtml(error.slice(0, 180));
     if (viaOther) this.armed.end(chatId, "answered");
     return this.answer(card, { approved: true, answersById: byId }) ? answerSentHtml(text) : "This card is no longer waiting.";
+  }
+
+  /**
+   * Whether words in a message arriving now (a reply to `replyToMessageId`, or the next message after
+   * Other) would be taken by a question card: what `typed` would answer for a text message, without
+   * answering anything. A voice message asks before it is read, so its transcript goes where typed
+   * words would have gone.
+   */
+  wantsWords(chatId: string, replyToMessageId?: number): boolean {
+    const aimed = this.aimedCard(chatId, replyToMessageId);
+    return !!aimed && (aimed.viaOther || this.takesPlainReply(aimed.card, aimed.q));
+  }
+
+  /** A card that takes words as a plain reply: its question on screen asks for free text PPM need not handle. */
+  private takesPlainReply(card: ShownCard, q: NormalizedQuestion | undefined): boolean {
+    return card.takesWords && !!q?.allowsFreeText && !needsPpm(q);
+  }
+
+  /**
+   * The question card a message is for: the one it replies to (or whose "type your answer" line it
+   * replies to), else the one the chat pressed Other on. A card found already done ends its wait.
+   */
+  private aimedCard(chatId: string, replyToMessageId?: number): { card: ShownCard; armed: ArmedAnswer | null; viaOther: boolean; q: NormalizedQuestion | undefined } | null {
+    const armed = this.armed.get(chatId, this.deps.now());
+    let card: ShownCard | undefined;
+    if (replyToMessageId !== undefined) {
+      const to = replyToMessageId;
+      card = [...this.cards.values()].find((c) => c.chatId === chatId && c.isQuestion && !c.done
+        && (c.messageId === to || (armed?.cardKey === keyOf(c) && armed.promptMessageId === to)));
+    } else if (armed) {
+      card = this.cards.get(armed.cardKey);
+    }
+    if (!card || card.done) {
+      if (card) this.armed.endCard(keyOf(card), "ended");
+      return null;
+    }
+    const q = card.wizard ? card.questions[card.wizard.step] : card.questions[0];
+    return { card, armed, viaOther: armed?.cardKey === keyOf(card), q };
   }
 
   /**

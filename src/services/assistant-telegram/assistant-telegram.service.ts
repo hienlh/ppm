@@ -87,6 +87,8 @@ export interface BridgeCards extends MirrorCardSink {
   press(chatId: string, press: CardPress, group: string, cq: TelegramCallbackQuery): string;
   /** Words that may answer a question card in the user's own words: what to reply, or null when not for a card. */
   typed?(chatId: string, m: TypedAnswerMessage): string | null;
+  /** Whether words in a message arriving now would answer a question card (`typed` without acting). */
+  wantsWords?(chatId: string, replyToMessageId?: number): boolean;
   /** The chat's next message is meant for something else now: it stops waiting for a typed answer. */
   stopTyped?(chatId: string): void;
   forgetChat(chatId: string): void;
@@ -231,6 +233,7 @@ export class AssistantTelegramBridge {
       delivered: (id) => poller?.delivered(id),
       pressCard: (chatId, press, group, cq) => cards.press(chatId, press, group, cq),
       typedAnswer: (chatId, m) => cards.typed?.(chatId, m) ?? null,
+      wantsTypedAnswer: (chatId, replyTo) => cards.wantsWords?.(chatId, replyTo) ?? false,
       switchSession: (chatId, sessionId) => this.switchSession(chatId, sessionId),
       relayCard: (chatId, card) => cards.relayed(chatId, card),
       pressManagerCard: (chatId, press, group) => cardReplies.press(chatId, press, group),
