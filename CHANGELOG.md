@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.26.36] - 2026-11-25
+
+### Added
+
+- **The AI can fix learned voice words**: the PPM Assistant reads and undoes them through its settings tools (logged, with Undo), and any chat can use `ppm speech learned list|remove|restore`.
+
+### Fixed
+
+- **Voice self-learning now learns from the PPM Assistant**: one chat counts once a day instead of once ever, so a word misheard on three days is learned.
+- **A voice message replying to a card on Telegram answers that card**, going to the manager chat that sent it like typed words do.
+
 ## [0.26.35] - 2026-11-25
 
 ### Added
