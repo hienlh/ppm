@@ -4,7 +4,7 @@
  */
 import { api } from "@/lib/api-client";
 import { isPpmTool } from "../../../shared/ppm-tools";
-import type { FeatureIntro, FeatureIntroAnswer, FeatureIntroSetting, FeatureIntrosView } from "../../../shared/feature-intros";
+import { isFeatureUiPref, type FeatureIntro, type FeatureIntroAnswer, type FeatureIntroSetting, type FeatureIntrosView } from "../../../shared/feature-intros";
 import type { OnboardingStatus } from "./onboarding-types";
 
 const base = (id: string) => `/api/feature-intros/${encodeURIComponent(id)}`;
@@ -18,9 +18,11 @@ const isKnownSetting = (value: unknown): value is FeatureIntroSetting =>
 
 /**
  * Where a feature's own switch lives in Settings, for the step's "decide there instead" link. A
- * feature made of tool switches is decided in Tools; a feature that is one setting, on its pane.
+ * feature made of tool switches is decided in Tools; a feature that is one setting, on its pane;
+ * an editor setting (`uiPref`), in Appearance.
  */
-export function featureIntroSettingsLink(intro: Pick<FeatureIntro, "setting">): { category: "tools" | "assistant" | "voice" | "approvals" | "web-browser"; label: string; assistantTab?: "changes" } {
+export function featureIntroSettingsLink(intro: Pick<FeatureIntro, "setting" | "uiPref">): { category: "tools" | "assistant" | "voice" | "approvals" | "web-browser" | "appearance"; label: string; assistantTab?: "changes" } {
+  if (intro.uiPref) return { category: "appearance", label: "Decide in Settings → Appearance" };
   if (intro.setting === "remembered_approvals") return { category: "approvals", label: "Choose in Settings → Approvals instead" };
   if (intro.setting === "web_browser") return { category: "web-browser", label: "Choose in Settings → Web Browser instead" };
   if (intro.setting === "voice_messages" || intro.setting === "voice_self_learning") {
@@ -38,7 +40,9 @@ function parseIntro(raw: unknown): FeatureIntro | null {
   if (!Array.isArray(value.tools) || !value.tools.every(isPpmTool)) return null;
   // A feature that is one setting keeps it: the step links to where that setting lives.
   const setting = isKnownSetting(value.setting) ? { setting: value.setting } : {};
-  return { id: value.id, title: value.title, body: value.body, tools: value.tools, ...setting, since: typeof value.since === "string" ? value.since : "" };
+  const intro: FeatureIntro = { id: value.id, title: value.title, body: value.body, tools: value.tools, ...setting, since: typeof value.since === "string" ? value.since : "" };
+  if (isFeatureUiPref(value.uiPref)) intro.uiPref = value.uiPref;
+  return intro;
 }
 
 /** The server's answer, or null when it is not one: an unexpected shape shows nothing. */

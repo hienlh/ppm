@@ -19,6 +19,7 @@ const { useOnboardingStore } = await import("../../../src/web/stores/onboarding-
 const { initialOnboardingState, hydrateOnboarding } = await import("../../../src/web/lib/onboarding/onboarding-state");
 const { useProjectStore } = await import("../../../src/web/stores/project-store");
 const { api } = await import("../../../src/web/lib/api-client");
+const { useSettingsStore } = await import("../../../src/web/stores/settings-store");
 
 const INTRO = FEATURE_INTROS[0]!;
 const SECOND: FeatureIntro = { id: "second-feature", title: "A second feature", body: "More.", tools: ["open_url"], since: "x" };
@@ -180,6 +181,35 @@ describe("answering", () => {
     await flush();
     expect(dialog()).toBeNull();
     expect(posts).toEqual([]);
+  });
+});
+
+describe("a feature that is an editor setting", () => {
+  const GUTTER = FEATURE_INTROS.find((i) => i.uiPref === "gutterChanges")!;
+  const gutterDialog = () => document.querySelector(`[role="dialog"][aria-labelledby="feature-intro-${GUTTER.id}"]`);
+  afterEach(() => useSettingsStore.setState({ gutterChanges: false }));
+
+  it("shows the answer this device gave at once, as the server decided it", async () => {
+    served.pending = [GUTTER];
+    post.mockImplementation(((path: string, body?: unknown) => { posts.push([path, body]); return Promise.resolve({ answer: "on", skips: 0 }); }) as never);
+    await mountRoot();
+    expect(gutterDialog()?.textContent).toContain("Settings → Appearance");
+    expect(useSettingsStore.getState().gutterChanges).toBe(false);
+    await click(button("Turn on"));
+    await flush();
+    expect(posts).toEqual([[`/api/feature-intros/${GUTTER.id}/answer`, { answer: "on" }]]);
+    expect(useSettingsStore.getState().gutterChanges).toBe(true);
+  });
+
+  it("follows an answer given on another device", async () => {
+    served.pending = [GUTTER];
+    await mountRoot();
+    served.pending = [];
+    const detail = { type: FEATURE_INTROS_CHANGED_EVENT, change: "answer", id: GUTTER.id, answer: "on" };
+    await act(async () => { window.dispatchEvent(new CustomEvent(FEATURE_INTROS_CHANGED_EVENT, { detail })); });
+    await flush();
+    expect(gutterDialog()).toBeNull();
+    expect(useSettingsStore.getState().gutterChanges).toBe(true);
   });
 });
 

@@ -12,6 +12,10 @@
  * feature's switches set and others missing is a setting saved before the feature was
  * introduced; there the missing ones follow the set ones — on if any set one is on
  * (`answerFromSwitches`), which is also the answer recorded for a feature decided in Settings.
+ *
+ * A feature that is an editor setting rather than AI tools names a `uiPref` instead (and no
+ * tools): the answer is that boolean in the `ui_prefs` row, unset means off, and the switch for it
+ * in Settings, once saved, is the answer (`answerFromUiPrefs`).
  */
 import type { PpmTool, PpmToolSwitches } from "./ppm-tools.ts";
 import { SESSION_HISTORY_TOOLS } from "./session-history-tools.ts";
@@ -24,13 +28,15 @@ export interface FeatureIntro {
   title: string;
   /** Two to four short sentences. */
   body: string;
-  /** The Settings → Tools switches the answer sets; empty for a feature that is a {@link setting}. */
+  /** The Settings → Tools switches the answer sets; empty for a feature that is a {@link setting} or a `uiPref`. */
   tools: readonly PpmTool[];
   /**
    * A feature that is one setting rather than tool switches: Turn on / Turn off writes it, and a
    * value already chosen in Settings settles the question (`feature-intros.service.ts`).
    */
   setting?: FeatureIntroSetting;
+  /** The `ui_prefs` boolean the answer sets, for a feature that is an editor setting, not AI tools. */
+  uiPref?: FeatureUiPref;
   /** When the feature arrived, for the record. */
   since: string;
 }
@@ -45,6 +51,11 @@ export interface FeatureIntro {
 export type FeatureIntroSetting =
   | "assistant_permission_mode" | "voice_messages" | "voice_self_learning" | "assistant_settings_tools" | "remembered_approvals"
   | "web_browser";
+
+/** The `ui_prefs` booleans a feature introduction may decide. Off while unset. */
+export const FEATURE_UI_PREFS = ["gutterChanges"] as const;
+export type FeatureUiPref = typeof FEATURE_UI_PREFS[number];
+export const isFeatureUiPref = (value: unknown): value is FeatureUiPref => (FEATURE_UI_PREFS as readonly unknown[]).includes(value);
 
 export const FEATURE_INTROS: readonly FeatureIntro[] = [
   {
@@ -141,6 +152,17 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
     setting: "web_browser",
     since: "2026-11",
   },
+  {
+    // An editor setting, not AI tools: every open editor re-reads git's index every few seconds.
+    id: "editor-gutter-changes-2026-11",
+    title: "Changed lines in the editor's gutter",
+    body: "The editor can mark lines that differ from what git has staged, as VS Code does: green added, blue changed, "
+      + "red where lines were removed. Each open editor checks git every few seconds while it is on screen. "
+      + "Settings → Appearance has the switch. It stays off until you choose.",
+    tools: [],
+    uiPref: "gutterChanges",
+    since: "2026-11",
+  },
 ];
 
 export type FeatureIntroAnswer = "on" | "off";
@@ -212,6 +234,12 @@ export function answerFromSwitches(switches: PpmToolSwitches | undefined, intro:
   const set = intro.tools.map((tool) => switches?.[tool]).filter((value): value is boolean => typeof value === "boolean");
   if (set.length === 0) return null;
   return set.includes(true) ? "on" : "off";
+}
+
+/** What the saved `ui_prefs` say about `intro`'s setting: null while it is unset or `intro` has none. */
+export function answerFromUiPrefs(prefs: Record<string, unknown> | undefined, intro: FeatureIntro): FeatureIntroAnswer | null {
+  const value = intro.uiPref ? prefs?.[intro.uiPref] : undefined;
+  return typeof value === "boolean" ? (value ? "on" : "off") : null;
 }
 
 /** Explicit switches for every tool of `intro`, as an answer writes them. */

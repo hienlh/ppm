@@ -6,7 +6,8 @@
  * reload is a new app open.
  */
 import { create } from "zustand";
-import type { FeatureIntro, FeatureIntroAnswer, FeatureIntrosView } from "../../shared/feature-intros";
+import { featureIntroById, type FeatureIntro, type FeatureIntroAnswer, type FeatureIntrosView } from "../../shared/feature-intros";
+import { applySavedFeatureUiPref } from "@/stores/settings-store";
 import {
   fetchFeatureIntros, postFeatureIntroAnswer, postFeatureIntroSkip,
 } from "@/lib/onboarding/feature-intros-client";
@@ -46,6 +47,15 @@ interface FeatureIntrosActions {
 const initial: FeatureIntrosState = { view: null, settled: false, order: [], handled: [], skipped: [], closed: false, busy: false, error: null };
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/**
+ * A feature that is an editor setting (`uiPref`) shows its decided answer at once, as the server
+ * saved it: the settings store read `ui_prefs` when the page loaded, before the answer existed.
+ */
+export function showDecidedUiPref(id: string, answer: unknown): void {
+  const pref = featureIntroById(id)?.uiPref;
+  if (pref && (answer === "on" || answer === "off")) applySavedFeatureUiPref(pref, answer === "on");
+}
+
 /** Bumped by every load; only the newest one's answer is kept, whichever order they finish in. */
 let loadSeq = 0;
 
@@ -77,7 +87,9 @@ export const useFeatureIntrosStore = create<FeatureIntrosState & FeatureIntrosAc
     answer: async (id, answer) => {
       set({ busy: true, error: null });
       try {
-        await postFeatureIntroAnswer(id, answer);
+        // The state answered is the decision that stands, which a late answer does not change.
+        const state = await postFeatureIntroAnswer(id, answer);
+        showDecidedUiPref(id, (state as { answer?: unknown } | null)?.answer);
         markHandled(id);
         set({ busy: false });
       } catch (e) {

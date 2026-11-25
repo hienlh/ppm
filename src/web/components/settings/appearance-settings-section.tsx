@@ -5,7 +5,7 @@
  * light/dark within it, and System follows the OS.
  */
 
-import { WrapText } from "@/lib/icons";
+import { FileDiff, WrapText } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -74,6 +74,8 @@ export function AppearanceSettingsSection() {
       mobileWordWrap: s.mobileWordWrap, toggleMobileWordWrap: s.toggleMobileWordWrap,
     })),
   );
+  const gutterChanges = useSettingsStore((s) => s.gutterChanges);
+  const setGutterChanges = useSettingsStore((s) => s.setGutterChanges);
   const isMobile = useIsMobile();
 
   return (
@@ -135,6 +137,20 @@ export function AppearanceSettingsSection() {
           checked={isMobile ? mobileWordWrap : wordWrap}
           onCheckedChange={() => (isMobile ? toggleMobileWordWrap() : toggleWordWrap())}
         />
+      </section>
+
+      {/* Saving this switch also answers the tour's "PPM has new features" question about it. */}
+      <section className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <FileDiff className="size-4 text-muted-foreground shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Changed Lines in the Gutter</p>
+            <p className="text-xs text-muted-foreground">
+              Mark lines that differ from what git has staged. Each open editor checks git every few seconds.
+            </p>
+          </div>
+        </div>
+        <Switch aria-label="Changed lines in the gutter" checked={gutterChanges} onCheckedChange={setGutterChanges} />
       </section>
 
       <section className="space-y-2">
