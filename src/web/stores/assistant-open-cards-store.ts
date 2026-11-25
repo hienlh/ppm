@@ -15,6 +15,7 @@ import {
   ASSISTANT_CARD_EVENT, ASSISTANT_WAITING_EVENT, cardFromEvent, fetchOpenAssistantCards,
 } from "@/lib/assistant-cards-api";
 import { WAITING_CARD_KINDS, type AssistantCard } from "../../shared/assistant-cards";
+import { announceWithdrawal } from "@/lib/card-withdrawal-toast";
 
 /** A press on a red count: show that project's (or every) waiting card. `nonce` makes each press new. */
 export interface WaitingFocus {
@@ -89,7 +90,10 @@ export function ensureOpenCards(): void {
     const card = cardFromEvent((event as CustomEvent).detail);
     if (!card) return;
     changes += 1;
+    // A card this tab showed as waiting that its author just withdrew: said once, with Undo.
+    const wasWaiting = (useOpenCardsStore.getState().cards ?? []).some((c) => c.id === card.id);
     applyOpenCardResult(card);
+    if (wasWaiting) announceWithdrawal(card);
   });
   window.addEventListener(ASSISTANT_WAITING_EVENT, (event) => {
     const detail = (event as CustomEvent).detail as { total?: unknown; byProject?: unknown } | null;

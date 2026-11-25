@@ -7,13 +7,13 @@
  * A manager chat's approval or question goes out as the relay's own card (the same Allow rule,
  * answering the manager chat directly), and that card ends itself when the request does.
  */
+import { getCardRow, type TelegramCardRef } from "../assistant-cards/assistant-cards-db.ts";
 import { primeTelegramPathLinks } from "../telegram/telegram-path-links.ts";
 import { chatControl, type LiveApprovalCard } from "../chat-control/chat-control.ts";
 import { getSessionProvider, getSessionTitle } from "../db.service.ts";
 import { projectTelegramDetail } from "../assistant-managers/manager-chats-db.ts";
 import { getMainSession } from "../assistant/assistant-main-session.ts";
 import { addCardTelegramRef, setCardOutboundError } from "../assistant-cards/assistant-cards-outbound-db.ts";
-import { getCardRow } from "../assistant-cards/assistant-cards-db.ts";
 import type { CardOutboundSink } from "../assistant-cards/card-outbound.ts";
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import type { InlineKeyboardButton } from "../telegram/telegram-types.ts";
@@ -172,8 +172,24 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     })));
     for (const chatId of chats) {
       if (header) this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: `<b>${escapeTelegramHtml(header)}</b>` }, { label: "away header", silent: () => this.silent() }));
-      cards.forEach((card, i) => this.sendOne(chatId, card, links[i] ?? null, threads[i]!.get(chatId) ?? null, extras[i] ?? null));
+      cards.forEach((card, i) => this.sendOne(
+        chatId, card, links[i] ?? null, threads[i]!.get(chatId) ?? this.supersededThread(card, chatId), extras[i] ?? null,
+      ));
     }
+  }
+
+  /**
+   * A card that replaces earlier ones goes under the old card's message in this chat, so the two
+   * read as one thread; it rings no louder for it. Null when no replaced card was shown here.
+   */
+  private supersededThread(card: AssistantCard, chatId: string): Thread | null {
+    for (const old of card.payload.supersedes ?? []) {
+      let refs: TelegramCardRef[] = [];
+      try { refs = getCardRow(old.id)?.telegramRefs ?? []; } catch { continue; }
+      const ref = refs.find((r) => r.chatId === chatId && !r.followUp);
+      if (ref) return { replyTo: ref.messageId, loud: false };
+    }
+    return null;
   }
 
   private async linkFor(card: AssistantCard): Promise<string | null> {

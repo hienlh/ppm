@@ -4,6 +4,7 @@
  * two manager news sources of the wake queue, and the restart sweep. Called by the Assistant hub's
  * startup, after the watch service, so every unattended turn goes through the one wake queue.
  */
+import { startCardTaskClosure } from "./card-task-closure.ts";
 import { chatLifecycle } from "../chat-control/chat-lifecycle.ts";
 import { chatControl } from "../chat-control/chat-control.ts";
 import { addNotificationSuppressor } from "../chat-control/notification-suppressor.ts";
@@ -113,6 +114,8 @@ export function startAssistantCards(): void {
   ];
   // An answer whose words never reached its manager chat opens its card again (now, for a restart).
   stops.push(startCardDelivery());
+  // A card about a task follows the task: news cleared, a waiting card told it was closed.
+  stops.push(startCardTaskClosure());
   // The manager's answer to a reply on a card goes back to where the user replied.
   stops.push(startCardReplyFollowups());
   // So does the answer to words the user sent a task's chat from Telegram.

@@ -18,7 +18,7 @@
 import { findCardByTelegramRef } from "../assistant-cards/assistant-cards-outbound-db.ts";
 import { chooseCardOption, okCard, replyToCard, type CardReplyResult } from "../assistant-cards/card-reply-actions.ts";
 import { assistantCards } from "../assistant-cards/assistant-cards.service.ts";
-import type { AssistantCard } from "../../shared/assistant-cards.ts";
+import { cardWithdrawal, type AssistantCard } from "../../shared/assistant-cards.ts";
 import type { CardActor } from "../assistant-cards/forward-verbatim.ts";
 import { decideManagerRules } from "../assistant-managers/manager-rules.service.ts";
 import { escapeTelegramHtml } from "../notification-format.ts";
@@ -36,6 +36,8 @@ export const CLOSED_CARD_NOT_SENT = "Not sent: this card was already decided or 
  */
 export function cardDecided(card: Pick<AssistantCard, "status" | "answer">): boolean {
   if (card.status === "open" || card.status === "info") return false;
+  // Withdrawn by its author, not decided by the user: their words may still be sent, after asking.
+  if (cardWithdrawal(card)) return false;
   if (card.status !== "answered") return true;
   const a = card.answer;
   return !a || a.ok === true || !!a.choice || a.approved !== undefined;

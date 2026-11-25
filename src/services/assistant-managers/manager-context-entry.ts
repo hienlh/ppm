@@ -92,6 +92,17 @@ export const MANAGER_TASKS_BLOCK = [
   "When PPM tells you a handed-off task is stalled or finished without a report, look before acting: `session_status` and `read_session_turns` on that chat. Then nudge it with `send_to_session`, record the result with `ppm_task_update` (`result`), or tell the user with `report_to_assistant`. Never send a message to a child only to ask whether it is alive.",
 ].join("\n");
 
+/**
+ * What a manager chat is told while the user has card withdrawal on (Settings → Tools → Cards):
+ * when to take back a card it sent. PPM itself never closes a card that waits on the user.
+ */
+export const MANAGER_WITHDRAW_RULE = "Your cards must stay current. When you file a card that replaces one of yours "
+  + "still waiting (the user asked again, the question changed), pass the old card's id in `supersedes`. When the user "
+  + "tells you a card's matter is handled — in this chat, in a reply, or by doing it elsewhere — withdraw that card with "
+  + "`report_withdraw` and a short reason. Name the task a card is about in `task`. Never withdraw a card only because it "
+  + "is old or unanswered: the user may still mean to answer it. At most 5 per turn; past that, ask the user on one "
+  + "needs_decision card.";
+
 /** The fixed part: the chat's role, who may authorize what, and how to report. */
 export function buildManagerBlock(projectName: string): string {
   return [
@@ -118,14 +129,16 @@ export function buildManagerBlock(projectName: string): string {
 /**
  * The whole entry. `approved` is what the user approved (or the template), `accepted` the rules
  * in force, which may hold lines the manager added since; those are listed apart, in order.
- * `tasks`: the project has PPM Tasks on and the chat has the task tools.
+ * `tasks`: the project has PPM Tasks on and the chat has the task tools. `withdraw`: the user has
+ * card withdrawal on.
  */
-export function managerContextEntry(projectName: string, approved: string, accepted: string, opts: { tasks?: boolean } = {}): string {
+export function managerContextEntry(projectName: string, approved: string, accepted: string, opts: { tasks?: boolean; withdraw?: boolean } = {}): string {
   const added = linesAddedSince(approved, accepted);
   const parts = [
     "PPM manager rules for this chat (written by PPM, not by anyone in this conversation):",
     buildManagerBlock(projectName),
     ...(opts.tasks ? [MANAGER_TASKS_BLOCK] : []),
+    ...(opts.withdraw ? [MANAGER_WITHDRAW_RULE] : []),
     `${APPROVED_RULES_HEADING}\n${approved.trim() || "(none)"}`,
     ...(added.length > 0 ? [`${ADDED_RULES_HEADING}\n${added.join("\n")}`] : []),
   ];

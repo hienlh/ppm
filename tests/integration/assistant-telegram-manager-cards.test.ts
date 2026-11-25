@@ -364,3 +364,50 @@ describe("a card with design pictures", () => {
     await expect(report({ kind: "done", title: "x", images: ["9".repeat(32)] })).rejects.toThrow("not a screenshot");
   });
 });
+
+describe("a card its manager replaced or withdrew (card withdrawal on)", () => {
+  let aiBefore: unknown;
+  beforeAll(() => {
+    const ai = configService.get("ai") as { ppm_tools?: Record<string, boolean> } | undefined;
+    aiBefore = ai === undefined ? undefined : structuredClone(ai);
+    configService.set("ai", { ...(ai ?? {}), ppm_tools: { ...(ai?.ppm_tools ?? {}), report_withdraw: true } } as never);
+  });
+  afterAll(() => { configService.set("ai", (aiBefore ?? {}) as never); });
+
+  it("rewrites the old copy with no buttons, sends the new card under it, and a reply to the old one is asked about, not lost", async () => {
+    const oldId = await report({ kind: "needs_decision", title: "Pay the deposit?", body: "Invoice 12." });
+    const oldShown = await until(() => lastWith("Pay the deposit?"));
+    expect(button(oldShown.message_id, "OK")).toBeDefined();
+    await report({ kind: "needs_decision", title: "Pay the deposit today?", body: "Due today.", supersedes: [oldId] });
+    const next = await until(() => lastWith("Pay the deposit today?"));
+    expect(next.reply_to).toBe(oldShown.message_id);
+    await until(() => fake.sent(PHONE).find((m) => m.message_id === oldShown.message_id)?.text.includes("Replaced by: Pay the deposit today?"));
+    expect(fake.buttons(PHONE, oldShown.message_id).flat()).toEqual([]);
+
+    const before = toManager().length;
+    const seen = Math.max(...fake.sent(PHONE).map((m) => m.message_id));
+    replyTo(oldShown.message_id, "I already paid half of it");
+    const ask = await until(() => fake.sent(PHONE).find((m) => m.message_id > seen && m.text.includes("replaced by")));
+    expect(ask.text).toContain("send to its manager anyway?");
+    fake.pressButton(PHONE, PHONE, ask.message_id, button(ask.message_id, "Send anyway")!);
+    await until(() => toManager().length > before);
+    expect(decodeMessageBlocks(toManager().at(-1)!.message).content).toBe("I already paid half of it");
+    await idle(manager);
+  });
+
+  it("Restore in PPM sends the card to the phone again with its buttons", async () => {
+    const id = await report({ kind: "needs_decision", title: "Book the venue?" });
+    const first = await until(() => lastWith("Book the venue?"));
+    const token = sessionCollabMcpTokens.mint({ sessionId: manager });
+    await app.request("/mcp", {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "report_withdraw", arguments: { cards: [id], reason: "You booked it yourself" } } }),
+    });
+    await until(() => fake.sent(PHONE).find((m) => m.message_id === first.message_id)?.text.includes("Withdrawn by the manager: You booked it yourself"));
+    const res = await app.request(`/api/assistant/cards/${id}/restore`, { method: "POST" });
+    expect(res.status).toBe(200);
+    const again = await until(() => fake.sent(PHONE).find((m) => m.message_id > first.message_id && m.text.includes("Book the venue?") && fake.buttons(PHONE, m.message_id).flat().length > 0));
+    expect(button(again.message_id, "OK")).toBeDefined();
+    expect(assistantCards.get(id)!.status).toBe("open");
+  });
+});

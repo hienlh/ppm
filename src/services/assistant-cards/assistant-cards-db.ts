@@ -290,3 +290,40 @@ export function findOpenCardsBy(kind: AssistantCardKind, field: string, value: s
     WHERE status = 'open' AND kind = ? AND json_extract(payload_json, '$.${field}') = ? ORDER BY created_at`)
     .all(kind, value) as Raw[]).map(toRow);
 }
+
+/**
+ * Cards `sessionId` withdrew in turn `turnId`, or — when the turn is not known — since `since`:
+ * what the per-turn withdrawal limit counts.
+ */
+export function countWithdrawnBy(sessionId: string, turnId: string | null, since: number): number {
+  const row = turnId
+    ? getDb().query(`SELECT COUNT(*) AS n FROM assistant_cards WHERE status = 'dismissed'
+        AND json_extract(answer_json, '$.withdrawn.sessionId') = ? AND json_extract(answer_json, '$.withdrawn.turnId') = ?`).get(sessionId, turnId)
+    : getDb().query(`SELECT COUNT(*) AS n FROM assistant_cards WHERE status = 'dismissed'
+        AND json_extract(answer_json, '$.withdrawn.sessionId') = ? AND updated_at >= ?`).get(sessionId, since);
+  return (row as { n: number }).n;
+}
+
+/** Open cards of the given kinds in a project, oldest first: what a manager may withdraw. */
+export function listOpenProjectCards(projectKey: string, kinds: readonly AssistantCardKind[]): CardRow[] {
+  if (kinds.length === 0) return [];
+  const ks = kinds.map(() => "?").join(", ");
+  return (getDb().query(`SELECT ${COLUMNS} FROM assistant_cards WHERE status = 'open' AND project_key = ? AND kind IN (${ks}) ORDER BY created_at`)
+    .all(projectKey, ...kinds) as Raw[]).map(toRow);
+}
+
+/** Open cards a manager tied to one of these tasks (`payload.aboutTask`), oldest first. */
+export function listOpenCardsForTasks(taskIds: readonly string[]): CardRow[] {
+  if (taskIds.length === 0) return [];
+  const ids = taskIds.map(() => "?").join(", ");
+  return (getDb().query(`SELECT ${COLUMNS} FROM assistant_cards
+    WHERE status = 'open' AND json_extract(payload_json, '$.aboutTask.taskId') IN (${ids}) ORDER BY created_at`)
+    .all(...taskIds) as Raw[]).map(toRow);
+}
+
+/** Open cards whose id starts with `prefix` (hex digits and dashes only; checked by the caller). */
+export function listOpenCardsWithIdPrefix(prefix: string): CardRow[] {
+  if (!/^[0-9a-f-]+$/.test(prefix)) return [];
+  return (getDb().query(`SELECT ${COLUMNS} FROM assistant_cards WHERE status = 'open' AND id LIKE ? ORDER BY created_at LIMIT 5`)
+    .all(`${prefix}%`) as Raw[]).map(toRow);
+}

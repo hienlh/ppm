@@ -137,14 +137,14 @@ describe("scheduled prompts in a chat", () => {
 
   it("is a question of its own: turning the session tools on leaves the schedule tools off and still asked", () => {
     configService.set("feature_intros", {});
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11", "card-withdraw-2026-11"]);
     answerFeatureIntro(INTRO.id, "on");
     for (const tool of THREE) expect(onTools()).not.toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11", "card-withdraw-2026-11"]);
 
     answerFeatureIntro(SCHEDULES.id, "on");
     for (const tool of THREE) expect(onTools()).toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11", "card-withdraw-2026-11"]);
   });
 
   it("asks apart about script proposals: prompts turned on never agreed to code that runs on this machine", () => {

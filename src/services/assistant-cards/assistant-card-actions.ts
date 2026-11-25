@@ -104,6 +104,19 @@ export function dismissCard(id: string, deps: CardActionDeps = realDeps): CardAc
 }
 
 /**
+ * Brings back a card its author withdrew: the user's Restore, from PPM. A card the user dismissed
+ * themselves, or one that waits already, is refused.
+ */
+export function restoreCard(id: string, deps: CardActionDeps = realDeps): CardActionResult {
+  const card = deps.cards.get(id);
+  if (!card) return { ok: false, status: 404, error: "No such card" };
+  if (card.status !== "dismissed" || !card.answer?.withdrawn) return { ok: false, status: 409, error: "This card was not withdrawn", card };
+  const moved = deps.cards.restore(id);
+  if (!moved.ok) return { ok: false, status: 409, error: "This card changed meanwhile", ...(moved.card ? { card: moved.card } : {}) };
+  return { ok: true, card: moved.card };
+}
+
+/**
  * After a restart: an approval or question card whose request no live chat shows is gone. A chat
  * with cards queued behind its shown one keeps its cards, since the queue's ids are not visible.
  */

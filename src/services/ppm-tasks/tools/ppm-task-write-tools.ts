@@ -4,6 +4,7 @@
  * service's; this layer only names things the way a model does (status and member names, task
  * references, `self`) and says what happened, including what the user and the manager will see.
  */
+import { waitingCardsAboutClosedTask } from "../../assistant-cards/card-task-closure.ts";
 import { textResult, type Json } from "../../mcp-http-endpoint.ts";
 import type { BaseGroup, ClosedAs, FieldType, TaskPatch, TaskView } from "../../../shared/ppm-tasks.ts";
 import { ME_MEMBER_ID } from "../../../shared/ppm-tasks.ts";
@@ -136,6 +137,11 @@ function afterWrite(env: WriteToolsEnv, caller: TaskCaller, w: Written): string 
       });
     }
     lines.push("This turn was started by PPM, not by the user: the change is marked as made while the user was away and listed on a card the user gets when this turn ends.");
+  }
+  // Cards about the task that still wait: the closer may withdraw what closing it settled.
+  if (w.kind.startsWith("Closed") && w.task.baseGroup === "closed" && caller.kind !== "chat") {
+    const waiting = waitingCardsAboutClosedTask(w.task.id, caller.kind === "assistant" ? "card_withdraw" : "report_withdraw");
+    if (waiting) lines.push(waiting);
   }
   if (caller.kind === "assistant" && managerSessionFor(w.task.projectKey)) {
     lines.push(caller.unattended

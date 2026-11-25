@@ -36,9 +36,31 @@ export const MANAGER_REPLY_CARD_KINDS: readonly AssistantCardKind[] = [
 export const REPORT_KINDS = ["needs_decision", "urgent", "done", "failed", "digest"] as const;
 export type ReportKind = (typeof REPORT_KINDS)[number];
 
+/**
+ * The kinds a manager chat (or the PPM Assistant) may withdraw or replace: its own reports. A chat's
+ * approval or question mirror ends with its request, and a rules change or a budget pause is the
+ * user's own decision, so those never are.
+ */
+export const WITHDRAWABLE_CARD_KINDS: readonly AssistantCardKind[] = ["needs_decision", "urgent", "done", "failed"];
+
+/** How a card its author took back was taken back: stored with the card's answer. */
+export interface CardWithdrawal {
+  /** The chat that withdrew it (a manager chat, or the PPM Assistant). */
+  sessionId: string;
+  reason: string;
+  /** The card that replaces it, when one does. */
+  supersededBy?: { id: string; title: string };
+  /** The turn of that chat it was withdrawn in, when PPM knew it (what the per-turn limit counts). */
+  turnId?: string;
+}
+
 /** Who answered a card, where, and when. */
 export interface AssistantCardAnswer {
-  by: "user" | "ppm";
+  /**
+   * `manager` and `assistant`: the card's author took it back (`withdrawn`); nobody answered it, so
+   * the card is `dismissed` and any surface may tell the user so.
+   */
+  by: "user" | "ppm" | "manager" | "assistant";
   channel: "ppm" | "telegram" | "chat";
   at: number;
   /** For an approval: whether it was allowed. */
@@ -59,6 +81,8 @@ export interface AssistantCardAnswer {
   clientMessageId?: string;
   /** The manager chat the words went to. */
   deliveredTo?: string;
+  /** Set when the card's author withdrew it (or replaced it with another card). */
+  withdrawn?: CardWithdrawal;
 }
 
 /** The manager's answer to a reply on a card, shown under the card. */
@@ -224,6 +248,15 @@ export interface AssistantCardPayload {
    * manager: its provenance line names the Assistant.
    */
   byAssistant?: boolean;
+  /** Report cards: the earlier cards of the same manager this card replaces (they were withdrawn). */
+  supersedes?: Array<{ id: string; title: string }>;
+  /** Report cards: the PPM task the manager said the card is about (`report_to_assistant` `task`). */
+  aboutTask?: { taskId: string; ref: string; title?: string };
+  /**
+   * A waiting card whose `aboutTask` was closed since: the card still waits (only its author or the
+   * user closes it), and says so. Cleared when the task is opened again.
+   */
+  taskClosed?: { closedAs: "done" | "dropped" | null; at: number };
 }
 
 export interface AssistantCard {
@@ -280,6 +313,11 @@ export const NO_REPLY_TEXT = "[no reply]";
 /** Whether a turn's final text is the "nothing to say" answer, so it can be collapsed. */
 export function isNoReplyText(text: string | null | undefined): boolean {
   return typeof text === "string" && text.trim().toLowerCase() === NO_REPLY_TEXT;
+}
+
+/** The withdrawal on a card its author took back; null for any other card. */
+export function cardWithdrawal(card: { status: AssistantCardStatus; answer: AssistantCardAnswer | null }): CardWithdrawal | null {
+  return card.status === "dismissed" && card.answer?.withdrawn ? card.answer.withdrawn : null;
 }
 
 /** The server-written line on a report card the PPM Assistant wrote itself. */

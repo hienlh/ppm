@@ -154,6 +154,18 @@ export function createCardOutbound(deps: CardOutboundDeps = realDeps) {
     sink.overdue?.(card);
   }
 
+  /**
+   * A withdrawn card the user brought back: its copy on the phone lost its buttons when it was
+   * withdrawn, so it goes out once more; one that never went out goes out now as a new card would.
+   */
+  function onRestored(card: AssistantCard): void {
+    if (deps.row(card.id)?.outbound === "sent") {
+      if (sink?.ready()) sink.send([card]);
+      return;
+    }
+    onCreated(card);
+  }
+
   function onChanged(card: AssistantCard): void {
     // Answered on the phone, then opened again because the words never arrived: the copy there has
     // lost its buttons, so the card goes out once more, saying why.
@@ -213,6 +225,7 @@ export function createCardOutbound(deps: CardOutboundDeps = realDeps) {
         if (change === "created") onCreated(card);
         else if (change === "shown") onShown(card);
         else if (change === "overdue") onOverdue(card);
+        else if (change === "restored") onRestored(card);
         else onChanged(card);
       });
       flush();

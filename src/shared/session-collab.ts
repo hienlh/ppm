@@ -7,6 +7,7 @@
  * config key, where a hyphen is not a safe character. Neither is plain `ppm`, which a user may
  * already have as an MCP server of their own.
  */
+import { CARD_TOOLS } from "./card-withdraw.ts";
 import type { SessionPhase } from "../types/api.ts";
 import type { ApprovalSummary } from "./assistant-approval.ts";
 import { SESSION_SCHEDULE_TOOLS } from "./session-schedule-tools.ts";
@@ -30,7 +31,9 @@ export const isSessionCollabTool = (name: unknown): name is SessionCollabTool =>
  */
 export const REPORT_TO_ASSISTANT_TOOL = "report_to_assistant";
 /** Every tool the session tools' server can serve. */
-export const SESSION_SERVER_TOOLS = [...SESSION_COLLAB_TOOLS, ...SESSION_SCHEDULE_TOOLS, REPORT_TO_ASSISTANT_TOOL, ...VAULT_TOOLS, ...PPM_TASK_TOOLS] as const;
+export const SESSION_SERVER_TOOLS = [
+  ...SESSION_COLLAB_TOOLS, ...SESSION_SCHEDULE_TOOLS, REPORT_TO_ASSISTANT_TOOL, ...CARD_TOOLS, ...VAULT_TOOLS, ...PPM_TASK_TOOLS,
+] as const;
 
 export const CLAUDE_SESSION_COLLAB_MCP_SERVER = "ppm-sessions";
 export const CODEX_SESSION_COLLAB_MCP_SERVER = "ppm_sessions";

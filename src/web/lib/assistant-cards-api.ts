@@ -31,6 +31,10 @@ export function answerAssistantCard(id: string, body: { decision?: "allow" | "de
 export const dismissAssistantCard = (id: string) =>
   api.post<{ card: AssistantCard }>(`/api/assistant/cards/${encodeURIComponent(id)}/dismiss`);
 
+/** Brings back a card its author withdrew: it waits on the user again. */
+export const restoreAssistantCard = (id: string) =>
+  api.post<{ card: AssistantCard }>(`/api/assistant/cards/${encodeURIComponent(id)}/restore`);
+
 /** The user's OK on a needs-decision card, for the exact draft it showed (its hash), or none. */
 export const okAssistantCard = (id: string, draftSha256: string | null) =>
   api.post<{ card: AssistantCard; to: "manager" | "assistant"; projectName?: string }>(

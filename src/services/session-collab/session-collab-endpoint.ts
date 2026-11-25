@@ -11,6 +11,8 @@ import { liveScheduleProposalToolEnv, scheduleProposalToolCall, type SchedulePro
 import { configService } from "../config.service.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { isReportingManager, NOT_A_MANAGER, reportToAssistantCall } from "../assistant-cards/manager-report-env.ts";
+import { reportWithdrawCall } from "../assistant-cards/report-withdraw-tool.ts";
+import { REPORT_WITHDRAW_TOOL } from "../../shared/card-withdraw.ts";
 import type { CallLimiter } from "../tab-tools-mcp/session-history-rate-limit.ts";
 import { collabToolPolicy } from "./collab-caller-policy.ts";
 import { isVaultTool } from "../../shared/vault.ts";
@@ -47,6 +49,8 @@ export function createSessionCollabMcpHandler(deps: {
   limiter?: CallLimiter;
   /** `report_to_assistant`, for the chat the token names (the live one by default). */
   report?: (sessionId: string, args: unknown) => Json;
+  /** `report_withdraw`, for the chat the token names (the live one by default). */
+  withdraw?: (sessionId: string, args: unknown) => Json;
   /** What the schedule tools save through (the live database by default). */
   schedules?: SessionScheduleToolEnv;
   /** What the script-proposal and pause tools ask and save through (the live ones by default). */
@@ -58,6 +62,7 @@ export function createSessionCollabMcpHandler(deps: {
 }) {
   const limiter = deps.limiter ?? createCollabLimiter();
   const report = deps.report ?? reportToAssistantCall;
+  const withdraw = deps.withdraw ?? reportWithdrawCall;
   const schedules = deps.schedules ?? liveSessionScheduleToolEnv;
   const tasks = deps.tasks ?? livePpmTaskToolsEnv();
   return createMcpHttpHandler<SessionCollabTokenBinding>({
@@ -68,6 +73,7 @@ export function createSessionCollabMcpHandler(deps: {
     unavailable: (name, { sessionId }) => {
       if (deps.enabled(name, sessionId)) return null;
       if (name === REPORT_TO_ASSISTANT_TOOL) return NOT_A_MANAGER;
+      if (name === REPORT_WITHDRAW_TOOL && !isReportingManager(sessionId)) return NOT_A_MANAGER;
       if (isPpmTaskTool(name)) return deps.taskOff?.(name, sessionId) ?? ppmToolOffMessage(name);
       return ppmToolOffMessage(name);
     },
@@ -94,6 +100,11 @@ export function createSessionCollabMcpHandler(deps: {
       if (name === REPORT_TO_ASSISTANT_TOOL) {
         if (caller.value.kind === "assistant") return textResult(NOT_A_MANAGER, true);
         return report(caller.value.sessionId, rawArgs);
+      }
+      // Withdrawing a manager's own cards: no delivery, so none of the send policy applies.
+      if (name === REPORT_WITHDRAW_TOOL) {
+        if (caller.value.kind === "assistant") return textResult(NOT_A_MANAGER, true);
+        return withdraw(caller.value.sessionId, rawArgs);
       }
       // The vault decides by itself who may open what (the turn's origin, one card per chat).
       if (isVaultTool(name)) {
@@ -131,6 +142,8 @@ let collabEnvRef: CollabEnv | null = null;
  */
 export function sessionToolOnFor(tool: string, sessionId: string): boolean {
   if (tool === REPORT_TO_ASSISTANT_TOOL) return isReportingManager(sessionId);
+  // A manager's, and only while the user has card withdrawal on.
+  if (tool === REPORT_WITHDRAW_TOOL) return isReportingManager(sessionId) && ppmToolOn(configService.get("ai"), REPORT_WITHDRAW_TOOL);
   // Settings → Tools for every chat, the Assistant and manager chats included, then the project's switch.
   if (isPpmTaskTool(tool)) return liveTaskOffReason(tool, sessionId) === null;
   // The PPM Assistant keeps to its own schedule tools, which show the user a card first.

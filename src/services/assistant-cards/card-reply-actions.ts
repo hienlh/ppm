@@ -22,7 +22,7 @@ import { assistantCards, type AssistantCards } from "./assistant-cards.service.t
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { getAssistantSettings } from "../assistant/assistant-settings.service.ts";
 import { CARD_REPLY_MAX_CHARS, STALE_REPLY_MS } from "../../shared/assistant-limits.ts";
-import { OK_CARD_KINDS, type AssistantCard, type AssistantCardAnswer } from "../../shared/assistant-cards.ts";
+import { cardWithdrawal, OK_CARD_KINDS, type AssistantCard, type AssistantCardAnswer } from "../../shared/assistant-cards.ts";
 import { cardOkOffered } from "./card-ok-rule.ts";
 import { forwardUserWords, repliesToManager, type CardActor, type ForwardHow, type ForwardResult } from "./forward-verbatim.ts";
 import { realForwardEnv } from "./forward-verbatim-env.ts";
@@ -107,6 +107,9 @@ function dayKey(ms: number, zone?: string): string {
 
 /** "Already answered on Telegram at 22:41": what a second answer is told. */
 export function alreadyAnsweredText(card: AssistantCard, now: number, zone?: string): string {
+  const withdrawn = cardWithdrawal(card);
+  if (withdrawn?.supersededBy) return `This card was replaced by "${withdrawn.supersededBy.title}"; answer that one.`;
+  if (withdrawn) return `This card was withdrawn at ${cardTimeText(card.answer!.at, now, zone)}: ${withdrawn.reason}`;
   const a = card.answer;
   if (!a) return "This card is no longer waiting.";
   return `Already answered ${where(a.channel)} at ${cardTimeText(a.at, now, zone)}.`;
@@ -114,6 +117,13 @@ export function alreadyAnsweredText(card: AssistantCard, now: number, zone?: str
 
 /** The question a reply to a stale card asks before anything is sent. */
 export function staleQuestion(card: AssistantCard, now: number, zone?: string): string {
+  const withdrawn = cardWithdrawal(card);
+  if (withdrawn) {
+    const at = cardTimeText(card.answer!.at, now, zone);
+    return withdrawn.supersededBy
+      ? `This card was replaced by "${withdrawn.supersededBy.title}" at ${at} — send to its manager anyway?`
+      : `The manager withdrew this card at ${at} (${withdrawn.reason}) — send anyway?`;
+  }
   if (card.status !== "open") {
     const at = card.answer?.at ?? card.updatedAt;
     return `This card was ${card.status === "answered" ? "answered" : "closed"} at ${cardTimeText(at, now, zone)} — send anyway?`;

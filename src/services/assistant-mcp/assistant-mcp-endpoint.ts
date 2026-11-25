@@ -5,7 +5,7 @@ import {
   CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CLAUDE_ASSISTANT_MCP_SERVER, DB_LIST_CONNECTIONS_TOOL,
   DB_QUERY_TOOL, PROJECT_ADD_TOOL, PROJECTS_LIST_TOOL, UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_GET_STATE_TOOL, UI_OPEN_TAB_TOOL,
   UI_LIST_COMMANDS_TOOL, UI_MOVE_TAB_TOOL, UI_READ_TAB_TOOL, UI_REVEAL_PATH_TOOL, UI_OPEN_FILE_BROWSER_TOOL, UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
-  CHATS_ATTENTION_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
+  CHATS_ATTENTION_TOOL, CHAT_ANSWER_APPROVAL_TOOL, CARD_WITHDRAW_TOOL, PPM_CLI_REFERENCE_TOOL,
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL, NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,
   TERMINAL_TYPE_TOOL,
 } from "../../shared/assistant-tool-names.ts";
@@ -13,6 +13,7 @@ import { terminalTypeTool } from "./assistant-terminal-type-tool.ts";
 import { chatListWatchesTool, chatUnwatchTool, chatWatchTool } from "./assistant-watch-tools.ts";
 import { notebookAddTool, notebookDeleteTool, notebookEditTool } from "./assistant-notebook-tools.ts";
 import { chatAnswerApproval, chatsAttentionTool, ppmCliReferenceTool } from "./assistant-hub-tools.ts";
+import { cardWithdrawTool } from "./assistant-card-withdraw-tool.ts";
 import { ASSISTANT_MCP_HOLD_OPEN_SECONDS, ASSISTANT_TOOL_DEFINITIONS } from "./assistant-mcp-tools.ts";
 import { assistantMcpTokens, type AssistantMcpTokenBinding } from "./assistant-mcp-tokens.ts";
 import { chatListSessions, chatReadMessages, chatSearch, projectsList } from "./assistant-read-tools.ts";
@@ -114,6 +115,7 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, sig
     case UI_RUN_COMMAND_TOOL: return uiRunCommand(sessionId, args, ask);
     case CHATS_ATTENTION_TOOL: return chatsAttentionTool(args);
     case CHAT_ANSWER_APPROVAL_TOOL: return chatAnswerApproval(args, ask);
+    case CARD_WITHDRAW_TOOL: return cardWithdrawTool(sessionId, args);
     case PPM_CLI_REFERENCE_TOOL:
       return ppmCliReferenceTool(args, getSessionProvider(resolveMigratedSession(sessionId)) ?? getSessionProvider(sessionId));
     case CHAT_WATCH_TOOL: return chatWatchTool(sessionId, args);

@@ -79,3 +79,13 @@ export const NOTEBOOK_USER_RESERVE_CHARS = 1000;
  * not the user is at PPM. A chat waiting on a card does nothing else until it is answered.
  */
 export const APPROVAL_OVERDUE_MS = 3 * 60_000;
+
+/**
+ * Cards one chat (a manager, or the PPM Assistant) may withdraw or replace in one turn. Past it the
+ * call is refused, and the chat asks the user on a card: the user's OK opens a new turn.
+ */
+export const WITHDRAW_PER_TURN = 5;
+/** When PPM cannot tell which turn a withdrawal ran in, the limit counts this long back instead. */
+export const WITHDRAW_FALLBACK_WINDOW_MS = 10 * 60_000;
+/** The longest reason a withdrawal takes. */
+export const WITHDRAW_REASON_MAX = 200;
