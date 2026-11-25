@@ -6,7 +6,7 @@ import { SESSION_COLLAB_DEFAULTS, type SessionCollabSettings } from "../../../sr
 import {
   permissionRank, type SessionCollabAnswer, type SessionCollabApprovalInput, type SessionCreatedEvent, type SessionDelivery,
 } from "../../../src/shared/session-collab.ts";
-import type { CollabEnv, LiveSessionState } from "../../../src/services/session-collab/collab-context.ts";
+import type { CollabEnv, CollabProviderId, LiveSessionState } from "../../../src/services/session-collab/collab-context.ts";
 import { createCollabWaits } from "../../../src/services/session-collab/collab-waits.ts";
 import { createCollabUnread } from "../../../src/services/session-collab/collab-unread.ts";
 import type { DeliverToSessionInput } from "../../../src/server/ws/chat-inject.ts";
@@ -15,7 +15,7 @@ export const PROJECT_PATH = process.platform === "win32" ? "C:\\work\\app" : "/w
 export const OTHER_PATH = process.platform === "win32" ? "C:\\work\\other" : "/work/other";
 
 export interface FakeSession {
-  providerId: "claude" | "codex";
+  providerId: CollabProviderId;
   /** Absent for a session PPM has no record of (one only a provider's own files know). */
   projectPath?: string;
   title?: string;
@@ -50,6 +50,8 @@ export function fakeEnv(opts: {
 }) {
   const sessions = opts.sessions;
   const asked: SessionCollabApprovalInput[] = [];
+  /** How long each card was allowed to wait, in the order asked. */
+  const askedWaitMs: Array<number | undefined> = [];
   const deliveries: DeliverToSessionInput[] = [];
   const created: string[] = [];
   const announced: string[] = [];
@@ -94,7 +96,7 @@ export function fakeEnv(opts: {
     providerRunsDesign: (id) => (opts.designProviders ?? ["claude", "codex"]).includes(id),
     projectNameOf: (path) => (path === PROJECT_PATH ? "app" : path === OTHER_PATH ? "other" : null),
     title: (id) => sessions[id]?.title ?? null,
-    providerExists: (id) => id === "claude" || id === "codex",
+    providerExists: (id) => id === "claude" || id === "codex" || id === "antigravity",
     links: {
       parentOf: (id) => sessions[id]?.parent ?? null,
       depthOf: (id) => sessions[id]?.depth ?? 0,
@@ -140,8 +142,9 @@ export function fakeEnv(opts: {
     isUnattendedTurn: (id) => (opts.unattended ?? []).includes(id),
     projectByName: (name) => (name === "app" ? { name, path: PROJECT_PATH } : name === "other" ? { name, path: OTHER_PATH } : null),
     chatMode: (id) => ({ mode: opts.chatModes?.[id] ?? sessions[id]?.mode ?? "bypassPermissions", source: sessions[id]?.mode ? "stored" : "provider-default" }),
-    approve: async (_sessionId, input) => {
+    approve: async (_sessionId, input, _signal, waitMs) => {
       asked.push(input);
+      askedWaitMs.push(waitMs);
       opts.onApprove?.();
       const answer = answers.shift() ?? "deny";
       if (answer === "timeout") return { allowed: false, reason: "timeout", message: "The user did not answer." };
@@ -169,7 +172,7 @@ export function fakeEnv(opts: {
       // A real create awaits the provider: overlapping creates interleave here.
       await new Promise((r) => setTimeout(r, 1));
       sessions[id] = {
-        providerId: providerId as "claude" | "codex", projectPath: input.projectPath, title: input.title,
+        providerId: providerId as CollabProviderId, projectPath: input.projectPath, title: input.title,
         ...(input.designSlug ? { design: true, designSlug: input.designSlug } : {}),
       };
       created.push(id);
@@ -184,7 +187,7 @@ export function fakeEnv(opts: {
     announceLinks: (_project, ids) => { announced.push(`links:${ids.join(",")}`); },
     unread,
   };
-  return { env, asked, deliveries, created, announced, createdEvents, starting, waits, unread, touched, reservedSlots: () => reserved };
+  return { env, asked, askedWaitMs, deliveries, created, announced, createdEvents, starting, waits, unread, touched, reservedSlots: () => reserved };
 }
 
 /** The text of a tool result. */

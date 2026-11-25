@@ -104,7 +104,7 @@ export function sessionCollabToolDefinitions() {
         properties: {
           title: { type: "string", description: `A short title for the new session (at most ${MAX_COLLAB_TITLE_CHARS} characters), shown in the user's session list. Required, except with \`manager\`.` },
           task: { type: "string", description: `The task, complete enough to work from without this conversation (required, except with \`manager\`). Say what to send back, and that the reply goes through send_to_session. At most ${MAX_COLLAB_MESSAGE_BYTES / 1024} KB; put longer material in a file and give its path.` },
-          provider: { type: "string", enum: ["claude", "codex"], description: "The AI to run it on; yours by default." },
+          provider: { type: "string", enum: ["claude", "codex", "antigravity"], description: "The AI to run it on; yours by default." },
           model: { type: "string", description: "The model; the same as yours by default." },
           wait: WAIT,
           project: {

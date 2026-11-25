@@ -158,9 +158,9 @@ export const collabEnv: CollabEnv = {
   trace: (sessionId, type, payload) => traceServerEvent(sessionId, firstOf(sessionId, getSessionProvider) ?? "claude", type, payload),
   managerAsked: noteManagerAsked,
   pairs: pairCounter,
-  approve: async (sessionId, input, signal) => (await assistantFullModeAllows(sessionId, input))
+  approve: async (sessionId, input, signal, waitMs) => (await assistantFullModeAllows(sessionId, input))
     ? { allowed: true, answer: "allow_once" }
-    : collabApprovalBroker.request(sessionId, input, signal),
+    : collabApprovalBroker.request(sessionId, input, signal, waitMs),
   waits: collabWaits,
   runningSpawned: (projectName) => [...new Set([
     ...listRunningSessions(projectName).map((s) => resolveMigratedSession(s.sessionId)).filter(isSpawned),

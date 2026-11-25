@@ -863,24 +863,26 @@ answers the tour's "PPM has new features" step (UI and registry in
 
 ## Session collaboration
 
-A Claude or Codex chat can open another PPM session and message any session of its project. Every
+A Claude, Codex or Antigravity chat can open another PPM session and message any session of its project. Every
 such "subagent" is an ordinary session: listed, openable, writable and stoppable like one the user
 started. The UI half (the incoming bubble, the linked-sessions bar, the list badge, the card) is in
 [Workspace & UI](workspace-and-ui.md#session-collaboration-ui).
 
 **The tools** are served by `/api/sessions-mcp` (`src/services/session-collab/`), MCP server
-`ppm-sessions` for Claude and `ppm_sessions` for Codex, each tool with its own switch in Settings →
+`ppm-sessions` for Claude and Antigravity (which names its tools `mcp_ppm-sessions_create_session`)
+and `ppm_sessions` for Codex, each tool with its own switch in Settings →
 Tools (off until the install answers; see the next section):
 
 - `create_session { title, task, provider?, model?, wait?, design? }` — a new session in the caller's own
   project, on the caller's provider and model unless the AI picks others, under the caller's
   permission mode (never more; when the mode cannot be told, nothing is created). A chat given no
-  mode and no provider default runs bypass — both providers fall back to it — so its child does too
+  mode and no provider default runs bypass — Claude and Codex fall back to it — so its child does too;
+  an Antigravity chat with no mode asks for each tool, so its child runs `default`
   (`effectivePermissionMode`). The mode is stored
   for the child and applied to every later turn that names none, so cleanup or a restart cannot
   loosen it. Its first message is the task, carrying a turn reference to the caller's current turn
   (Claude callers; a Codex caller's turn id rides in the from-session block instead, so no rollout
-  is located).
+  is located; an Antigravity caller sends none).
 - `send_to_session { session_id, message, wait? }` — any session of the project except the caller.
   A running target reads it inside its turn (Claude takes it from the input
   stream, Codex steers it), an idle one starts a turn.
@@ -1007,7 +1009,11 @@ delivered again; a reply after the wait ended is always delivered as a new messa
 restarts a stopped session. The endpoint lifts Bun's 10 s idle timeout for the request
 (`server.timeout(req, 0)`), and each provider's per-server MCP timeout is fixed at the longest wait
 the settings allow plus the card time (`SESSION_COLLAB_TOOLS_TIMEOUT_MS`, 72 min), because a
-running CLI keeps the timeout it started with.
+running CLI keeps the timeout it started with. Antigravity is the exception: agy ends every MCP
+call after 3 minutes and ACP offers no way to lengthen it, so an Antigravity caller's wait ends
+165 s after its call began (`AGY_ANSWER_WITHIN_MS`), as a `timeout`. Its create, pair-limit and
+escalation cards wait no longer than that either (`askUser` in `collab-ask-user.ts`): one that runs
+out is withdrawn as expired, so a late answer creates nothing, and the AI is told it was agy's limit.
 
 **Limits** (`ai.session_collab`, `src/shared/session-collab-settings.ts`): depth 3 (a user-started
 session is depth 0), 20 automatic messages per session pair (reset when the user writes in either),

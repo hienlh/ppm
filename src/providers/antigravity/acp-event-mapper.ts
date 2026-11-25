@@ -105,11 +105,11 @@ export function acpPromptBlocks(message: string, opts?: SendMessageOpts): unknow
 
 /**
  * A new chat's `_meta.antigravity.systemPrompt.append`: the provider's Additional Instructions,
- * then PPM's shared context. agy reads it only in `session/new` and keeps it with the chat for
+ * the line naming extension CLI commands, then PPM's shared context. agy reads it only in `session/new` and keeps it with the chat for
  * good; `session/load` and `session/prompt` ignore it (measured on agy 1.5.2).
  */
-export function acpSystemPromptAppend(additional?: string, sharedContext?: string): string | undefined {
-  const parts = [additional, sharedContext ? withSharedContext("", sharedContext) : undefined]
+export function acpSystemPromptAppend(additional?: string, sharedContext?: string, extensionCliHint?: string): string | undefined {
+  const parts = [additional, extensionCliHint, sharedContext ? withSharedContext("", sharedContext) : undefined]
     .map((part) => part?.trim())
     .filter((part): part is string => !!part);
   return parts.length ? parts.join("\n\n") : undefined;
