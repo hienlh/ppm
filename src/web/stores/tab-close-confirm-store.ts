@@ -17,6 +17,14 @@ export function losesWorkOnClose(tab: Pick<Tab, "id" | "type" | "metadata">): bo
   return isDbTabDirty(tab.type, tab.metadata) || unsavedGridRows(tab.id) > 0;
 }
 
+/**
+ * Close Saved leaves this tab open: work a close would ask about, or an untitled editor's text,
+ * which lives only in the tab (a file editor saves itself a second after each change).
+ */
+export function tabHoldsUnsavedWork(tab: Pick<Tab, "id" | "type" | "metadata">): boolean {
+  return losesWorkOnClose(tab) || tab.metadata?.unsavedContent !== undefined;
+}
+
 interface PendingClose {
   tabs: Tab[];
   resolve: (close: boolean) => void;

@@ -6,7 +6,7 @@
  */
 import {
   AppWindow, BotMessageSquare, Bug, CircleX, Cloud, Columns2, Cpu, Database, FilePlus, GitCommitHorizontal, Globe,
-  MessageSquare, Mic, MonitorSmartphone, ScrollText, CalendarClock, Settings, Terminal, WrapText, Zap,
+  MessageSquare, Mic, MonitorSmartphone, Pin, ScrollText, CalendarClock, Settings, Terminal, WrapText, X, Zap,
 } from "@/lib/icons";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { openSettings } from "@/components/settings/open-settings";
@@ -23,6 +23,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useCompareStore } from "@/stores/compare-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { basename } from "@/lib/utils";
+import { togglePinActiveTab, bulkCloseInFocusedPanel } from "@/lib/tab-commands";
 import { formatShortcut } from "./format-shortcut";
 import type { AppCommand, CommandContext } from "./command-registry";
 
@@ -113,6 +114,19 @@ export function builtInCommands(ctx: CommandContext): AppCommand[] {
     {
       id: "git-status", label: "Git Status", icon: GitCommitHorizontal, keywords: "changes diff staged", changesData: false,
       ...bound("open-git-status"), run: (c) => showGitStatus(c),
+    },
+    {
+      // A pin is kept with the layout, and closing tabs takes away what the user had open.
+      id: "toggle-pin-tab", label: "Pin / Unpin Tab", icon: Pin, keywords: "pin unpin sticky keep tab", changesData: true,
+      ...bound("toggle-pin-tab"), run: () => togglePinActiveTab(),
+    },
+    {
+      id: "close-saved-tabs", label: "Close Saved Tabs", icon: X, keywords: "close saved tabs editors", changesData: true,
+      ...bound("close-saved-tabs"), run: () => bulkCloseInFocusedPanel("saved"),
+    },
+    {
+      id: "close-all-tabs", label: "Close All Tabs", icon: X, keywords: "close all tabs editors", changesData: true,
+      ...bound("close-all-tabs"), run: () => bulkCloseInFocusedPanel("all"),
     },
     {
       id: "problems", label: "Problems", icon: CircleX, keywords: "errors warnings diagnostics lint typescript", changesData: false,
