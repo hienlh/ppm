@@ -6,6 +6,7 @@
  */
 import type { LearnedSource, LearnedWord, VoiceCandidate, VoiceMessageConfig } from "../../shared/voice-message.ts";
 import type { LearnReading } from "../../shared/voice-message.ts";
+import { userTimeZone, ymdInZone } from "../ppm-tasks/ppm-tasks-today.ts";
 import { isFaded, isStaleCandidate, wordUsedIn } from "./voice-learned-fade.ts";
 import { readyToLearn, type Replacement } from "./voice-learn-from-cleanup.ts";
 import {
@@ -13,6 +14,26 @@ import {
 } from "./voice-settings.ts";
 
 const validProject = (project: string) => !!project.trim() && project.length <= VOICE_LIMITS.projectKeyChars;
+
+/** The day suffix of a counted chat reading: `<chat id>@YYYY-MM-DD`. */
+const DAY_SUFFIX = /@\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * What one chat reading of a pair counts as: that chat on that day, in the user's time zone. Within
+ * a day the AI sees and repeats its own earlier reading, so a chat counts once a day; a day later
+ * the heard word had to turn up in a fresh transcript again, which is a mishearing that recurs —
+ * and the PPM Assistant, where most voice messages go, is one chat for months.
+ */
+export function chatReadingKey(chatId: string, at: Date, timeZone: string | undefined = userTimeZone()): string {
+  return `${chatId}@${ymdInZone(at.getTime(), timeZone)}`;
+}
+
+/** A counted reading as stored, dated: an entry from before readings had a day takes the candidate's `at`. */
+function datedReading(entry: string, candidateAt: string): string {
+  if (DAY_SUFFIX.test(entry)) return entry;
+  const at = new Date(candidateAt);
+  return Number.isFinite(at.getTime()) ? chatReadingKey(entry, at) : entry;
+}
 
 /**
  * Adds corrections learned from an edited transcript to `project`'s list and answers with the ones
@@ -53,8 +74,9 @@ export function appendLearnedWords(project: string, entries: readonly LearnedWor
  * picked-up words and its typed words), which lets a term be learned after two messages instead
  * of three — for the clean-up's corrections, not the chat's (`readyToLearn`). `source` is what a
  * newly learned word is marked as, and the clean-up and the chat are counted apart. For the chat,
- * `chatId` names the chat that read it: a chat counts once per pair, since within one
- * conversation the AI sees and repeats its own earlier reading. Answers with the words learned.
+ * `chatId` names the chat that read it: a chat counts once per pair a day ({@link chatReadingKey}),
+ * since within one conversation the AI sees and repeats its own earlier reading. Answers with the
+ * words learned.
  */
 export function recordCleanupReplacements(
   project: string,
@@ -95,12 +117,14 @@ export function recordCleanupReplacements(
       continue;
     }
     const previous = candidates.get(key);
-    // The same chat reading the same pair again is one reading, not another.
-    if (source === "chat" && chatId && previous?.chats?.includes(chatId)) {
+    const reading = source === "chat" && chatId ? chatReadingKey(chatId, now) : undefined;
+    const readings = previous ? (previous.chats ?? []).map((c) => datedReading(c, previous.at)) : [];
+    // The same chat reading the same pair again the same day is one reading, not another.
+    if (reading && previous && readings.includes(reading)) {
       report?.({ from: r.from, to: r.to, status: "skipped", reason: "same-chat", hits: previous.hits });
       continue;
     }
-    const chats = source === "chat" && chatId ? [...(previous?.chats ?? []), chatId].slice(-VOICE_LIMITS.candidateChats) : undefined;
+    const chats = reading ? [...readings, reading].slice(-VOICE_LIMITS.candidateChats) : undefined;
     const hits = (previous?.hits ?? 0) + 1;
     if (readyToLearn(r, hits, known, source)) {
       const entry: LearnedWord = { word: r.to, from: r.from, at, source, hits, kind: r.kind };

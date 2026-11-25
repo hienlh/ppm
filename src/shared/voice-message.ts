@@ -48,7 +48,11 @@ export interface VoiceCandidate {
    * are counted apart, so one source's guess never makes up the other's count.
    */
   source?: "chat";
-  /** For the chat's readings: the chats already counted, since one chat repeats its own guess. */
+  /**
+   * For the chat's readings: the readings already counted, `<chat id>@YYYY-MM-DD` (the user's day),
+   * since one chat repeats its own guess within a day. An entry with no day is from before readings
+   * had one and counts on the day of `at`.
+   */
   chats?: string[];
 }
 

@@ -10,6 +10,7 @@ import { configService } from "../../../../src/services/config.service.ts";
 import { createChatLifecycle, type ChatLifecycle } from "../../../../src/services/chat-control/chat-lifecycle.ts";
 import { chatReplacements, startVoiceChatLearning } from "../../../../src/services/voice-message/voice-chat-learning.ts";
 import { isFaded } from "../../../../src/services/voice-message/voice-learned-fade.ts";
+import { chatReadingKey } from "../../../../src/services/voice-message/voice-learned-store.ts";
 import { readVoiceSettings, updateVoiceSettings } from "../../../../src/services/voice-message/voice-settings.ts";
 import { encodeMessageBlocks } from "../../../../src/shared/chat-message-blocks.ts";
 import { encodeVoicePart } from "../../../../src/shared/voice-message.ts";
@@ -58,10 +59,10 @@ describe("the learning hook", () => {
     expect(candidates()).toEqual([]);
   });
 
-  it("counts one chat once: the same chat reading a word three times is one reading", () => {
+  it("counts one chat once a day: the same chat reading a word three times that day is one reading", () => {
     for (let i = 0; i < 3; i++) turn("same", voice("mở cái BPM giúp anh"), say("Hiểu là: BPM → PPM\nĐể em mở."));
     expect(learned()).toEqual([]);
-    expect(candidates()).toMatchObject([{ from: "BPM", to: "PPM", hits: 1, source: "chat", chats: ["same"] }]);
+    expect(candidates()).toMatchObject([{ from: "BPM", to: "PPM", hits: 1, source: "chat", chats: [chatReadingKey("same", new Date(clock))] }]);
   });
 
   it("counts the chat's readings apart from the clean-up's fixes", () => {
@@ -221,7 +222,7 @@ describe("what it says became of each pair", () => {
     const own = readVoiceSettings().projects[PROJECT]!;
     expect(own.blocked ?? []).toEqual([]);
     expect(own.learned).toEqual([]);
-    expect(candidates()).toMatchObject([{ from: "BPM", to: "PPM", hits: 2, source: "chat", chats: ["c1", "c2"] }]);
+    expect(candidates()).toMatchObject([{ from: "BPM", to: "PPM", hits: 2, source: "chat", chats: ["c1", "c2"].map((c) => chatReadingKey(c, new Date(clock))) }]);
     // The count goes on from two: a third chat learns it.
     expect(learnFromUnderstood(PROJECT, "mở BPM", [{ heard: "BPM", meant: "PPM" }], new Date(clock), "c3"))
       .toEqual([{ from: "BPM", to: "PPM", status: "learned", hits: 3 }]);
