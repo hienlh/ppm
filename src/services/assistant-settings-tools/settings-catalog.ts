@@ -1,5 +1,6 @@
 import { CORE_SETTINGS } from "./settings-catalog-core.ts";
 import { aiSettings } from "./settings-catalog-ai.ts";
+import { voiceWordSettings } from "./settings-catalog-voice-words.ts";
 import { REFUSED_SETTINGS, UNCOVERED_CATEGORIES, refusedSetting } from "./settings-catalog-refused.ts";
 import type { RefusedSetting, SettingEntry } from "./settings-catalog-types.ts";
 
@@ -11,7 +12,7 @@ import type { RefusedSetting, SettingEntry } from "./settings-catalog-types.ts";
 
 /** Every changeable setting, provider rows built from the providers configured now. */
 export function allSettings(): SettingEntry[] {
-  return [...CORE_SETTINGS, ...aiSettings()];
+  return [...CORE_SETTINGS, ...voiceWordSettings(), ...aiSettings()];
 }
 
 export type CatalogLookup =

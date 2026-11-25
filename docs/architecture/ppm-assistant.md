@@ -1194,6 +1194,12 @@ handlers refuse a call that arrives anyway.
   secret (answered as `{ set: true|false }`, never a value — not read, not written), PPM's password,
   `port`/`host`, MCP servers, account sign-ins, Tailscale and named tunnels, the vault, and the
   switch itself. `UNCOVERED_CATEGORIES` says why each other pane is out (a test pairs both with the rail).
+  The voice word lists are keys too (`settings-catalog-voice-words.ts`): `voice.learned.<project>` and
+  `voice.learning.<project>` for the Assistant and every registered project, each a list of "heard → meant"
+  items, `direct`. A list may only lose items — Undo on a learned word, "Don't learn" on a pair being
+  counted, both of which move it to the undone list — or get back ones taken out earlier, which is what
+  the log's Undo writes (`restoreBlocked`). Anything else, and taking out one of two pairs that teach the
+  same word (both buttons act on the word), is refused before any card by the entry's `validate`.
 - **Tiers**: `direct` changes with no card in Full mode (voice, theme, notifications, model and effort,
   quiet hours, digest, file filters, log level); `card` asks even in Full mode, its reason on the card
   (login, every permission switch of the Assistant and of other chats, the Assistant's instructions,

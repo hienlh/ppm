@@ -47,6 +47,7 @@ const SERVER = [
   "ext list", "ext install", "ext remove", "ext enable", "ext disable", "ext dev", "ext run",
   "lsp list", "lsp install", "lsp remove",
   "speech status", "speech install", "speech remove",
+  "speech learned list", "speech learned remove", "speech learned restore",
   "vault status", "vault lock",
   "db driver list", "db driver install", "db driver remove",
   "jira config set", "jira config show", "jira config remove", "jira config test",

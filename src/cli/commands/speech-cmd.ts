@@ -3,6 +3,7 @@ import { C, run } from "./chat-cmd-request.ts";
 import { ppmApiRequest } from "../utils/settings-request.ts";
 import { LONG_REQUEST_TIMEOUT_MS } from "../utils/request-progress.ts";
 import type { InstallJobState, WhisperStatus } from "../../services/speech-to-text/whisper-install.service.ts";
+import { registerSpeechLearnedCommands } from "./speech-cmd-learned.ts";
 
 /**
  * `ppm speech`: speech to text for the chat mic (Whisper on the host), through the routes
@@ -84,4 +85,6 @@ export function registerSpeechCommands(program: Command): void {
       await ppmApiRequest("POST", "/speech/uninstall", {});
       console.log(`${C.green}✓${C.reset} Removed the Whisper build and models PPM installed.`);
     })());
+
+  registerSpeechLearnedCommands(speech);
 }

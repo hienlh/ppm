@@ -57,6 +57,12 @@ export interface SettingEntry {
   /** A warning line for the card when the new value deserves one. */
   warn?(value: unknown): string | null;
   /**
+   * For a value the shape check cannot judge alone (a list that may only lose items, or get back
+   * ones taken out earlier): why going from `before` to `value` is refused, or null. Asked before
+   * any card, so a change PPM cannot make is never offered to the user.
+   */
+  validate?(value: unknown, before: unknown): string | null;
+  /**
    * For a setting that only summarises others (one switch over two places): the changes `value`
    * stands for, made and logged one by one, so each row keeps its own old value and an undo puts
    * back exactly what was there. Reading the summary still works, and so does undoing a row
