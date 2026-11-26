@@ -161,6 +161,8 @@ export const DISPLAY_ON_ACTION: HelperActionScript = {
 function Invoke-DisplayOn {
   $devices = ${FIND_DEVICES}
   if ($devices.Count -eq 0) { return @($false, ${NOT_INSTALLED}) }
+  # Safety net first (rescue-script.ts); no net, no change.
+  Start-RescueWindow 'DisplayOn'
   foreach ($device in $devices) { Enable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
   return @($true, 'The virtual display is on.')
 }

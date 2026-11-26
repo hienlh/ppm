@@ -95,7 +95,8 @@ foreach ($action in @(${actions})) {
   $argument = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $HelperPath + '" -Action ' + $action
   $taskAction = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $argument
   $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
-  $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  # StartWhenAvailable: the safety net's one-time trigger still runs if the PC slept through it.
+  $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
   Register-ScheduledTask -TaskName $action -TaskPath $TaskPath -Action $taskAction -Principal $principal -Settings $settings -Force | Out-Null
   $service.GetFolder($TaskPath.TrimEnd('\\')).GetTask($action).SetSecurityDescriptor(${psQuote(taskSddl)}, 0)
 }

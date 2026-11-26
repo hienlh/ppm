@@ -16,8 +16,11 @@ import { FfmpegInstallButton } from "./ffmpeg-install-button";
 import { runInTerminal } from "@/lib/run-in-terminal";
 import { HostActionButton } from "./remote-desktop-host-action-button";
 import {
-  useRemoteDesktopReadiness, type HostAction, type HostActionResult, type RemoteDesktopRequirement, type RequirementAction,
+  useRemoteDesktopReadiness, type HostAction, type HostActionResult, type RemoteDesktopCapabilities,
+  type RemoteDesktopRequirement, type RequirementAction,
 } from "./use-remote-desktop-readiness";
+import { useHeadlessRescue } from "./use-headless-rescue";
+import { RescueBar } from "./remote-desktop-rescue-bar";
 
 /** Every button on this surface: the standard text-button size over this gate's own colours. */
 export const GATE_BUTTON = `inline-flex items-center justify-center ${TEXT_BUTTON}`;
@@ -29,10 +32,37 @@ export interface RemoteDesktopReadinessGateProps {
 
 export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktopReadinessGateProps) {
   const [accepted, setAccepted] = useState(false);
-  const { caps, failed, runHostAction } = useRemoteDesktopReadiness(!accepted);
+  const { caps, failed, runHostAction: runOnHost } = useRemoteDesktopReadiness(!accepted);
+  const rescue = useHeadlessRescue(caps?.platform === "win32");
+  // Bringing the session back or turning the display on arms the safety net: show it at once.
+  const runHostAction = async (id: string, action: HostAction) => {
+    const result = await runOnHost(id, action);
+    rescue.refresh();
+    return result;
+  };
 
-  if (accepted || (caps?.videoReady && caps.inputReady)) return <>{children}</>;
+  // One wrapper in every state, so the bar coming and going never remounts the viewer.
+  return (
+    <div className="relative h-full w-full">
+      {accepted || (caps?.videoReady && caps.inputReady)
+        ? children
+        : <Checklist caps={caps} failed={failed} onCancel={onCancel} onAccept={() => setAccepted(true)} runHostAction={runHostAction} />}
+      {rescue.rescue && (
+        <div className="pointer-events-none absolute inset-x-0 top-2 z-30 flex justify-center px-4">
+          <RescueBar rescue={rescue.rescue} now={Date.now()} onConfirm={rescue.confirm} />
+        </div>
+      )}
+    </div>
+  );
+}
 
+function Checklist({ caps, failed, onCancel, onAccept, runHostAction }: {
+  caps: RemoteDesktopCapabilities | null;
+  failed: boolean;
+  onCancel: () => void;
+  onAccept: () => void;
+  runHostAction: (id: string, action: HostAction) => Promise<HostActionResult | null>;
+}) {
   const pending = caps?.requirements.filter((r) => !r.ok) ?? [];
   const viewOnly = !!caps?.videoReady && !caps.inputReady;
   // The dock terminal opens *under* this surface (the mobile sheet covers the whole viewport),
@@ -72,7 +102,7 @@ export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktop
           <button
             type="button"
             disabled={!caps?.videoReady}
-            onClick={() => setAccepted(true)}
+            onClick={onAccept}
             className={`${GATE_BUTTON} bg-primary font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40`}
             data-testid="remote-desktop-readiness-continue"
           >

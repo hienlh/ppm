@@ -14,9 +14,16 @@ import { getPpmDir } from "../../ppm-dir.ts";
 /** Bumped whenever the generated scripts change, so an older install reports "update needed". */
 export const HELPER_VERSION = 2;
 
-/** Each action is its own task with a fixed command line: a task cannot be handed anything. */
-export const HELPER_ACTIONS = ["Reattach", "DisplayOn", "DisplayOff"] as const;
+/** Each action is its own task with a fixed command line: a task cannot be handed anything.
+ *  `Confirm` and `Rescue` are the safety net behind `Reattach`/`DisplayOn` (`rescue-script.ts`). */
+export const HELPER_ACTIONS = ["Reattach", "DisplayOn", "DisplayOff", "Confirm", "Rescue"] as const;
 export type HelperAction = typeof HELPER_ACTIONS[number];
+/** What PPM itself starts. `Rescue` is only ever started by its own timer. */
+export type PpmHelperAction = Exclude<HelperAction, "Rescue">;
+export const PPM_HELPER_ACTIONS: readonly PpmHelperAction[] = ["Reattach", "DisplayOn", "DisplayOff", "Confirm"];
+
+/** How long after `Reattach`/`DisplayOn` the safety net runs unless confirmed. */
+export const RESCUE_MINUTES = 5;
 
 /** One top-level folder. Not `\PPM\…`: `\PPM` is already PPM's own autostart *task* on every
  *  Windows install, so a folder of that name cannot exist (found on a real host — registering

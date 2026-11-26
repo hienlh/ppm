@@ -74,6 +74,54 @@ describe("Windows checklist rows", () => {
   });
 });
 
+describe("the safety net bar", () => {
+  const RESCUE_PATH = "/api/remote-desktop/headless-helper/rescue";
+  const deadline = Date.now() + 4 * 60_000;
+
+  function routedGet(armed: () => unknown, caps: unknown = disconnectedCaps()) {
+    return spyOn(api, "get").mockImplementation((async (path: string) => (path === RESCUE_PATH ? armed() : caps)) as never);
+  }
+
+  it("asks for \"I can still reach this PC\" while the net is armed, and goes once confirmed", async () => {
+    let armed: unknown = { action: "Reattach", armedMs: deadline - 300_000, deadlineMs: deadline };
+    spies.push(routedGet(() => armed));
+    const post = spyOn(api, "post").mockImplementation((async () => { armed = null; return { ok: true, message: "Confirmed." }; }) as never);
+    spies.push(post);
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    await settle();
+    const bar = view.container.querySelector('[data-testid="remote-desktop-rescue-bar"]');
+    expect(bar?.textContent).toContain("never signs you out");
+    await click(view.container.querySelector('[data-testid="remote-desktop-rescue-confirm"]'));
+    await settle();
+    expect(post).toHaveBeenCalledWith("/api/remote-desktop/headless-helper/confirm");
+    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-bar"]')).toBeNull();
+  });
+
+  it("stays over the viewer once the host is ready, without replacing it", async () => {
+    const ready = { ...disconnectedCaps(), videoReady: true, inputReady: true, requirements: [] };
+    spies.push(routedGet(() => ({ action: "DisplayOn", armedMs: deadline - 300_000, deadlineMs: deadline }), ready));
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div data-testid="viewer" /></RemoteDesktopReadinessGate>);
+    await settle();
+    expect(view.container.querySelector('[data-testid="viewer"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-bar"]')).not.toBeNull();
+  });
+
+  it("shows nothing for a host that is not Windows or a record it cannot read", async () => {
+    spies.push(routedGet(() => ({ action: "Reattach", deadlineMs: "soon" })));
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    await settle();
+    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-bar"]')).toBeNull();
+  });
+
+  it("says what is happening once the deadline has passed, with no button to press", async () => {
+    spies.push(routedGet(() => ({ action: "Reattach", armedMs: 0, deadlineMs: Date.now() - 1000 })));
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    await settle();
+    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-bar"]')?.textContent).toContain("Safety net is running");
+    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-confirm"]')).toBeNull();
+  });
+});
+
 describe("headless helper status line", () => {
   const base = {
     supported: true, usable: false, installed: false, outdated: false, otherUser: false,

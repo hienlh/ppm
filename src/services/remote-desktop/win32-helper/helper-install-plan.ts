@@ -3,13 +3,15 @@
  * the extra admin-side steps with the payloads they read. The service builds the scripts from
  * this, so adding a capability is a change here, not in the install flow.
  *
- * Today: bring the session back (`Reattach`) and the virtual display (`DisplayOn`/`DisplayOff`
- * plus the pinned driver). One install, one administrator prompt, covers both.
+ * Today: bring the session back (`Reattach`), the virtual display (`DisplayOn`/`DisplayOff`
+ * plus the pinned driver) and the safety net behind both (`Confirm`/`Rescue`). One install, one
+ * administrator prompt, covers all of it.
  */
 import { join } from "node:path";
 import { HELPER_ACTIONS, helperPaths, type HelperAction } from "./helper-paths.ts";
 import { buildHelperScript, REATTACH_ACTION } from "./helper-script.ts";
 import type { StagedPayload } from "./install-script.ts";
+import { CONFIRM_ACTION, RESCUE_ACTION } from "./rescue-script.ts";
 import type { HelperSystem } from "./helper-system.ts";
 import { VDD_ZIP_NAME, VDD_ZIP_SHA256, VDD_ZIP_URL } from "./vdd-catalog.ts";
 import {
@@ -43,7 +45,7 @@ async function stageDriver(sys: HelperSystem): Promise<PreparedPayloads | Prepar
 export function helperInstallPlan(): HelperInstallPlan {
   return {
     actions: [...HELPER_ACTIONS],
-    buildHelper: (sid) => buildHelperScript(sid, [REATTACH_ACTION, DISPLAY_ON_ACTION, DISPLAY_OFF_ACTION]),
+    buildHelper: (sid) => buildHelperScript(sid, [REATTACH_ACTION, DISPLAY_ON_ACTION, DISPLAY_OFF_ACTION, CONFIRM_ACTION, RESCUE_ACTION]),
     prepare: async (sys, kind) => (kind === "install" ? stageDriver(sys) : { ok: true, payloads: [] }),
     installSteps: buildVddInstallSteps(),
     uninstallSteps: buildVddUninstallSteps(),

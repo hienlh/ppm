@@ -16,7 +16,9 @@ import { isRemoteDesktopEnabled } from "../../services/remote-desktop/remote-des
 import { mintRemoteDesktopNonce } from "../../services/remote-desktop/remote-desktop-nonce.ts";
 import { listDisplays } from "../../services/remote-desktop/remote-desktop-displays.ts";
 import { HOST_ACTIONS, remoteDesktopReadiness, runHostAction } from "../../services/remote-desktop/remote-desktop-requirements.ts";
-import { getHelperStatus, startHelperJob } from "../../services/remote-desktop/win32-helper/helper-service.ts";
+import {
+  getHelperStatus, getRescueState, runHelperAction, startHelperJob,
+} from "../../services/remote-desktop/win32-helper/helper-service.ts";
 import { resolveWhepTarget } from "../../services/remote-desktop/remote-desktop-whep-registry.ts";
 import {
   relayStatus, startMediamtxInstall, uninstallMediamtx,
@@ -112,10 +114,20 @@ remoteDesktopRoutes.get("/headless-helper", async (c) => {
   return c.json(ok(await getHelperStatus()));
 });
 
-remoteDesktopRoutes.post("/headless-helper/:kind", (c) => {
+/** The safety net armed by bringing the session back or turning the virtual display on: when
+ *  its `Rescue` task runs unless confirmed. Polled by the viewer; reads one small file. */
+remoteDesktopRoutes.get("/headless-helper/rescue", (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  return c.json(ok(getRescueState()));
+});
+
+remoteDesktopRoutes.post("/headless-helper/:kind", async (c) => {
   const rejected = assertSessionAllowed(c);
   if (rejected) return rejected;
   const kind = c.req.param("kind");
+  // "I can still reach this PC": the user answers the safety net.
+  if (kind === "confirm") return c.json(ok(await runHelperAction("Confirm")));
   if (kind !== "install" && kind !== "uninstall") return c.json(err("unknown helper action"), 404);
   try {
     return c.json(ok(startHelperJob(kind)), 202);

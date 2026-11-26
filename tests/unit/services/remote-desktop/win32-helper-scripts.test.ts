@@ -50,7 +50,9 @@ describe("helper.ps1", () => {
     expect(script).toContain("[ValidateSet('Reattach')]");
     expect(script).not.toMatch(/\$args\b/);
     expect(script).not.toMatch(/\$input\b/i);
-    expect((script.match(/param\(/g) ?? []).length).toBe(1);
+    // One script-level param block (the safety net's script blocks take their own, internal ones).
+    expect((script.match(/^param\(/gm) ?? []).length).toBe(1);
+    expect(script.indexOf("param(\n  [Parameter(Mandatory = $true)]")).toBeLessThan(script.indexOf("function "));
   });
 
   it("acts only on the user whose SID was written in, found through WTS rather than quser", () => {
@@ -63,7 +65,7 @@ describe("helper.ps1", () => {
   it("moves a session only when exactly one disconnected session of that user exists", () => {
     expect(script).toContain("$_.State -eq 4");
     expect(script).toContain("$disconnected.Count -gt 1");
-    expect(script).toContain("& $tscon $id /dest:console");
+    expect(script).toContain("& $tscon $Id /dest:console");
   });
 
   it("writes only inside its own state folder and never through a reparse point", () => {

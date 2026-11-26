@@ -234,3 +234,49 @@ describe("headless helper: bring the session back", () => {
     expect(win.calls.some((c) => c[1] === "/run")).toBe(false);
   });
 });
+
+describe("headless helper routes: the safety net", () => {
+  const rescuePath = () => `${helperPaths().stateDir}\\rescue.json`;
+
+  it("answers null when nothing is waiting, and the armed record when something is", async () => {
+    auth(true);
+    markInstalled();
+    let res = await remoteDesktopRoutes.request("http://localhost/headless-helper/rescue");
+    expect(await res.json()).toMatchObject({ data: null });
+    win.files.set(rescuePath(), JSON.stringify({ action: "Reattach", armedMs: 1000, deadlineMs: 301_000 }));
+    res = await remoteDesktopRoutes.request("http://localhost/headless-helper/rescue");
+    expect(await res.json()).toMatchObject({ data: { action: "Reattach", armedMs: 1000, deadlineMs: 301_000 } });
+    // Polled every few seconds: a file read, never a process.
+    expect(win.calls).toEqual([]);
+  });
+
+  it("ignores a record it cannot make sense of", async () => {
+    auth(true);
+    win.files.set(rescuePath(), JSON.stringify({ action: "Reattach", deadlineMs: "soon" }));
+    const res = await remoteDesktopRoutes.request("http://localhost/headless-helper/rescue");
+    expect(await res.json()).toMatchObject({ data: null });
+  });
+
+  it("\"I can still reach this PC\" runs the Confirm task and passes its answer on", async () => {
+    auth(true);
+    markInstalled();
+    answer(true, "Confirmed. The safety net for Reattach is off.");
+    const res = await remoteDesktopRoutes.request("http://localhost/headless-helper/confirm", { method: "POST" });
+    expect(await res.json()).toMatchObject({ data: { ok: true, message: "Confirmed. The safety net for Reattach is off." } });
+    expect(win.calls.filter((c) => c[1] === "/run").map((c) => c[3])).toEqual(["\\PPM-RemoteDesktop\\Confirm"]);
+  });
+
+  it("refuses both without PPM auth", async () => {
+    auth(false);
+    expect((await remoteDesktopRoutes.request("http://localhost/headless-helper/rescue")).status).toBe(403);
+    expect((await remoteDesktopRoutes.request("http://localhost/headless-helper/confirm", { method: "POST" })).status).toBe(403);
+    expect(win.calls).toEqual([]);
+  });
+
+  it("there is no way to start Rescue from PPM", async () => {
+    auth(true);
+    markInstalled();
+    expect((await remoteDesktopRoutes.request("http://localhost/headless-helper/rescue", { method: "POST" })).status).toBe(404);
+    expect(win.calls.some((c) => c[1] === "/run")).toBe(false);
+  });
+});

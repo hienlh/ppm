@@ -11,6 +11,9 @@
  *   says why. Sessions are listed through the WTS API, not `quser`, whose output is translated
  *   into the display language.
  * - It writes only inside its own `state` folder, and refuses to write through a reparse point.
+ * - Before `Reattach` or `DisplayOn` changes anything it arms the safety net (`rescue-script.ts`).
+ * - `DisplayOff` refuses to leave the console session with no screen
+ *   (`virtual-display-safety-script.ts`).
  *
  * Plain ASCII, no backticks: Windows PowerShell 5.1 reads a BOM-less file in the system code
  * page, and a backtick would end this TypeScript template.
@@ -18,6 +21,7 @@
 import { HELPER_VERSION, type HelperAction } from "./helper-paths.ts";
 import { isUserSid, psQuote } from "./powershell-text.ts";
 import { VIRTUAL_DISPLAY_SAFETY } from "./virtual-display-safety-script.ts";
+import { RESCUE_WINDOW } from "./rescue-script.ts";
 
 /** One `switch` branch per action, each calling a function defined in `body`. */
 export interface HelperActionScript {
@@ -89,13 +93,53 @@ function Get-UserSessions {
 }
 `;
 
+/**
+ * Every file the helper writes goes through these: only inside `$StateDir`, never through a
+ * reparse point, written to a temporary name and moved into place.
+ */
+export const STATE_FILES = `
+function Assert-NotReparse([string]$Path) {
+  if (Test-Path -LiteralPath $Path) {
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw ('refusing to write through a reparse point: ' + $Path) }
+  }
+}
+
+function Write-StateFile([string]$Name, [string]$Text) {
+  Assert-NotReparse $StateDir
+  $target = Join-Path $StateDir $Name
+  $tmp = $target + '.tmp'
+  Assert-NotReparse $target; Assert-NotReparse $tmp
+  [IO.File]::WriteAllText($tmp, $Text, (New-Object Text.UTF8Encoding($false)))
+  Move-Item -LiteralPath $tmp -Destination $target -Force
+}
+
+function Read-StateJson([string]$Name) {
+  $path = Join-Path $StateDir $Name
+  if (-not (Test-Path -LiteralPath $path)) { return $null }
+  try { return (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json) } catch { return $null }
+}
+
+function Remove-StateFile([string]$Name) {
+  Assert-NotReparse $StateDir
+  $path = Join-Path $StateDir $Name
+  Assert-NotReparse $path
+  if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+}
+`;
+
 export const REATTACH_ACTION: HelperActionScript = {
   action: "Reattach",
   call: "Invoke-Reattach",
   body: `
-function Invoke-Reattach {
+function Invoke-Tscon([int]$Id) {
   $tscon = Join-Path $env:SystemRoot 'System32\\tscon.exe'
-  if (-not (Test-Path -LiteralPath $tscon)) { return @($false, 'tscon.exe is not available on this edition of Windows.') }
+  if (-not (Test-Path -LiteralPath $tscon)) { return -1 }
+  & $tscon $Id /dest:console | Out-Null
+  return $LASTEXITCODE
+}
+
+function Invoke-Reattach {
   $mine = Get-UserSessions
   $disconnected = @($mine | Where-Object { $_.State -eq 4 })
   if ($disconnected.Count -eq 0) {
@@ -104,8 +148,14 @@ function Invoke-Reattach {
   }
   if ($disconnected.Count -gt 1) { return @($false, 'The PPM user has more than one disconnected session; not choosing one.') }
   $id = $disconnected[0].Id
-  & $tscon $id /dest:console | Out-Null
-  if ($LASTEXITCODE -ne 0) { return @($false, ('tscon failed with exit code ' + $LASTEXITCODE + ' for session ' + $id + '.')) }
+  # The safety net goes up before the session moves: if it cannot, the session stays where it is.
+  Start-RescueWindow 'Reattach'
+  $code = Invoke-Tscon $id
+  if ($code -ne 0) {
+    Stop-RescueWindow
+    if ($code -eq -1) { return @($false, 'tscon.exe is not available on this edition of Windows.') }
+    return @($false, ('tscon failed with exit code ' + $code + ' for session ' + $id + '.'))
+  }
   return @($true, ('Session ' + $id + ' is back on the PC screen.'))
 }
 `,
@@ -126,22 +176,10 @@ $ErrorActionPreference = 'Stop'
 $UserSid = ${psQuote(userSid)}
 $StateDir = Join-Path $PSScriptRoot 'state'
 
-function Assert-NotReparse([string]$Path) {
-  if (Test-Path -LiteralPath $Path) {
-    $item = Get-Item -LiteralPath $Path -Force
-    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw ('refusing to write through a reparse point: ' + $Path) }
-  }
-}
-
+${STATE_FILES}
 function Write-HelperState([bool]$Ok, [string]$Message) {
-  Assert-NotReparse $StateDir
   $at = [DateTime]::UtcNow.ToString('o')
-  $json = @{ action = $Action; ok = $Ok; message = $Message; at = $at; version = ${HELPER_VERSION} } | ConvertTo-Json -Compress
-  $target = Join-Path $StateDir 'last-run.json'
-  $tmp = Join-Path $StateDir 'last-run.json.tmp'
-  Assert-NotReparse $target; Assert-NotReparse $tmp
-  [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
-  Move-Item -LiteralPath $tmp -Destination $target -Force
+  Write-StateFile 'last-run.json' (@{ action = $Action; ok = $Ok; message = $Message; at = $at; version = ${HELPER_VERSION} } | ConvertTo-Json -Compress)
   $log = Join-Path $StateDir 'helper.log'
   Assert-NotReparse $log
   if ((Test-Path -LiteralPath $log) -and ((Get-Item -LiteralPath $log).Length -gt 262144)) { Remove-Item -LiteralPath $log -Force }
@@ -149,6 +187,7 @@ function Write-HelperState([bool]$Ok, [string]$Message) {
 }
 ${WTS_SESSION_LOOKUP}
 ${VIRTUAL_DISPLAY_SAFETY}
+${RESCUE_WINDOW}
 ${actions.map((a) => a.body).join("\n")}
 try {
   switch ($Action) {

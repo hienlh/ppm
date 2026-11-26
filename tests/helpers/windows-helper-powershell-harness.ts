@@ -20,6 +20,10 @@ function Add-Call([string]$What) { [void]$global:Calls.Add($What) }
 $global:ConsoleSession = -1
 $global:Monitors = @()
 $global:VirtualDevices = @([pscustomobject]@{ InstanceId = 'ROOT\\DISPLAY\\0000'; HardwareID = @('Root\\MttVDD') })
+$global:UserSessions = @()
+$global:TsconExit = 0
+$global:TriggerFails = $false
+$global:TriggerAt = $null
 
 function Get-PnpDevice {
   [CmdletBinding()] param([string]$Class, [switch]$PresentOnly)
@@ -35,12 +39,22 @@ function Get-PnpDeviceProperty {
 function Enable-PnpDevice { [CmdletBinding(SupportsShouldProcess = $true)] param([string]$InstanceId) Add-Call ('enable ' + $InstanceId) }
 function Disable-PnpDevice { [CmdletBinding(SupportsShouldProcess = $true)] param([string]$InstanceId) Add-Call ('disable ' + $InstanceId) }
 function Get-ConsoleUserSession { return $global:ConsoleSession }
+function Get-UserSessions { return ,@($global:UserSessions) }
+function Invoke-Tscon([int]$Id) { Add-Call ('tscon ' + $Id); return $global:TsconExit }
+function Set-RescueTrigger([DateTime]$At) {
+  if ($global:TriggerFails) { throw 'Task Scheduler refused the trigger' }
+  $global:TriggerAt = $At
+  Add-Call 'arm-trigger'
+}
+function Clear-RescueTrigger { Add-Call 'clear-trigger' }
 `;
 
 export interface ScenarioResult {
   ok: boolean;
   message: string;
   calls: string[];
+  /** When the safety net's trigger was set for, if it was. */
+  triggerMs: number | null;
   /** Each file in the state folder after the run, by name. */
   state: Record<string, string>;
 }
@@ -66,8 +80,10 @@ $StateDir = '${stateDir.replace(/'/g, "''")}'
 ${opts.pieces.join("\n")}
 ${WINDOWS_FAKES}
 ${opts.setup ?? ""}
-$r = ${opts.call}
-@{ ok = [bool]$r[0]; message = [string]$r[1]; calls = @($global:Calls) } | ConvertTo-Json -Compress
+try { $r = ${opts.call} } catch { $r = @($false, ('threw: ' + $_.Exception.Message)) }
+$triggerMs = $null
+if ($global:TriggerAt) { $triggerMs = ([DateTimeOffset]$global:TriggerAt).ToUnixTimeMilliseconds() }
+@{ ok = [bool]$r[0]; message = [string]$r[1]; calls = @($global:Calls); triggerMs = $triggerMs } | ConvertTo-Json -Compress
 `;
     const file = join(dir, "scenario.ps1");
     writeFileSync(file, script);

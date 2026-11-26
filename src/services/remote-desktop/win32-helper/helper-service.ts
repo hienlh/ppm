@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { createLogger } from "../../logger.ts";
 import {
-  helperPaths, HELPER_VERSION, powershellExe, schtasksExe, taskName, whoamiExe, type HelperAction,
+  helperPaths, HELPER_VERSION, powershellExe, schtasksExe, taskName, whoamiExe, type HelperAction, type PpmHelperAction,
 } from "./helper-paths.ts";
 import { helperSystem, type HelperSystem } from "./helper-system.ts";
 import {
@@ -37,7 +37,27 @@ export interface HelperStatus {
   otherUser: boolean;
   virtualDisplay: boolean;
   lastRun: { action: string; ok: boolean; message: string; at: string } | null;
+  /** The safety net waiting for "I can still reach this PC", or null. */
+  rescue: RescueState | null;
   job: HelperJob | null;
+}
+
+/** `state\rescue.json`, written by the SYSTEM helper only (`rescue-script.ts`). */
+export interface RescueState {
+  /** The action that armed it: `Reattach` or `DisplayOn`. */
+  action: string;
+  armedMs: number;
+  /** When the `Rescue` task runs unless confirmed first. */
+  deadlineMs: number;
+}
+
+/** Cheap enough to poll: one small file read, no process. */
+export function getRescueState(): RescueState | null {
+  const sys = helperSystem();
+  if (sys.platform !== "win32") return null;
+  const raw = parseJson<Partial<RescueState>>(sys.readText(join(helperPaths().stateDir, "rescue.json")));
+  if (!raw || typeof raw.action !== "string" || typeof raw.deadlineMs !== "number" || typeof raw.armedMs !== "number") return null;
+  return { action: raw.action, armedMs: raw.armedMs, deadlineMs: raw.deadlineMs };
 }
 
 const STATUS_TTL_MS = 5000;
@@ -70,7 +90,7 @@ export async function getHelperStatus(force = false): Promise<HelperStatus> {
   const sys = helperSystem();
   const unsupported: HelperStatus = {
     supported: false, usable: false, installed: false, outdated: false, otherUser: false,
-    virtualDisplay: false, lastRun: null, job,
+    virtualDisplay: false, lastRun: null, rescue: null, job,
   };
   if (sys.platform !== "win32") return unsupported;
   if (!force && cachedStatus && sys.now() - cachedStatus.at < STATUS_TTL_MS) return { ...cachedStatus.status, job };
@@ -91,6 +111,7 @@ export async function getHelperStatus(force = false): Promise<HelperStatus> {
     installed, outdated, otherUser,
     virtualDisplay: installed && (record?.actions ?? []).includes("DisplayOn"),
     lastRun: parseJson(sys.readText(paths.lastRun)),
+    rescue: getRescueState(),
     job,
   };
   cachedStatus = { at: sys.now(), status };
@@ -166,7 +187,7 @@ export function startHelperJob(kind: "install" | "uninstall"): HelperJob {
   return current;
 }
 
-async function runOnce(sys: HelperSystem, action: HelperAction): Promise<HelperRunResult> {
+async function runOnce(sys: HelperSystem, action: PpmHelperAction): Promise<HelperRunResult> {
   const status = await getHelperStatus(true);
   if (!status.usable) return { ok: false, message: "The headless helper is not set up for this Windows user." };
   const started = sys.now();
@@ -187,8 +208,9 @@ async function runOnce(sys: HelperSystem, action: HelperAction): Promise<HelperR
   return { ok: false, message: `The helper did not answer within ${ANSWER_WAIT_MS / 1000} seconds.` };
 }
 
-/** Runs one fixed task. One at a time: a second request waits for the first's answer. */
-export function runHelperAction(action: HelperAction): Promise<HelperRunResult> {
+/** Runs one fixed task. One at a time: a second request waits for the first's answer. Never
+ *  `Rescue`: that one is started by its own timer only. */
+export function runHelperAction(action: PpmHelperAction): Promise<HelperRunResult> {
   const sys = helperSystem();
   const previous = running ?? Promise.resolve({ ok: true, message: "" });
   const next = previous.then(() => runOnce(sys, action), () => runOnce(sys, action));
