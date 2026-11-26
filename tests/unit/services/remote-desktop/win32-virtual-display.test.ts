@@ -53,6 +53,11 @@ describe("driver install steps", () => {
     expect(steps).toContain("preexisting = $VddPreexisting");
   });
 
+  it("a device an earlier PPM install left is PPM's own, and is not created twice", () => {
+    expect(steps).toContain("if ($previous -and -not $previous.preexisting) { $VddPreexisting = $false }");
+    expect(steps).toMatch(/if \(\(@\(Get-PnpDevice[^\n]*\)\)\.Count -eq 0\) \{\n[\s\S]*\[PpmRootDevice\]::Create/);
+  });
+
   it("uninstall removes only a driver PPM added", () => {
     const un = buildVddUninstallSteps();
     expect(un).toContain("if ($vddRecord -and -not $vddRecord.preexisting)");

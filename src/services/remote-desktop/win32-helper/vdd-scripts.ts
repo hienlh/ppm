@@ -75,6 +75,13 @@ $VddDir = Join-Path $InstallDir 'vdd'
 $VddDriverDir = Join-Path $VddDir ${psQuote(VDD_ZIP_FOLDER)}
 $VddSettingsDir = Join-Path $VddDir 'settings'
 $VddPreexisting = (${FIND_DEVICES}).Count -gt 0
+# A device left by an earlier PPM install (one that stopped part way, say) is PPM's own, not the
+# user's: only a device with no record of PPM adding it counts as theirs.
+$vddRecordPath = Join-Path $StateDir 'vdd.json'
+if ($VddPreexisting -and (Test-Path -LiteralPath $vddRecordPath)) {
+  $previous = Get-Content -LiteralPath $vddRecordPath -Raw | ConvertFrom-Json
+  if ($previous -and -not $previous.preexisting) { $VddPreexisting = $false }
+}
 
 $legacy = Join-Path $env:SystemDrive 'VirtualDisplayDriver'
 if (Test-Path -LiteralPath $legacy) {
@@ -117,8 +124,10 @@ $inf = Join-Path $VddDriverDir ${psQuote(VDD_INF)}
 & $Pnputil /add-driver $inf | Out-Null
 if (@(0, 259, 3010) -notcontains $LASTEXITCODE) { throw ('pnputil could not add the driver (exit ' + $LASTEXITCODE + ')') }
 if (-not $VddPreexisting) {
+  if ((${FIND_DEVICES}).Count -eq 0) {
 ${CREATE_DEVICE_TYPE}
-  [PpmRootDevice]::Create(${psQuote(VDD_HARDWARE_ID)}, $inf, 'Display', ${psQuote(DISPLAY_CLASS_GUID)})
+    [PpmRootDevice]::Create(${psQuote(VDD_HARDWARE_ID)}, $inf, 'Display', ${psQuote(DISPLAY_CLASS_GUID)})
+  }
   $devices = ${FIND_DEVICES}
   if ($devices.Count -eq 0) { throw 'The virtual display device was not created.' }
   foreach ($device in $devices) { Disable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }

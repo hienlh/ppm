@@ -99,6 +99,14 @@ describe("install.ps1 / uninstall.ps1", () => {
     expect(install).not.toMatch(/\b(Administrators|Users|SYSTEM):/);
   });
 
+  it("creates each task-folder level before registering (Register-ScheduledTask will not)", () => {
+    // Found on a real host: with no \PPM folder, registering under \PPM\RemoteDesktop\ failed
+    // with "The system cannot find the path specified".
+    expect(install).toContain("foreach ($segment in @('PPM', 'RemoteDesktop'))");
+    expect(install).toContain("$folder.CreateFolder($segment)");
+    expect(install.indexOf("CreateFolder")).toBeLessThan(install.indexOf("Register-ScheduledTask -TaskName"));
+  });
+
   it("writes the helper from the verified bytes, not from the staged file", () => {
     expect(install).toContain("[IO.File]::WriteAllBytes($HelperPath, $HelperBytes)");
   });

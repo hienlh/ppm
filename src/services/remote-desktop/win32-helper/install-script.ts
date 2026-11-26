@@ -80,6 +80,12 @@ Assert-NotReparse $HelperPath
 ${opts.extraSteps ?? ""}
 $service = New-Object -ComObject Schedule.Service
 $service.Connect()
+# Register-ScheduledTask does not create a nested folder whose parent is missing (it fails with
+# "The system cannot find the path specified"), so each level is made here first.
+$folder = $service.GetFolder('\\')
+foreach ($segment in @('PPM', 'RemoteDesktop')) {
+  try { $folder = $folder.GetFolder($segment) } catch { $folder = $folder.CreateFolder($segment) }
+}
 foreach ($action in @(${actions})) {
   $argument = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $HelperPath + '" -Action ' + $action
   $taskAction = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $argument
@@ -151,7 +157,8 @@ try {
   . ([ScriptBlock]::Create((New-Object Text.UTF8Encoding($false)).GetString($${scriptPayload.variable})))
   exit ${EXIT_OK}
 } catch {
-  $message = $_.Exception.Message
+  # Which line failed, so a report from the field names the step and not only Windows' sentence.
+  $message = $_.Exception.Message.Trim() + ' (line ' + $_.InvocationInfo.ScriptLineNumber + ': ' + ([string]$_.InvocationInfo.Line).Trim() + ')'
   try {
     $state = Join-Path $env:ProgramFiles 'PPM\\RemoteDesktopHelper\\state'
     $target = Join-Path $state 'install-result.json'
