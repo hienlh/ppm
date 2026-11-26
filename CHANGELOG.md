@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.26.38] - 2026-11-26
+
+### Added
+
+- **A setting for card reminders on Telegram**: turn them off or choose the wait (1–240 minutes, 5 by default) in Settings → PPM Assistant → Telegram; the Assistant can change both.
+
+### Fixed
+
+- **One Telegram reminder for unanswered cards**: cards due together arrive as one message listing each card, each card is reminded about once, and a reminder due in quiet hours comes once they end.
+- **A slow Telegram no longer duplicates messages**: a reminder whose send timed out is not sent again, and a card is sent at most twice.
+
 ## [0.26.37] - 2026-11-25
 
 ### Added
