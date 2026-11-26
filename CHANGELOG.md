@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.26.39] - 2026-11-26
+
+### Added
+
+- **Read a card's answer without opening it**: an answered card folded in the Assistant shows one line of your reply and the first two lines of the manager's answer.
+
+### Fixed
+
+- **"Show more" on Assistant cards is a normal-sized button on phones** instead of a 44 px tall one.
+
 ## [0.26.38] - 2026-11-26
 
 ### Added
