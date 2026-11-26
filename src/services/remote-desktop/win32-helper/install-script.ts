@@ -44,8 +44,15 @@ function Protect-HelperDir([string]$Path) {
   Assert-NotReparse $Path
   if (-not (Test-Path -LiteralPath $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
   & $Icacls $Path /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
-  & $Icacls $Path /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /T /C /Q | Out-Null
+  # The folder's own ACL only: (OI)(CI) grants pushed onto files with /T leave each existing file
+  # with an EMPTY ACL (icacls still exits 0), which locked a reinstall out of its own files.
+  & $Icacls $Path /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /Q | Out-Null
   if ($LASTEXITCODE -ne 0) { throw ('icacls failed on ' + $Path) }
+  # Everything already inside goes back to inheriting exactly that.
+  if (@(Get-ChildItem -LiteralPath $Path -Force).Count -gt 0) {
+    & $Icacls (Join-Path $Path '*') /reset /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw ('icacls could not reset the files in ' + $Path) }
+  }
 }
 
 function Write-AsciiFile([string]$Path, [string]$Text) {

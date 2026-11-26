@@ -93,6 +93,14 @@ describe("install.ps1 / uninstall.ps1", () => {
     expect(install).toContain("foreach ($action in @('Reattach'))");
   });
 
+  it("sets the folder's ACL without pushing folder-only grants onto files", () => {
+    // Found on a real host: `/inheritance:r /grant:r ...(OI)(CI)... /T` left every existing file
+    // with an empty ACL and exit code 0, so a reinstall could not overwrite helper.ps1.
+    const grant = install.split("\n").find((l) => l.includes("/inheritance:r"))!;
+    expect(grant).not.toContain("/T");
+    expect(install).toContain("(Join-Path $Path '*') /reset /T /C /Q");
+  });
+
   it("locks the folder down by group SID, never by a translated group name", () => {
     expect(install).toContain("/inheritance:r");
     expect(install).toContain("'*S-1-5-32-545:(OI)(CI)RX'");
