@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  answerOf, createFollowupTracker, cutFollowupText, FOLLOWUP_BUFFER_MAX, isConfirmationBlock, isThrowawayBlock, type FollowupResult,
+  answerOf, createFollowupTracker, cutFollowupText, FOLLOWUP_BUFFER_MAX, FOLLOWUP_REPLY_KEEP, isConfirmationBlock, isThrowawayBlock, type FollowupResult,
 } from "../../../src/services/assistant-cards/card-reply-followup-tracker.ts";
 import {
   attachCardFollowupSink, cardReplyFollowups, deliverCardFollowup, detachCardFollowupSink, followupOutcome, startCardReplyFollowups,
@@ -566,5 +566,67 @@ describe("deliverCardFollowup", () => {
       cards: { get: () => null, setFollowUp: () => { called = true; return true; } }, now: () => 1, sink: () => null,
     }, { cardId: "x", origin: { channel: "ppm" }, sessionId: S, text: "t", overflow: false, newCards: [], repliedAt: 1 });
     expect(called).toBe(false);
+  });
+});
+
+describe("the user's reply kept with the answer", () => {
+  it("is carried from the send to the answer, and only as far as the card", async () => {
+    const { t, delivered, say, named } = setup();
+    const card = { id: "c1", kind: "needs_decision", sessionId: S, projectName: "ppm" } as AssistantCard;
+    let sentUnder = "";
+    const env: ForwardEnv = {
+      now: () => 1,
+      managerTarget: () => ({ sessionId: S, providerId: "claude", projectName: "ppm", projectPath: "/p" }),
+      deliverUserWords: async (input) => { sentUnder = input.clientMessageId!; return { ok: true, sessionId: S, delivered: "started" } as never; },
+      sendToAssistant: async () => ({ ok: true }),
+      userWrote: () => {}, mainSession: () => null, note: () => {}, trace: () => {},
+      expectFollowup: (input) => t.expect(input),
+    };
+    await forwardUserWords(card, "  Có tốn **quota** không?  ", { actor: { channel: "ppm" }, supersede: false, followUp: { channel: "ppm" } }, env);
+    named(sentUnder);
+    say("Không ạ, rẻ thôi.");
+    t.onTurnEnded(S);
+    expect(delivered).toHaveLength(1);
+    // As the user wrote it (trimmed): scrubbing and cutting happen where it is stored.
+    expect(delivered[0]).toMatchObject({ text: "Không ạ, rẻ thôi.", reply: "Có tốn **quota** không?" });
+  });
+
+  it("keeps at most FOLLOWUP_REPLY_KEEP characters of a long reply while it waits", () => {
+    const { t, delivered, say, named } = setup();
+    t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S, reply: "x".repeat(FOLLOWUP_REPLY_KEEP + 50) }).attach("started");
+    named(ID);
+    say("ok");
+    t.onTurnEnded(S);
+    expect(delivered[0]!.reply).toHaveLength(FOLLOWUP_REPLY_KEEP);
+  });
+
+  it("goes onto the card as a scrubbed, plain, cut preview and is never handed on", () => {
+    const stored: CardFollowUp[] = [];
+    const sent: unknown[] = [];
+    const card = { id: "c1", projectName: "ppm", status: "answered" } as AssistantCard;
+    const cards = { get: () => card, setFollowUp: (_id: string, f: CardFollowUp) => { stored.push(f); return true; } };
+    const reply = `Anh **đồng ý** — nhưng [kiểm tra](https://x.test) lại \`quota\` nhé. ${"thêm chữ ".repeat(40)}`;
+    deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: (d) => sent.push(d) }) }, {
+      cardId: "c1", origin: { channel: "ppm" }, sessionId: S, text: "Dạ, em chạy ngay.", overflow: false, newCards: [], repliedAt: 1, reply,
+    });
+    expect(stored).toHaveLength(1);
+    const kept = stored[0]!.reply!;
+    expect(kept.startsWith("Anh đồng ý — nhưng kiểm tra lại quota nhé. thêm chữ")).toBe(true);
+    expect(kept.endsWith("…")).toBe(true);
+    expect(Array.from(kept).length).toBeLessThanOrEqual(160);
+    // Handed on is only what the card kept (the scrubbed preview), never the words as typed.
+    expect(sent).toHaveLength(1);
+    expect((sent[0] as { reply?: string }).reply).toBeUndefined();
+    expect(JSON.stringify(sent)).not.toContain("**đồng ý**");
+  });
+
+  it("keeps no reply for one of images only, and none for a stopped turn", () => {
+    const stored: CardFollowUp[] = [];
+    const card = { id: "c1", projectName: "ppm", status: "answered" } as AssistantCard;
+    const cards = { get: () => card, setFollowUp: (_id: string, f: CardFollowUp) => { stored.push(f); return true; } };
+    const base = { cardId: "c1", origin: { channel: "ppm" as const }, sessionId: S, overflow: false, newCards: [], repliedAt: 1 };
+    deliverCardFollowup({ cards, now: () => 5, sink: () => null }, { ...base, text: "Got the screenshot.", reply: "   " });
+    deliverCardFollowup({ cards, now: () => 5, sink: () => null }, { ...base, text: "", stopped: true, reply: "why?" });
+    expect(stored).toEqual([{ text: "Got the screenshot.", truncated: false, at: 5 }]);
   });
 });

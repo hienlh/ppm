@@ -194,10 +194,12 @@ exactly that card, moving a filter that would hide it to that project. The chip 
 filter, and a "+N" on it clears the filter when cards of other projects wait. A card lays its
 buttons out by its own width (`@container/card`): one row from 27rem, else the answers on one row
 and Open chat / Dismiss on another, above them on a phone. A decision that no longer waits (a
-`WAITING_CARD_KINDS` card answered, dismissed, resolved elsewhere or gone) folds to one 44 px line
-in the stream (`cards/answered-card-fold.tsx`): title, project, how it ended ("Chose …", "OK given
+`WAITING_CARD_KINDS` card answered, dismissed, resolved elsewhere or gone) folds to one line
+in the stream (`cards/answered-card-fold.tsx`, a list row sized by its content): title, project, how it ended ("Chose …", "OK given
 in PPM", "You replied in PPM", "Dismissed") and when, plus "manager answered" once a reply got its
-answer; a press opens the card whole and read-only (its status line, no buttons), scrolling just
+answer. Such a card also shows, folded, one line of the reply ("You: …", `followUp.reply`) and at
+most two lines of the answer ("Manager: …", or the new card it answered with), both as plain text
+(`src/shared/plain-text-preview.ts`, built by `cards/answered-card-preview.ts`); a press opens the card whole and read-only (its status line, no buttons), scrolling just
 enough to show its last line above the footer, a second press folds it, and which ones are open is kept by card id so a card re-placed among new messages stays
 as it was. Reports that never asked anything (done, failed, digest, rules notes) are not folded
 this way. Text of a card that no longer waits folds past eight lines behind "Show more"
@@ -1934,6 +1936,11 @@ answer used to stay in the manager chat, which a user on their phone never opens
   It is kept on the card as `card.followUp` (beside `answer`, never in a made-up one: a done report
   nobody answered keeps `answer: null`), cut to `CARD_FOLLOWUP_MAX_CHARS` = 1500, and shown under
   it in PPM. Nothing is kept or sent when the card waits again (its words were reported lost).
+  Beside it, `followUp.reply` keeps the start of the user's reply for the folded card's preview:
+  the words go from `forwardUserWords` to the tracker with the reply, are scrubbed whole by the
+  vault scrubber, then cut to plain text of `CARD_REPLY_PREVIEW_CHARS` = 160; they are never handed
+  to the Telegram bridge. The Telegram copy of the card is not edited to add the answer: the answer
+  already goes there as its own message under the card, and editing a message makes no sound.
 - **A turn that is stopped or fails** has no answer: its partial text is never sent or kept. That
   includes a Stop reported as a normal end: on the first turn of a fresh Claude subprocess an
   aborted turn ends with `done`, so `turn_ended` carries `outcome: "done"` with `cancelledBy` set,

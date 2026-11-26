@@ -83,7 +83,8 @@ function parseFollowUp(value: unknown): CardFollowUp | undefined {
       !!c && typeof (c as { id?: unknown }).id === "string" && typeof (c as { title?: unknown }).title === "string")
       .map((c) => ({ id: c.id, title: c.title }))
     : [];
-  return { text: f.text, truncated: f.truncated, at: f.at, ...(newCards.length ? { newCards } : {}) };
+  const reply = typeof f.reply === "string" && f.reply ? f.reply : undefined;
+  return { text: f.text, truncated: f.truncated, at: f.at, ...(newCards.length ? { newCards } : {}), ...(reply ? { reply } : {}) };
 }
 
 /**

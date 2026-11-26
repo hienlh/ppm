@@ -96,6 +96,12 @@ export interface CardFollowUp {
    * — the turn's text repeats what they say.
    */
   newCards?: Array<{ id: string; title: string }>;
+  /**
+   * The start of the user's reply this answers, as plain text (`markdownPreview`, at most
+   * `CARD_REPLY_PREVIEW_CHARS`) after the vault scrubber: a folded card shows it beside the answer.
+   * Absent on answers kept before it was stored, and on a reply of images only.
+   */
+  reply?: string;
 }
 
 /** A design screenshot on a card: the kept shot's id and what it shows. */

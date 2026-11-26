@@ -42,6 +42,7 @@ import { BRIDGE_STATE_ROW } from "../../src/services/assistant-telegram/assistan
 import { TELEGRAM_API_BASE_ENV } from "../../src/services/telegram/telegram-api-base.ts";
 import { projectKey } from "../../src/services/project-name-for-path.ts";
 import { decodeMessageBlocks } from "../../src/shared/chat-message-blocks.ts";
+import { answeredCardPreview } from "../../src/web/components/assistant/cards/answered-card-preview.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../src/shared/assistant-project.ts";
 import { startFakeTelegram, type FakeSentMessage } from "../helpers/fake-telegram-bot-api.ts";
 import type { AIProvider, ChatEvent, SendMessageOpts } from "../../src/types/chat.ts";
@@ -314,6 +315,9 @@ describe("the manager's answer to a card reply", () => {
     expect(newCard.reply_to).toBeUndefined();
     expect(fake.sent(PHONE).filter((m) => m.reply_to === card.message_id)).toHaveLength(0);
     expect(assistantCards.get(cardId)!.followUp?.newCards?.map((c) => c.id)).toEqual([lastNewCardId]);
+    // Folded in the Assistant's stream, the card reads the reply and the card that answered it.
+    expect(assistantCards.get(cardId)!.followUp?.reply).toBe(question);
+    expect(answeredCardPreview(assistantCards.get(cardId)!)).toEqual({ reply: question, answer: "New card: “Chạy full regression trên Opus? Tốn ~40% quota tuần”" });
     note(`PPM       card ${cardId.slice(0, 8)}: “answered with a new card” under it; nothing sent under its Telegram copy`);
     ppmCardId = cardId;
   });
@@ -443,8 +447,10 @@ describe("the manager's answer to a card reply", () => {
     expect(followUp.text).toContain(SHORT_ANSWER);
     expect(followUp.silent).toBe(false);
     expect(lastNewCardId).toBe(cardsBefore);
-    expect(assistantCards.get(cardId)!.followUp).toMatchObject({ text: SHORT_ANSWER });
+    expect(assistantCards.get(cardId)!.followUp).toMatchObject({ text: SHORT_ANSWER, reply: question });
     expect(assistantCards.get(cardId)!.followUp?.newCards).toBeUndefined();
+    // Folded, the card reads both without being opened.
+    expect(answeredCardPreview(assistantCards.get(cardId)!)).toEqual({ reply: question, answer: SHORT_ANSWER });
     const ok = replyTo(followUp.message_id, "OK");
     note(`Telegram  phone → PPM bot   (msg #${ok.message?.message_id}, reply_to #${followUp.message_id}, the answer): “OK”`);
     await until(() => fake.sent(PHONE).find((m) => m.message_id > followUp.message_id && m.text.includes("send anyway")));

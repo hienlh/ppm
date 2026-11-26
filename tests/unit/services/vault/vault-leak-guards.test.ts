@@ -164,6 +164,26 @@ describe("card follow-ups", () => {
     expect(JSON.stringify(handed)).not.toContain("CANARY");
   });
 
+  it("keep a value out of the user's reply kept beside the answer, and never hand the reply on", () => {
+    turnSecretScrubber.hold("m1", [{ name: "NI", value: "CANARY-T2-reply" }]);
+    let stored: unknown = null;
+    let handed: unknown = null;
+    const card = { id: "c1", status: "answered" } as never;
+    deliverCardFollowup({
+      cards: { get: () => card, setFollowUp: (_id, f) => { stored = f; return true; } },
+      now: () => 1,
+      sink: () => ({ send: (d) => { handed = d; } }),
+    }, {
+      cardId: "c1", origin: { channel: "telegram", chatId: "1" }, sessionId: "m1", text: "Done.", overflow: false, newCards: [], repliedAt: 1,
+      reply: "Use NI CANARY-T2-reply for the filing",
+    });
+    expect(JSON.stringify(stored)).not.toContain("CANARY");
+    expect(stored).toMatchObject({ reply: "Use NI [vault:NI] for the filing" });
+    expect(JSON.stringify(handed)).not.toContain("CANARY");
+    // The words as typed stay behind; only the card's scrubbed copy travels with it.
+    expect((handed as { reply?: string }).reply).toBeUndefined();
+  });
+
   it("keep a value out of the title of a new card the manager answered with, stored and handed on", () => {
     turnSecretScrubber.hold("m1", [{ name: "NI", value: "CANARY-T2-newcard" }]);
     let stored: unknown = null;

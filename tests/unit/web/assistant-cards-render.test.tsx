@@ -157,6 +157,9 @@ describe("assistant cards", () => {
       expect(closed!.className).toContain("max-h-[11.25rem]");
       const toggle = view.container.querySelector("[data-card-text-toggle]")!;
       expect(toggle.textContent).toBe("Show more");
+      // A text button: 28px, 26px on a phone, never the 44px minimum (design guidelines rule 3).
+      expect(toggle.className).toContain("h-7 max-md:h-[26px]");
+      expect(toggle.className).not.toContain("min-h-11");
       await click(toggle);
       expect(closed!.className).not.toContain("max-h-");
       expect(toggle.textContent).toBe("Show less");

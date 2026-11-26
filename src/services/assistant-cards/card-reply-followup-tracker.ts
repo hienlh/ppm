@@ -28,7 +28,7 @@
  * most one. Listeners on the chat lifecycle run on its hot path, so everything here only updates
  * memory; `deliver` is handed the result and must not block.
  */
-import { CARD_FOLLOWUP_MAX_CHARS } from "../../shared/assistant-limits.ts";
+import { CARD_FOLLOWUP_MAX_CHARS, CARD_REPLY_MAX_CHARS } from "../../shared/assistant-limits.ts";
 import { REPORT_KINDS } from "../../shared/assistant-cards.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import type { Cancel } from "../assistant-wake/assistant-clock.ts";
@@ -96,6 +96,8 @@ export interface FollowupResult {
   newCards: Array<{ id: string; title: string }>;
   /** When the user replied (the words were sent), on the tracker's clock. */
   repliedAt: number;
+  /** The user's words this answers, as they were sent (not yet scrubbed or cut). */
+  reply?: string;
 }
 
 export interface FollowupTrackerDeps {
@@ -159,7 +161,15 @@ interface Pending {
   turnAtInsert?: string | undefined;
   at: number;
   newCards: Array<{ id: string; title: string }>;
+  /** The user's words, for the preview kept with the answer. */
+  reply?: string;
 }
+
+/**
+ * Of the user's words, the most a reply keeps while it waits for its answer: as much as a reply may
+ * be, so the vault scrubber sees the words whole before the preview is cut from them.
+ */
+export const FOLLOWUP_REPLY_KEEP = CARD_REPLY_MAX_CHARS;
 
 const collected = (): Collected => ({ blocks: [""], size: 0, sawTool: false, overflow: false });
 
@@ -298,7 +308,10 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
   function finish(p: Pending, buffer: Buffer | undefined, session: string): void {
     if (!live(p)) return;
     forget(p);
-    const base = { cardId: p.cardId, origin: p.origin, sessionId: session, newCards: p.newCards, repliedAt: p.at };
+    const base = {
+      cardId: p.cardId, origin: p.origin, sessionId: session, newCards: p.newCards, repliedAt: p.at,
+      ...(p.reply ? { reply: p.reply } : {}),
+    };
     if (buffer?.stopped) { deps.deliver({ ...base, text: "", overflow: false, stopped: true, ...(buffer.error ? { error: buffer.error } : {}) }); return; }
     const text = buffer?.text.trim() ?? "";
     // A turn that answered with a card and wrote nothing else still answered.
@@ -331,12 +344,14 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
      * The user's words are about to be sent to `sessionId` under `clientMessageId`. Registered
      * before the send, so a turn named — or even ended — before the send returns is still theirs.
      */
-    expect(input: { cardId: string; clientMessageId: string; origin: FollowupOrigin; sessionId: string }): FollowupHandle {
+    expect(input: { cardId: string; clientMessageId: string; origin: FollowupOrigin; sessionId: string; reply?: string }): FollowupHandle {
       prune();
+      const reply = input.reply?.trim().slice(0, FOLLOWUP_REPLY_KEEP);
       const p: Pending = {
         cardId: input.cardId, clientMessageId: input.clientMessageId, origin: input.origin, sessionId: deps.canonical(input.sessionId),
         // Gathered from the start of the send, in case the words open a turn before it returns.
         delivered: null, bound: false, collect: collected(), endedBeforeAttach: null, judged: false, at: deps.now(), newCards: [],
+        ...(reply ? { reply } : {}),
       };
       pending.set(p.clientMessageId, p);
       rewatch();
