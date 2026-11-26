@@ -17,6 +17,7 @@ import { helperPaths } from "./helper-paths.ts";
 import { runHelperAction, type HelperRunResult } from "./helper-service.ts";
 import { helperSystem } from "./helper-system.ts";
 import { parseJson } from "./helper-json.ts";
+import { applyVirtualDisplayMode } from "./virtual-display-mode.ts";
 
 const log = createLogger("remote-desktop");
 
@@ -25,6 +26,8 @@ export const GRACE_MS = 30_000;
 
 export interface LeaseDeps {
   run(action: "DisplayOn" | "DisplayOff"): Promise<HelperRunResult>;
+  /** Give the display that just came on a usable size (Windows starts it at 800x600). */
+  setMode(): Promise<void>;
   readMarker(): boolean;
   writeMarker(on: boolean): void;
   setTimer(fn: () => void, ms: number): unknown;
@@ -37,6 +40,13 @@ function markerPath(): string {
 
 const realDeps: LeaseDeps = {
   run: (action) => runHelperAction(action),
+  // The device takes a moment to appear after the task enables it, so a few short tries.
+  setMode: async () => {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if (applyVirtualDisplayMode()) return;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  },
   readMarker: () => parseJson<{ on?: boolean }>(helperSystem().readText(markerPath()))?.on === true,
   writeMarker: (on) => helperSystem().writeText(markerPath(), JSON.stringify({ on, at: new Date().toISOString() })),
   setTimer: (fn, ms) => { const t = setTimeout(fn, ms); (t as { unref?: () => void }).unref?.(); return t; },
@@ -54,6 +64,7 @@ export class VirtualDisplayLease {
     const result = await this.deps.run("DisplayOn");
     if (result.ok) {
       this.deps.writeMarker(true);
+      await this.deps.setMode();
       if (this.holders === 0) this.schedule(IDLE_MS);
     }
     return result;

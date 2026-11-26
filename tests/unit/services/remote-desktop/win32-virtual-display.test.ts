@@ -9,6 +9,7 @@ import { isAscii } from "../../../../src/services/remote-desktop/win32-helper/po
 import {
   GRACE_MS, IDLE_MS, VirtualDisplayLease, type LeaseDeps,
 } from "../../../../src/services/remote-desktop/win32-helper/virtual-display-lease.ts";
+import { chooseVirtualDisplayMode } from "../../../../src/services/remote-desktop/win32-helper/virtual-display-mode.ts";
 
 describe("pinned driver", () => {
   it("pins one release by URL, zip hash and every file's hash", () => {
@@ -86,6 +87,7 @@ function harness(markerInitially = false) {
   const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
   const deps: LeaseDeps = {
     run: async (action) => { runs.push(action); return { ok: true, message: "" }; },
+    setMode: async () => { runs.push("setMode"); },
     readMarker: () => marker,
     writeMarker: (on) => { marker = on; },
     setTimer: (fn, ms) => { const t = { fn, ms, live: true }; timers.push(t); return t; },
@@ -104,7 +106,7 @@ describe("virtual display lease", () => {
     await h.lease.turnOn();
     expect(h.timers.at(-1)!.ms).toBe(IDLE_MS);
     await h.fire();
-    expect(h.runs).toEqual(["DisplayOn", "DisplayOff"]);
+    expect(h.runs).toEqual(["DisplayOn", "setMode", "DisplayOff"]);
     expect(h.marker()).toBe(false);
   });
 
@@ -116,11 +118,11 @@ describe("virtual display lease", () => {
     expect(h.timers.every((t) => !t.live)).toBe(true);
     h.lease.release();
     await h.fire();
-    expect(h.runs).toEqual(["DisplayOn"]);
+    expect(h.runs).toEqual(["DisplayOn", "setMode"]);
     h.lease.release();
     expect(h.timers.at(-1)!.ms).toBe(GRACE_MS);
     await h.fire();
-    expect(h.runs).toEqual(["DisplayOn", "DisplayOff"]);
+    expect(h.runs).toEqual(["DisplayOn", "setMode", "DisplayOff"]);
   });
 
   it("a session starting during the grace period keeps it on", async () => {
@@ -130,7 +132,7 @@ describe("virtual display lease", () => {
     h.lease.release();
     h.lease.acquire();
     await h.fire();
-    expect(h.runs).toEqual(["DisplayOn"]);
+    expect(h.runs).toEqual(["DisplayOn", "setMode"]);
   });
 
   it("never turns off a display PPM did not turn on", async () => {
@@ -147,5 +149,20 @@ describe("virtual display lease", () => {
     await h.lease.sweepOnStartup();
     expect(h.runs).toEqual(["DisplayOff"]);
     expect(h.marker()).toBe(false);
+  });
+});
+
+describe("virtual display mode", () => {
+  const modes = [
+    { width: 800, height: 600, refresh: 30 }, { width: 1366, height: 768, refresh: 60 },
+    { width: 1920, height: 1080, refresh: 30 }, { width: 1920, height: 1080, refresh: 60 },
+    { width: 1920, height: 1080, refresh: 144 }, { width: 3840, height: 2160, refresh: 60 },
+  ];
+  it("picks 1920x1080 at the highest refresh up to 60 Hz (Windows starts it at 800x600)", () => {
+    expect(chooseVirtualDisplayMode(modes)).toEqual({ width: 1920, height: 1080, refresh: 60 });
+  });
+  it("falls back to the largest mode that fits, never a bigger one", () => {
+    expect(chooseVirtualDisplayMode(modes.filter((m) => m.width !== 1920))).toEqual({ width: 1366, height: 768, refresh: 60 });
+    expect(chooseVirtualDisplayMode([{ width: 3840, height: 2160, refresh: 60 }])).toBeNull();
   });
 });

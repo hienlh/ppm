@@ -26,6 +26,13 @@ describe("Windows monitor rectangles", () => {
       .toMatchObject({ id: "\\\\.\\DISPLAY3", label: "Display 3", primary: true, width: 3840, height: 2160 });
   });
 
+  it("drops \\\\.\\WinDisc, the placeholder Windows reports when no output is attached", () => {
+    expect(decodeWindowsMonitorInfo(monitorInfo("\\\\.\\WinDisc", [0, 0, 1920, 1080], true))).toBeNull();
+    // What a real headless Windows 11 host returned: the bare name.
+    expect(decodeWindowsMonitorInfo(monitorInfo("WinDisc", [0, 0, 800, 600], true))).toBeNull();
+    expect(decodeWindowsMonitorInfo(monitorInfo("\\\\.\\DISPLAY7", [0, 0, 1920, 1080], true))).not.toBeNull();
+  });
+
   it("ignores incomplete or empty monitor records", () => {
     expect(decodeWindowsMonitorInfo(new Uint8Array(40))).toBeNull();
     expect(decodeWindowsMonitorInfo(monitorInfo("", [0, 0, 100, 100]))).toBeNull();
@@ -36,7 +43,9 @@ describe("Windows monitor rectangles", () => {
     const first = listWindowsDisplays();
     const second = listWindowsDisplays();
     const monitors = first;
-    expect(monitors.length).toBeGreaterThan(0);
+    // A headless host with nothing attached has no real monitor at all (only `\\.\WinDisc`,
+    // which is filtered out); there is nothing to compare there.
+    if (monitors.length === 0) return;
     expect(first.map((display) => display.id)).toEqual(second.map((display) => display.id));
     expect(first.filter((display) => display.primary)).toHaveLength(1);
     expect(first.find((display) => display.primary)?.id).not.toBe("desktop");
