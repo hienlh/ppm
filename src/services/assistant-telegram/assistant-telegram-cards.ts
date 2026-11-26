@@ -225,7 +225,8 @@ export class AssistantTelegramCards implements BridgeCards {
     };
     // Registered before the link is looked up, so a card answered meanwhile is known to be done.
     this.cards.set(key, card);
-    const link = placeLink(await how.link());
+    const linkUrl = await how.link();
+    const link = placeLink(linkUrl);
     if (card.done) {
       this.cards.delete(key);
       return;
@@ -316,6 +317,7 @@ ${rememberLine(remember)}`;
           this.deps.reminders?.schedule({
             chatId, messageId: sent.message_id, label: "approval card",
             stillWaiting: () => !card.done && this.cards.get(key) === card,
+            title: card.headline, url: linkUrl,
           });
         }
         // Sent again without its link button: every later step has to leave the button out too.

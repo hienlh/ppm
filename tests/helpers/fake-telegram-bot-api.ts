@@ -86,6 +86,12 @@ export interface FakeTelegram {
   waitFor<T>(predicate: () => T | undefined | null | false, ms?: number): Promise<T>;
   /** Refuse the next call to `method` with this error. Queued: two calls queue two refusals. */
   failNext(method: string, failure: FakeFailure): void;
+  /**
+   * Carry out the next call to `method` (a `sendMessage` is delivered) but hold its answer back
+   * for `ms`, as a Telegram that is slow to answer does: a client with a shorter deadline times
+   * out on a message that did arrive. Queued like `failNext`.
+   */
+  delayNextAnswer(method: string, ms: number): void;
   stop(): void;
 }
 
@@ -170,6 +176,7 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
   const answers: FakeTelegram["answers"] = [];
   const deleted: FakeSentMessage[] = [];
   const failures = new Map<string, FakeFailure[]>();
+  const delays = new Map<string, number[]>();
   const messages = new Map<number, FakeSentMessage[]>();
   const nextMessageId = new Map<number, number>();
   const files = new Map<string, { path: string; bytes: Uint8Array }>();
@@ -445,6 +452,8 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
       }
       const res = await handle(method, body);
       if (!res.ok) call.failed = res.status;
+      const hold = delays.get(method)?.shift();
+      if (hold) await Bun.sleep(hold);
       return res;
     },
   });
@@ -541,6 +550,9 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
     },
     failNext(method, failure) {
       failures.set(method, [...(failures.get(method) ?? []), failure]);
+    },
+    delayNextAnswer(method, ms) {
+      delays.set(method, [...(delays.get(method) ?? []), ms]);
     },
     stop() {
       waiting?.wake(false);

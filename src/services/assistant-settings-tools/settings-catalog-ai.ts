@@ -6,6 +6,7 @@ import {
   ASSISTANT_EFFORTS, ASSISTANT_INSTRUCTIONS_MAX_CHARS, MANAGER_MODES, type AssistantSettings,
 } from "../../shared/assistant-settings.ts";
 import { PERSONA_NAME_MAX_CHARS, PERSONA_SOUL_MAX_CHARS } from "../../shared/assistant-persona.ts";
+import { CARD_REMINDER_MINUTES, validReminderMinutes } from "../../shared/assistant-telegram-card-reminders.ts";
 import type { SettingEntry, WriteCall } from "./settings-catalog-types.ts";
 
 /**
@@ -138,6 +139,15 @@ const STATIC_AI_SETTINGS: readonly SettingEntry[] = [
   {
     key: "assistant.telegram.quiet_while_in_ppm", category: "assistant", label: "PPM Assistant → Telegram → Quiet while I'm at PPM", tier: "direct",
     value: BOOL, read: () => clawbot().quiet_while_in_ppm !== false, write: putClawbot("quiet_while_in_ppm"),
+  },
+  {
+    key: "assistant.telegram.card_reminders", category: "assistant", label: "PPM Assistant → Telegram → Remind me about unanswered cards", tier: "direct",
+    value: BOOL, read: () => clawbot().card_reminders !== false, write: putClawbot("card_reminders"),
+  },
+  {
+    key: "assistant.telegram.card_reminder_minutes", category: "assistant", label: "PPM Assistant → Telegram → Remind after", tier: "direct",
+    value: { type: "int", min: CARD_REMINDER_MINUTES.min, max: CARD_REMINDER_MINUTES.max, unit: "minutes" },
+    read: () => validReminderMinutes(clawbot().card_reminder_minutes) ?? CARD_REMINDER_MINUTES.default, write: putClawbot("card_reminder_minutes"),
   },
   {
     key: "design.instructions", category: "design", label: "Design → Instructions for design chats", tier: "card", cardReason: "It is text every design chat trusts as the user's own",

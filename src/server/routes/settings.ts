@@ -32,6 +32,7 @@ import { createLogger } from "../../services/logger.ts";
 import { settleFeaturesDecidedInSettings } from "../../services/feature-intros.service.ts";
 import { FEATURE_INTROS_CHANGED_EVENT } from "../../shared/feature-intros.ts";
 import { broadcastGlobalEvent } from "../ws/global.ts";
+import { CARD_REMINDER_MINUTES, validReminderMinutes } from "../../shared/assistant-telegram-card-reminders.ts";
 import { isUnlinkMap } from "../../shared/linked-session-unlinks";
 
 const log = createLogger("settings");
@@ -658,16 +659,16 @@ settingsRoutes.put("/session-trace", async (c) => {
 // ── PPM Assistant on Telegram (kept under PPMBot's `clawbot` key and routes) ──
 
 /** The settings the bridge reads, whatever else an old PPMBot row still holds. */
-const CLAWBOT_KEYS = ["enabled", "show_tool_calls", "debounce_ms", "quiet_while_in_ppm"] as const;
+const CLAWBOT_KEYS = ["enabled", "show_tool_calls", "debounce_ms", "quiet_while_in_ppm", "card_reminders", "card_reminder_minutes"] as const;
 
-/** GET /settings/clawbot — `{ enabled, show_tool_calls, debounce_ms, quiet_while_in_ppm }` */
+/** GET /settings/clawbot — `{ enabled, show_tool_calls, debounce_ms, quiet_while_in_ppm, card_reminders, card_reminder_minutes }` */
 settingsRoutes.get("/clawbot", async (c) => {
   const { assistantTelegramConfig } = await import("../../services/assistant-telegram/assistant-telegram.service.ts");
   return c.json(ok(assistantTelegramConfig()));
 });
 
 /**
- * PUT /settings/clawbot — any of the four settings. PPMBot's other fields (provider, permission
+ * PUT /settings/clawbot — any of the six settings. PPMBot's other fields (provider, permission
  * mode, thinking, system prompt) are ignored rather than refused, so an older page still saves.
  * Switching `enabled` starts or stops the bridge.
  */
@@ -679,12 +680,15 @@ settingsRoutes.put("/clawbot", async (c) => {
     return c.json(err("Body must be JSON"), 400);
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) return c.json(err("Body must be an object"), 400);
-  for (const key of ["enabled", "show_tool_calls", "quiet_while_in_ppm"] as const) {
+  for (const key of ["enabled", "show_tool_calls", "quiet_while_in_ppm", "card_reminders"] as const) {
     if (body[key] !== undefined && typeof body[key] !== "boolean") return c.json(err(`${key} must be true or false`), 400);
   }
   const debounce = body.debounce_ms;
   if (debounce !== undefined && (typeof debounce !== "number" || !Number.isInteger(debounce) || debounce < 0 || debounce > 30000)) {
     return c.json(err("debounce_ms must be a whole number from 0 to 30000"), 400);
+  }
+  if (body.card_reminder_minutes !== undefined && validReminderMinutes(body.card_reminder_minutes) === null) {
+    return c.json(err(`card_reminder_minutes must be a whole number from ${CARD_REMINDER_MINUTES.min} to ${CARD_REMINDER_MINUTES.max}`), 400);
   }
   try {
     const { assistantTelegramConfig } = await import("../../services/assistant-telegram/assistant-telegram.service.ts");

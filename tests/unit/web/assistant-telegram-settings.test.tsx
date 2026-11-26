@@ -52,7 +52,7 @@ const READY = {
   botUsername: "ppm_ai_bot",
   chats: [{ chatId: "42", name: "Thang (@thang)" }],
 };
-const OPTIONS = { enabled: false, show_tool_calls: true, debounce_ms: 2000, quiet_while_in_ppm: true };
+const OPTIONS = { enabled: false, show_tool_calls: true, debounce_ms: 2000, quiet_while_in_ppm: true, card_reminders: true, card_reminder_minutes: 5 };
 const BINDINGS = {
   enabled: false, running: false, error: null,
   chats: [{ chatId: "42", name: "Thang (@thang)", sessionId: "s-1", sessionTitle: "Morning check" }],
@@ -231,6 +231,33 @@ describe("the Assistant's Telegram settings", () => {
     expect(sent("DELETE", "/api/settings/clawbot/telegram/connect")).toHaveLength(1);
   });
 
+  it("turns card reminders off and saves their delay, refusing minutes out of range", async () => {
+    serve(
+      on("GET", "/api/settings/clawbot/telegram", ok(READY)),
+      on("PUT", "/api/settings/clawbot", (req) => ok({ ...OPTIONS, ...(req.body as object) })),
+    );
+    view = await mount(<AssistantTelegramSettings />);
+    await settle();
+
+    const minutes = document.body.querySelector<HTMLInputElement>('input[inputmode="numeric"][aria-invalid]:not(#assistant-telegram-debounce)')!;
+    expect(minutes.value).toBe("5");
+    await typeInto(minutes, "500");
+    await settle();
+    expect(document.body.textContent).toContain("A whole number from 1 to 240.");
+    await typeInto(minutes, "15");
+    await settle();
+    await click(button("Save"));
+    await settle();
+
+    const reminders = [...document.body.querySelectorAll('button[role="switch"]')][2]!;
+    await click(reminders);
+    await settle();
+
+    expect(sent("PUT", "/api/settings/clawbot").map((r) => r.body)).toEqual([{ card_reminder_minutes: 15 }, { card_reminders: false }]);
+    // Off, the delay can no longer be changed.
+    expect(minutes.disabled).toBe(true);
+  });
+
   it("saves tool names and message grouping with only the keys the bridge still reads", async () => {
     serve(
       on("GET", "/api/settings/clawbot/telegram", ok(READY)),
@@ -239,8 +266,8 @@ describe("the Assistant's Telegram settings", () => {
     view = await mount(<AssistantTelegramSettings />);
     await settle();
 
-    // Switches in order: the bridge, quiet while at PPM, tool names.
-    const toolNames = [...document.body.querySelectorAll('button[role="switch"]')][2]!;
+    // Switches in order: the bridge, quiet while at PPM, card reminders, tool names.
+    const toolNames = [...document.body.querySelectorAll('button[role="switch"]')][3]!;
     await click(toolNames);
     await settle();
 

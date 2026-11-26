@@ -25,6 +25,7 @@ import type { PPMBotTelegramStatus } from "../../../shared/ppmbot-telegram";
 import { SectionHeader, SwitchRow } from "./settings-rows";
 import { ConnectCard, TelegramChatList, useTelegramConnect } from "./telegram-connect";
 import { TelegramBotTokenField } from "./telegram-bot-token-field";
+import { CardReminderRows } from "./telegram-card-reminder-settings";
 import { useSettingsChanged } from "@/hooks/use-settings-changed";
 import { QUIET_CHANGED_EVENT, QUIET_SWITCH_LABEL, QUIET_SWITCH_NOTE } from "../../../shared/assistant-telegram-quiet";
 
@@ -35,6 +36,9 @@ export interface AssistantTelegramOptions {
   debounce_ms: number;
   /** "Quiet while I'm at PPM"; the Assistant window's button and `/quiet` flip the same switch. */
   quiet_while_in_ppm: boolean;
+  /** The one reminder for a card sent without a sound that nobody answered. */
+  card_reminders: boolean;
+  card_reminder_minutes: number;
 }
 
 /** The server's bounds for message grouping. */
@@ -124,8 +128,8 @@ export function AssistantTelegramSettings({ embedded = false }: { embedded?: boo
     }
   };
 
-  /** Saves one or more bridge options; the server answers with all three as stored. */
-  const saveOptions = async (patch: Partial<Pick<AssistantTelegramOptions, "show_tool_calls" | "debounce_ms" | "quiet_while_in_ppm">>) => {
+  /** Saves one or more bridge options; the server answers with all of them as stored. */
+  const saveOptions = async (patch: Partial<Pick<AssistantTelegramOptions, "show_tool_calls" | "debounce_ms" | "quiet_while_in_ppm" | "card_reminders" | "card_reminder_minutes">>) => {
     setSavingOptions(true);
     try {
       const saved = await api.put<AssistantTelegramOptions>("/api/settings/clawbot", patch);
@@ -221,6 +225,7 @@ export function AssistantTelegramSettings({ embedded = false }: { embedded?: boo
                   disabled={savingOptions}
                   onChange={(on) => void saveOptions({ quiet_while_in_ppm: on })}
                 />
+                <CardReminderRows options={options} saving={savingOptions} onSave={(patch) => void saveOptions(patch)} />
                 <SwitchRow
                   label="Show tool names"
                   note="A line in the reply naming each tool the Assistant uses. Inputs and outputs are never sent."

@@ -41,6 +41,13 @@ export interface PPMBotConfig {
    * (`assistant-telegram-silence.ts`).
    */
   quiet_while_in_ppm?: boolean;
+  /**
+   * A card sent without a sound gets one reminder if nobody answers it. On unless false
+   * (`assistant-telegram-card-reminders.ts`).
+   */
+  card_reminders?: boolean;
+  /** Minutes before that reminder, 1 to 240; 5 when unset. */
+  card_reminder_minutes?: number;
 }
 
 export type ThemeMode = "light" | "dark" | "system";

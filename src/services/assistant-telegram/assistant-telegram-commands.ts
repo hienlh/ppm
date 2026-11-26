@@ -5,6 +5,7 @@
  *
  * Commands only reach here from a chat that passed the access checks.
  */
+import { cardReminderSettings } from "./assistant-telegram-card-reminders.ts";
 import { chatService } from "../chat.service.ts";
 import { chatControl } from "../chat-control/chat-control.ts";
 import { providerRegistry } from "../../providers/registry.ts";
@@ -158,11 +159,19 @@ async function showStatus(ctx: CommandContext, deps?: StatusDeps): Promise<void>
   for (const card of status.cards) ctx.relayCard({ ...card, askedOnPhone: true });
 }
 
+/** What happens to a card sent without a sound, as the reminder settings say now. */
+function reminderSentence(): string {
+  const r = cardReminderSettings();
+  return r.enabled
+    ? `A card left unanswered for ${r.minutes} minute${r.minutes === 1 ? "" : "s"} gets one reminder with a sound.`
+    : "Card reminders are off in Settings: a card sent without a sound is not reminded about.";
+}
+
 /** What "quiet while at PPM" is, said the same way by `/quiet` and its button. */
 export function quietStatusHtml(on: boolean): string {
   return on
     ? "🔕 <b>Quiet while you are at PPM: on.</b>\nWhile you are using PPM (or typed there in the last 5 minutes), messages here arrive without a sound. "
-      + "A card left unanswered for 5 minutes is sent once more with a sound. Send /quiet off to turn it off."
+      + reminderSentence() + " Send /quiet off to turn it off."
     : "🔔 <b>Quiet while you are at PPM: off.</b>\nEvery message here arrives with a sound, as before. Send /quiet on to turn it on.";
 }
 

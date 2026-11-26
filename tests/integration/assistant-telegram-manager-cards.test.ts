@@ -22,6 +22,7 @@ import { assistantCardRoutes } from "../../src/server/routes/assistant-cards.ts"
 import { setAssistantClock } from "../../src/services/assistant-wake/assistant-clock.ts";
 import { assistantWakeQueue } from "../../src/services/assistant-wake/assistant-wake-queue.ts";
 import { startAssistantCards, stopAssistantCards } from "../../src/services/assistant-cards/assistant-cards-startup.ts";
+import { presenceTracker } from "../../src/services/presence-tracker.ts";
 import { assistantCards } from "../../src/services/assistant-cards/assistant-cards.service.ts";
 import { assistantTelegramBridge } from "../../src/services/assistant-telegram/assistant-telegram.service.ts";
 import { CLOSED_CARD_NOT_SENT } from "../../src/services/assistant-telegram/assistant-telegram-card-replies.ts";
@@ -409,5 +410,82 @@ describe("a card its manager replaced or withdrew (card withdrawal on)", () => {
     const again = await until(() => fake.sent(PHONE).find((m) => m.message_id > first.message_id && m.text.includes("Book the venue?") && fake.buttons(PHONE, m.message_id).flat().length > 0));
     expect(button(again.message_id, "OK")).toBeDefined();
     expect(assistantCards.get(id)!.status).toBe("open");
+  });
+});
+
+// Last in the file: the user is "at PPM" from here on, so cards go out without a sound.
+describe("the reminder for cards nobody answered", () => {
+  const withdraw = async (id: string) => {
+    const token = sessionCollabMcpTokens.mint({ sessionId: manager });
+    await app.request("/mcp", {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "report_withdraw", arguments: { cards: [id], reason: "Not needed" } } }),
+    });
+  };
+  const reminders = (from: number) => fake.sent(PHONE).filter((m) => m.message_id > from && m.text.startsWith("⏰"));
+
+  it("sends one message for five cards due together, leaving out the one withdrawn, and never again", async () => {
+    presenceTracker.noteUserInput();
+    const from = fake.sent(PHONE).at(-1)?.message_id ?? 0;
+    const ids: string[] = [];
+    for (let i = 1; i <= 5; i++) {
+      ids.push(await report({ kind: "needs_decision", title: `Reminder decision ${i}` }));
+      await until(() => lastWith(`Reminder decision ${i}`));
+      advance(5_000);
+    }
+    const cards = fake.sent(PHONE).filter((m) => m.message_id > from && m.text.includes("Reminder decision"));
+    expect(cards).toHaveLength(5);
+    expect(cards.every((m) => m.silent)).toBe(true);
+    await withdraw(ids[2]!);
+    await until(() => fake.sent(PHONE).some((m) => m.text.includes("Withdrawn by the manager: Not needed")));
+
+    advance(5 * 60_000);
+    const sent = await until(() => reminders(from)[0]);
+    await Bun.sleep(200);
+    expect(reminders(from)).toHaveLength(1);
+    expect(sent.silent).toBe(false);
+    expect(sent.text.split("\n")[0]).toBe("⏰ Still waiting for you: 4 cards");
+    for (const i of [1, 2, 4, 5]) expect(sent.text).toContain(`• tgcards · Reminder decision ${i}`);
+    expect(sent.text).not.toContain("Reminder decision 3");
+
+    advance(3 * 60 * 60_000);
+    await Bun.sleep(200);
+    expect(reminders(from)).toHaveLength(1);
+  });
+
+  it("holds the reminder through quiet hours and sends it once they end", async () => {
+    presenceTracker.noteUserInput();
+    // 21:57, three minutes before quiet hours (22:00–07:00 UTC).
+    advance(12 * 60 * 60_000 + 57 * 60_000);
+    const from = fake.sent(PHONE).at(-1)?.message_id ?? 0;
+    await report({ kind: "needs_decision", title: "Night decision A" });
+    await until(() => lastWith("Night decision A"));
+    await report({ kind: "needs_decision", title: "Night decision B" });
+    await until(() => lastWith("Night decision B"));
+    advance(30 * 60_000);
+    await Bun.sleep(200);
+    expect(reminders(from)).toHaveLength(0);
+    // 07:00 next morning.
+    advance(8 * 60 * 60_000 + 33 * 60_000);
+    const sent = await until(() => reminders(from)[0]);
+    await Bun.sleep(200);
+    expect(reminders(from)).toHaveLength(1);
+    expect(sent.text).toContain("2 cards");
+  });
+
+  it("sends nothing with card reminders turned off", async () => {
+    presenceTracker.noteUserInput();
+    configService.set("clawbot", { ...(configService.get("clawbot") as object), card_reminders: false } as never);
+    try {
+      const from = fake.sent(PHONE).at(-1)?.message_id ?? 0;
+      await report({ kind: "needs_decision", title: "Switched off decision" });
+      const card = await until(() => lastWith("Switched off decision"));
+      expect(card.silent).toBe(true);
+      advance(60 * 60_000);
+      await Bun.sleep(200);
+      expect(reminders(from)).toHaveLength(0);
+    } finally {
+      configService.set("clawbot", { ...(configService.get("clawbot") as object), card_reminders: true } as never);
+    }
   });
 });
