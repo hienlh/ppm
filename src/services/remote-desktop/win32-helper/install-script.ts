@@ -118,7 +118,8 @@ Write-AsciiFile (Join-Path $StateDir 'install-result.json') (@{ ok = $true; mess
 
 export interface UninstallScriptOptions {
   actions: HelperAction[];
-  /** Extra admin-side removal steps (the virtual display driver), run before the folder goes. */
+  /** Extra admin-side removal steps (the virtual display driver), run before anything else is
+   *  removed: they may refuse. */
   extraSteps?: string;
 }
 
@@ -126,10 +127,12 @@ export function buildUninstallScript(opts: UninstallScriptOptions): string {
   const actions = opts.actions.map(psQuote).join(", ");
   return `# PPM Remote Desktop helper uninstaller v${HELPER_VERSION}.
 ${PRELUDE}
+# The driver first: it may refuse (its device can be the only screen of the session at the PC),
+# and a refusal must leave the helper whole, not half removed.
+${opts.extraSteps ?? ""}
 foreach ($action in @(${actions})) {
   Unregister-ScheduledTask -TaskName $action -TaskPath $TaskPath -Confirm:$false -ErrorAction SilentlyContinue
 }
-${opts.extraSteps ?? ""}
 try {
   $service = New-Object -ComObject Schedule.Service
   $service.Connect()

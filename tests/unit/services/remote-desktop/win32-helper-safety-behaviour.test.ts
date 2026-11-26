@@ -6,7 +6,11 @@
 import { describe, expect, it } from "bun:test";
 import { runHelperScenario } from "../../../helpers/windows-helper-powershell-harness.ts";
 import { VIRTUAL_DISPLAY_SAFETY } from "../../../../src/services/remote-desktop/win32-helper/virtual-display-safety-script.ts";
-import { DISPLAY_OFF_ACTION, DISPLAY_ON_ACTION } from "../../../../src/services/remote-desktop/win32-helper/vdd-scripts.ts";
+import {
+  DISPLAY_OFF_ACTION, DISPLAY_ON_ACTION, NOT_REMOVED_MESSAGE, VDD_INSTALL_GUARDS,
+} from "../../../../src/services/remote-desktop/win32-helper/vdd-scripts.ts";
+import { helperInstallPlan } from "../../../../src/services/remote-desktop/win32-helper/helper-install-plan.ts";
+import { buildUninstallScript } from "../../../../src/services/remote-desktop/win32-helper/install-script.ts";
 import { REATTACH_ACTION, STATE_FILES } from "../../../../src/services/remote-desktop/win32-helper/helper-script.ts";
 import { CONFIRM_ACTION, RESCUE_ACTION, RESCUE_WINDOW } from "../../../../src/services/remote-desktop/win32-helper/rescue-script.ts";
 import { RATE_LIMITS, RATE_WINDOW_MINUTES, RESCUE_MINUTES } from "../../../../src/services/remote-desktop/win32-helper/helper-paths.ts";
@@ -158,6 +162,58 @@ describe.if(process.platform === "win32")("Confirm and Rescue", () => {
 
   it("never signs anyone out and never moves a session", () => {
     expect(RESCUE_ACTION.body).not.toMatch(/logoff|logout|tscon|Invoke-Tscon|ExitWindows|shutdown|Disable-PnpDevice/i);
+  });
+});
+
+const deviceWithStatus = (status: string) =>
+  `$global:VirtualDevices = @([pscustomobject]@{ InstanceId = 'ROOT\\DISPLAY\\0000'; HardwareID = @('Root\\MttVDD'); Status = '${status}' })`;
+
+describe.if(process.platform === "win32")("install and uninstall follow the same rule", () => {
+  const GUARDS = [VDD_INSTALL_GUARDS];
+
+  it("install leaves a new device on when it may be the console session's only screen", async () => {
+    const r = await runHelperScenario({
+      pieces: GUARDS, setup: `$global:ConsoleSession = 2; ${deviceWithStatus("OK")}`,
+      call: "@((Disable-NewVirtualDisplay), 'install')",
+    });
+    expect(r.ok).toBe(false);
+    expect(r.calls).toEqual([]);
+  }, T);
+
+  it("install turns the new device off when nobody is at the console", async () => {
+    const r = await runHelperScenario({ pieces: GUARDS, setup: deviceWithStatus("OK"), call: "@((Disable-NewVirtualDisplay), 'install')" });
+    expect(r.ok).toBe(true);
+    expect(r.calls).toEqual(["disable ROOT\\DISPLAY\\0000"]);
+  }, T);
+
+  it("uninstall refuses, before removing anything, to take away a display that is on and may be the only one", async () => {
+    const r = await runHelperScenario({
+      pieces: GUARDS, setup: `$global:ConsoleSession = 2; ${deviceWithStatus("OK")}`,
+      call: "& { Assert-VirtualDisplayRemovable; @($true, 'removable') }",
+    });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain(NOT_REMOVED_MESSAGE.slice(0, 40));
+  }, T);
+
+  it("uninstall goes ahead when the device is already off, or the PC has its own monitor", async () => {
+    const off = await runHelperScenario({
+      pieces: GUARDS, setup: `$global:ConsoleSession = 2; ${deviceWithStatus("Error")}`,
+      call: "& { Assert-VirtualDisplayRemovable; @($true, 'removable') }",
+    });
+    expect(off.ok).toBe(true);
+    const monitor = await runHelperScenario({
+      pieces: GUARDS, setup: `$global:ConsoleSession = 2; ${deviceWithStatus("OK")}; $global:Monitors = @(${PHYSICAL})`,
+      call: "& { Assert-VirtualDisplayRemovable; @($true, 'removable') }",
+    });
+    expect(monitor.ok).toBe(true);
+  }, T);
+
+  it("uninstall runs the driver step, which may refuse, before it removes any task", () => {
+    const plan = helperInstallPlan();
+    const un = buildUninstallScript({ actions: plan.actions, extraSteps: plan.uninstallSteps });
+    expect(un.indexOf("Assert-VirtualDisplayRemovable\n")).toBeGreaterThan(0);
+    expect(un.indexOf("Assert-VirtualDisplayRemovable\n")).toBeLessThan(un.indexOf("Unregister-ScheduledTask"));
+    expect(un.indexOf("Assert-VirtualDisplayRemovable\n")).toBeLessThan(un.indexOf("/remove-device"));
   });
 });
 

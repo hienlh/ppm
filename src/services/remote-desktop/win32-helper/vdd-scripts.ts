@@ -14,14 +14,18 @@
  *
  * Same constraints as `helper-script.ts`: ASCII, no backticks.
  */
-import type { HelperActionScript } from "./helper-script.ts";
+import { WTS_SESSION_LOOKUP, type HelperActionScript } from "./helper-script.ts";
 import { psQuote } from "./powershell-text.ts";
 import {
   DISPLAY_CLASS_GUID, VDD_FILES, VDD_HARDWARE_ID, VDD_INF, VDD_SETTINGS_KEY, VDD_SIGNED_FILES,
   VDD_SIGNER_SUBJECT, VDD_VERSION, VDD_ZIP_FOLDER,
 } from "./vdd-catalog.ts";
 
-import { FIND_DEVICES, KEPT_ON_MESSAGE } from "./virtual-display-safety-script.ts";
+import { FIND_DEVICES, KEPT_ON_MESSAGE, VIRTUAL_DISPLAY_SAFETY } from "./virtual-display-safety-script.ts";
+
+/** Why uninstall stopped before removing anything. */
+export const NOT_REMOVED_MESSAGE = "Nothing was removed: the virtual display is on and may be the only screen of the "
+  + "session signed in at this PC. Connect with Remote Desktop (RDP) first, or plug in a monitor, then remove again.";
 import { RATE_LIMITS } from "./helper-paths.ts";
 
 /** SetupAPI's root-device creation, as `devcon install` does it; PowerShell has no cmdlet. */
@@ -70,6 +74,7 @@ export function buildVddInstallSteps(): string {
   const expected = Object.entries(VDD_FILES).map(([name, sha]) => `${psQuote(name)} = ${psQuote(sha)}`).join("; ");
   const signed = VDD_SIGNED_FILES.map(psQuote).join(", ");
   return `
+${VDD_INSTALL_GUARDS}
 # --- Virtual display driver ${VDD_VERSION} ---
 $Pnputil = Join-Path $env:SystemRoot 'System32\\pnputil.exe'
 $VddDir = Join-Path $InstallDir 'vdd'
@@ -129,23 +134,50 @@ if (-not $VddPreexisting) {
 ${CREATE_DEVICE_TYPE}
     [PpmRootDevice]::Create(${psQuote(VDD_HARDWARE_ID)}, $inf, 'Display', ${psQuote(DISPLAY_CLASS_GUID)})
   }
-  $devices = ${FIND_DEVICES}
-  if ($devices.Count -eq 0) { throw 'The virtual display device was not created.' }
-  foreach ($device in $devices) { Disable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
+  if ((${FIND_DEVICES}).Count -eq 0) { throw 'The virtual display device was not created.' }
+  $null = Disable-NewVirtualDisplay
 }
 Write-AsciiFile (Join-Path $StateDir 'vdd.json') (@{ version = ${psQuote(VDD_VERSION)}; preexisting = $VddPreexisting } | ConvertTo-Json -Compress)
 `;
 }
 
+/**
+ * Install and uninstall turn the display off too: a device Windows has just created starts
+ * enabled, and removing a device takes it away. Both follow `DisplayOff`'s rule, because the
+ * prompt that runs them is often answered through TeamViewer — i.e. with the session at the
+ * console of a PC that may have no monitor.
+ */
+export const VDD_INSTALL_GUARDS = `
+${WTS_SESSION_LOOKUP}
+${VIRTUAL_DISPLAY_SAFETY}
+# A device just created by the installer: off, unless it may be the console session's only screen.
+function Disable-NewVirtualDisplay {
+  if (Test-VirtualDisplayNeeded) { return $false }
+  foreach ($device in ${FIND_DEVICES}) { Disable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
+  return $true
+}
+
+# Removing a device that is on takes the screen away: refuse, before anything is removed, when it
+# may be the console session's only one. A disabled device reports Status 'Error'.
+function Assert-VirtualDisplayRemovable {
+  $on = @(${FIND_DEVICES} | Where-Object { [string]$_.Status -ne 'Error' })
+  if ($on.Count -gt 0 -and (Test-VirtualDisplayNeeded)) {
+    throw ${psQuote(NOT_REMOVED_MESSAGE)}
+  }
+}
+`;
+
 export function buildVddUninstallSteps(): string {
   return `
+${VDD_INSTALL_GUARDS}
 # --- Virtual display driver: removed only if PPM added it ---
 $Pnputil = Join-Path $env:SystemRoot 'System32\\pnputil.exe'
 $vddRecord = $null
 $vddRecordPath = Join-Path $StateDir 'vdd.json'
 if (Test-Path -LiteralPath $vddRecordPath) { $vddRecord = Get-Content -LiteralPath $vddRecordPath -Raw | ConvertFrom-Json }
 if ($vddRecord -and -not $vddRecord.preexisting) {
-  $infs = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue | Where-Object { $_.HardWareID -eq ${psQuote(VDD_HARDWARE_ID)} } | ForEach-Object { $_.InfName } | Sort-Object -Unique)
+  Assert-VirtualDisplayRemovable
+  $infs =@(Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue | Where-Object { $_.HardWareID -eq ${psQuote(VDD_HARDWARE_ID)} } | ForEach-Object { $_.InfName } | Sort-Object -Unique)
   foreach ($device in ${FIND_DEVICES}) { & $Pnputil /remove-device $device.InstanceId | Out-Null }
   foreach ($inf in $infs) { if ($inf -match '^oem[0-9]+[.]inf$') { & $Pnputil /delete-driver $inf /uninstall /force | Out-Null } }
   if (Test-Path ${psQuote(VDD_SETTINGS_KEY)}) { Remove-ItemProperty -Path ${psQuote(VDD_SETTINGS_KEY)} -Name 'VDDPATH' -ErrorAction SilentlyContinue }
