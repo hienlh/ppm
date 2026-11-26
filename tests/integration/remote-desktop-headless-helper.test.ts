@@ -187,7 +187,7 @@ describe("headless helper: bring the session back", () => {
     expect(await res.json()).toMatchObject({ data: { ok: true, message: "Session 2 is back on the PC screen." } });
     const runs = win.calls.filter((c) => c[1] === "/run");
     expect(runs).toHaveLength(1);
-    expect(runs[0]!.slice(1)).toEqual(["/run", "/tn", "\\PPM\\RemoteDesktop\\Reattach"]);
+    expect(runs[0]!.slice(1)).toEqual(["/run", "/tn", "\\PPM-RemoteDesktop\\Reattach"]);
   });
 
   it("passes on the helper's refusal (e.g. no disconnected session) as a failure", async () => {
@@ -215,7 +215,7 @@ describe("headless helper: bring the session back", () => {
     const res = await remoteDesktopRoutes.request("http://localhost/requirements/win-display/display-on", { method: "POST" });
     expect(await res.json()).toMatchObject({ data: { ok: true } });
     const runs = win.calls.filter((c) => c[1] === "/run");
-    expect(runs.map((c) => c[3])).toEqual(["\\PPM\\RemoteDesktop\\DisplayOn"]);
+    expect(runs.map((c) => c[3])).toEqual(["\\PPM-RemoteDesktop\\DisplayOn"]);
     const marker = [...win.files.entries()].find(([k]) => k.endsWith("virtual-display-on.json"));
     expect(JSON.parse(marker![1]).on).toBe(true);
   });

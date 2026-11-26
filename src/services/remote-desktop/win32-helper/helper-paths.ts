@@ -18,7 +18,11 @@ export const HELPER_VERSION = 1;
 export const HELPER_ACTIONS = ["Reattach", "DisplayOn", "DisplayOff"] as const;
 export type HelperAction = typeof HELPER_ACTIONS[number];
 
-export const TASK_FOLDER = "\\PPM\\RemoteDesktop\\";
+/** One top-level folder. Not `\PPM\…`: `\PPM` is already PPM's own autostart *task* on every
+ *  Windows install, so a folder of that name cannot exist (found on a real host — registering
+ *  under `\PPM\RemoteDesktop\` failed with "path not found", creating `\PPM` with "already exists"). */
+export const TASK_FOLDER_NAME = "PPM-RemoteDesktop";
+export const TASK_FOLDER = `\\${TASK_FOLDER_NAME}\\`;
 export function taskName(action: HelperAction): string {
   return `${TASK_FOLDER}${action}`;
 }

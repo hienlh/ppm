@@ -12,7 +12,7 @@
  *   0 done · 10 a staged payload did not match its hash · 20 the install itself failed (its
  *   message is in `state\install-result.json` when the state folder exists).
  */
-import { HELPER_VERSION, type HelperAction } from "./helper-paths.ts";
+import { HELPER_VERSION, TASK_FOLDER_NAME, type HelperAction } from "./helper-paths.ts";
 import { isUserSid, psQuote } from "./powershell-text.ts";
 
 export const EXIT_OK = 0;
@@ -31,7 +31,8 @@ $InstallDir = Join-Path $env:ProgramFiles 'PPM\\RemoteDesktopHelper'
 $StateDir = Join-Path $InstallDir 'state'
 $PowerShellExe = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'
 $Icacls = Join-Path $env:SystemRoot 'System32\\icacls.exe'
-$TaskPath = '\\PPM\\RemoteDesktop\\'
+$TaskFolderName = '${TASK_FOLDER_NAME}'
+$TaskPath = '\\' + $TaskFolderName + '\\'
 
 function Assert-NotReparse([string]$Path) {
   if (Test-Path -LiteralPath $Path) {
@@ -87,12 +88,9 @@ Assert-NotReparse $HelperPath
 ${opts.extraSteps ?? ""}
 $service = New-Object -ComObject Schedule.Service
 $service.Connect()
-# Register-ScheduledTask does not create a nested folder whose parent is missing (it fails with
-# "The system cannot find the path specified"), so each level is made here first.
-$folder = $service.GetFolder('\\')
-foreach ($segment in @('PPM', 'RemoteDesktop')) {
-  try { $folder = $folder.GetFolder($segment) } catch { $folder = $folder.CreateFolder($segment) }
-}
+# The folder is made here, before any task: a clear error if the name is taken by a task.
+$root = $service.GetFolder('\\')
+try { $null = $service.GetFolder($TaskPath.TrimEnd('\\')) } catch { $null = $root.CreateFolder($TaskFolderName) }
 foreach ($action in @(${actions})) {
   $argument = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $HelperPath + '" -Action ' + $action
   $taskAction = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $argument
@@ -124,8 +122,9 @@ ${opts.extraSteps ?? ""}
 try {
   $service = New-Object -ComObject Schedule.Service
   $service.Connect()
-  $service.GetFolder('\\PPM').DeleteFolder('RemoteDesktop', 0)
-  $service.GetFolder('\\').DeleteFolder('PPM', 0)
+  # Only the helper's own folder, by its full name. Never anything called PPM: that is the
+  # autostart task of the PPM running this.
+  $service.GetFolder('\\').DeleteFolder($TaskFolderName, 0)
 } catch { }
 Assert-NotReparse $InstallDir
 if (Test-Path -LiteralPath $InstallDir) { Remove-Item -LiteralPath $InstallDir -Recurse -Force }

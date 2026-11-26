@@ -107,12 +107,19 @@ describe("install.ps1 / uninstall.ps1", () => {
     expect(install).not.toMatch(/\b(Administrators|Users|SYSTEM):/);
   });
 
-  it("creates each task-folder level before registering (Register-ScheduledTask will not)", () => {
-    // Found on a real host: with no \PPM folder, registering under \PPM\RemoteDesktop\ failed
-    // with "The system cannot find the path specified".
-    expect(install).toContain("foreach ($segment in @('PPM', 'RemoteDesktop'))");
-    expect(install).toContain("$folder.CreateFolder($segment)");
+  it("uses a folder of its own, never one named after PPM's autostart task", () => {
+    // Found on a real host: `\PPM` is PPM's own autostart task, so a `\PPM\RemoteDesktop\`
+    // folder can never exist ("path not found", then "already exists").
+    expect(install).toContain("$TaskFolderName = 'PPM-RemoteDesktop'");
+    expect(install).toContain("$root.CreateFolder($TaskFolderName)");
     expect(install.indexOf("CreateFolder")).toBeLessThan(install.indexOf("Register-ScheduledTask -TaskName"));
+    expect(install).not.toMatch(/'PPM'/);
+  });
+
+  it("uninstall deletes only its own task folder, never anything named PPM", () => {
+    const un = buildUninstallScript({ actions: ["Reattach"] });
+    expect(un).toContain("DeleteFolder($TaskFolderName, 0)");
+    expect(un).not.toMatch(/DeleteFolder\('PPM'|GetFolder\('\\PPM'\)/);
   });
 
   it("writes the helper from the verified bytes, not from the staged file", () => {

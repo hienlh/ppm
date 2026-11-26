@@ -18,7 +18,7 @@ export function HeadlessHelperConfirm({ onConfirm, onCancel }: { onConfirm: () =
       <p>Windows will show an administrator prompt on this PC. After you approve it, PPM installs:</p>
       <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
         <li>A small script in <code>Program Files\PPM\RemoteDesktopHelper</code> that only administrators can change.</li>
-        <li>Scheduled tasks under <code>\PPM\RemoteDesktop</code> that run that script as SYSTEM. They take no input,
+        <li>Scheduled tasks under <code>\PPM-RemoteDesktop</code> that run that script as SYSTEM. They take no input,
           only your Windows user can start them, and they only ever act on your own session.</li>
         <li>A virtual display driver (Virtual Display Driver 25.7.23, MIT, signed by SignPath Foundation). PPM checks its
           signature and the hash of every file before installing it, leaves it off, and turns it on only while a Remote
