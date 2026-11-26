@@ -1,14 +1,16 @@
 /**
  * A decision the user no longer has to make, in the Assistant's stream: one line naming the card,
  * its project, how it ended ("OK given in PPM", "Chose "Ship tonight"", "You replied", "Dismissed")
- * and when, so a chat full of answered cards still reads as a conversation. A press opens the card
+ * and when, so a chat full of answered cards still reads as a conversation. When the manager
+ * answered a reply on it, the folded line also shows the start of that reply and the first two
+ * lines of the answer, as plain text, so it can be read without opening. A press opens the card
  * whole again, read-only (it has no buttons any more, only its status line), and a second press
  * folds it. Opening scrolls the stream just enough to show the card's last line above the footer
  * (never so far that the line itself leaves the top). Whether a card is open is kept by id outside
  * the component: the stream re-places a card among new messages as they arrive, which mounts it
  * afresh.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Check, ChevronDown, MessageCircle, X } from "@/lib/icons";
 import { create } from "zustand";
 import { revealInScrollList } from "@/lib/reveal-in-scroll-list";
@@ -16,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { WAITING_CARD_KINDS, type AssistantCard as Card } from "../../../../shared/assistant-cards";
 import { AssistantCard } from "./assistant-card";
 import { cardStatusLine, cardTime } from "./card-shell";
+import { answeredCardPreview } from "./answered-card-preview";
 
 /** A card that asked the user for something and no longer waits: folded in the stream. */
 export function isAnsweredDecision(card: Card): boolean {
@@ -53,6 +56,9 @@ export function AnsweredCardFold({ card }: { card: Card }) {
   // Set aside (dismissed, withdrawn by its author, or it stopped waiting by itself) reads differently from answered.
   const setAside = card.status === "dismissed" || card.status === "gone";
   const Mark = setAside ? X : Check;
+  // Folded, the start of the reply and its answer are read in place; opened, the card shows them whole.
+  const followUp = card.followUp;
+  const preview = useMemo(() => (open ? null : answeredCardPreview({ followUp })), [open, followUp]);
   return (
     <div ref={box} className="w-full space-y-2" data-answered-card={card.id} data-answered-open={open ? "" : undefined}>
       <button
@@ -60,7 +66,11 @@ export function AnsweredCardFold({ card }: { card: Card }) {
         onClick={() => { pressed.current = true; toggle(card.id); }}
         aria-expanded={open}
         aria-controls={panel}
-        className="flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-xl border border-border bg-surface/60 px-3 py-1.5 text-left can-hover:hover:bg-surface-elevated"
+        // A list row, sized by what it holds (no 44px minimum: docs/design-guidelines.md rule 3).
+        className={cn(
+          "flex w-full min-w-0 gap-2.5 rounded-xl border border-border bg-surface/60 px-3 py-1.5 text-left can-hover:hover:bg-surface-elevated",
+          preview ? "items-start" : "items-center",
+        )}
         data-answered-toggle=""
       >
         <span aria-hidden className={cn("grid size-6 shrink-0 place-items-center rounded-full", setAside ? "bg-panel-2 text-text-secondary" : "bg-success/10 text-success")}>
@@ -82,9 +92,23 @@ export function AnsweredCardFold({ card }: { card: Card }) {
               </span>
             )}
           </span>
+          {preview && (
+            <span className="mt-1 flex min-w-0 flex-col gap-0.5 border-l-2 border-border pl-2 text-xs leading-snug" data-answered-preview="">
+              {preview.reply && (
+                <span className="min-w-0 truncate text-text-subtle" data-answered-reply="">
+                  <span className="font-medium">You: </span>{preview.reply}
+                </span>
+              )}
+              {preview.answer && (
+                <span className="line-clamp-2 break-words text-text-secondary" data-answered-answer="">
+                  <span className="font-medium">Manager: </span>{preview.answer}
+                </span>
+              )}
+            </span>
+          )}
         </span>
-        <time className="shrink-0 text-[11px] tabular-nums text-text-subtle">{cardTime(card.answer?.at ?? card.updatedAt)}</time>
-        <ChevronDown className={cn("size-4 shrink-0 text-text-subtle transition-transform", open && "rotate-180")} />
+        <time className={cn("shrink-0 text-[11px] tabular-nums text-text-subtle", preview && "pt-0.5")}>{cardTime(card.answer?.at ?? card.updatedAt)}</time>
+        <ChevronDown className={cn("size-4 shrink-0 text-text-subtle transition-transform", preview && "mt-0.5", open && "rotate-180")} />
       </button>
       {open && (
         <div id={panel}>

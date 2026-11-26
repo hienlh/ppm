@@ -22,6 +22,7 @@ import { CARD_FOLLOWUP_MAX_CHARS } from "../../shared/assistant-limits.ts";
 import type { AssistantCard, CardFollowUp } from "../../shared/assistant-cards.ts";
 import { assistantCards, type AssistantCards } from "./assistant-cards.service.ts";
 import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
+import { CARD_REPLY_PREVIEW_CHARS, markdownPreview } from "../../shared/plain-text-preview.ts";
 import {
   createFollowupTracker, cutFollowupText, type FollowupResult, type FollowupTracker, type TurnOutcome,
 } from "./card-reply-followup-tracker.ts";
@@ -46,7 +47,10 @@ export interface CardFollowupDeps {
 }
 
 /** Keeps the answer on the card, then hands it on; a sink that throws never reaches the chat. */
-export function deliverCardFollowup(deps: CardFollowupDeps, result: FollowupResult): void {
+export function deliverCardFollowup(deps: CardFollowupDeps, input: FollowupResult): void {
+  // The user's words go no further than the preview kept on the card: nothing on the way out needs
+  // them, and they are not scrubbed until they are stored.
+  const { reply: replied, ...result } = input;
   const card = deps.cards.get(result.cardId);
   if (!card) return;
   if (result.stopped) {
@@ -66,8 +70,12 @@ export function deliverCardFollowup(deps: CardFollowupDeps, result: FollowupResu
   // is named under this one (and the bridge sends the card itself under the user's message).
   const answeredWithCard = newCards.length > 0;
   const cut = answeredWithCard ? { text: "", truncated: false } : cutFollowupText(text, CARD_FOLLOWUP_MAX_CHARS, result.overflow);
+  // The start of the user's own reply, shown with the answer on a folded card. PPM writes it into
+  // `ppm.db`, so it is scrubbed like the answer, and whole before it is cut.
+  const reply = markdownPreview(turnSecretScrubber.scrub(replied ?? ""), CARD_REPLY_PREVIEW_CHARS);
   const stored: CardFollowUp = {
     text: cut.text, truncated: cut.truncated, at: deps.now(), ...(answeredWithCard ? { newCards } : {}),
+    ...(reply ? { reply } : {}),
   };
   if (!deps.cards.setFollowUp(card.id, stored)) {
     // The card waits again ("your answer did not reach the manager chat; send it again"): an answer

@@ -1,6 +1,6 @@
 /**
  * A decision the user already answered folds to one line in the Assistant's stream: its title,
- * project, how it ended and when, in a 44 px button that opens the card again (read-only, no
+ * project, how it ended and when, in a row sized by its content (no 44 px minimum) that opens the card again (read-only, no
  * buttons) and folds it back. A card still waiting is never folded, and the waiting dock counts
  * only those.
  */
@@ -12,6 +12,7 @@ installDom();
 afterAll(uninstallDom);
 
 const { AnsweredCardFold, answerSummary, isAnsweredDecision } = await import("../../../src/web/components/assistant/cards/answered-card-fold");
+const { answeredCardPreview } = await import("../../../src/web/components/assistant/cards/answered-card-preview");
 type Card = import("../../../src/shared/assistant-cards").AssistantCard;
 
 let seq = 0;
@@ -46,11 +47,11 @@ describe("an answered decision in the stream", () => {
     expect(answerSummary(card({ status: "gone", answer: null }))).toBe("No longer waiting");
   });
 
-  it("is one 44 px line that opens the card read-only and folds it again", async () => {
+  it("is one line, with no 44 px minimum, that opens the card read-only and folds it again", async () => {
     const c = card({ followUp: { text: "Shipped.", at: Date.now() } as Card["followUp"] });
     view = await mount(createElement(AnsweredCardFold, { card: c }));
     const line = q("[data-answered-toggle]")!;
-    expect(line.className).toContain("min-h-11");
+    expect(line.className).not.toContain("min-h-11");
     expect(line.getAttribute("aria-expanded")).toBe("false");
     expect(q("[data-answered-title]")?.textContent).toBe(c.title);
     expect(line.textContent).toContain("ppm");
@@ -76,5 +77,50 @@ describe("an answered decision in the stream", () => {
     view = await mount(createElement(AnsweredCardFold, { card: c }));
     expect(q("[data-assistant-card]")).not.toBeNull();
     await click(q("[data-answered-toggle]"));
+  });
+});
+
+describe("the preview of the manager's answer on a folded card", () => {
+  const followUp = (over: Partial<NonNullable<Card["followUp"]>>): Card["followUp"] => ({ text: "", truncated: false, at: Date.now(), ...over });
+
+  it("is nothing until the manager answered", () => {
+    expect(answeredCardPreview(card())).toBeNull();
+    expect(answeredCardPreview(card({ followUp: followUp({}) }))).toBeNull();
+  });
+
+  it("shows the reply and the answer as plain text, cut with …", () => {
+    const text = "**Không ạ** — chạy cái này *tốn nhiều quota*:\n- Full regression: ~40% quota tuần.\n- Còn lại 15%.\n" + "Chi tiết thêm. ".repeat(40);
+    const p = answeredCardPreview(card({ followUp: followUp({ text, reply: "Có tốn quota không?" }) }))!;
+    expect(p.reply).toBe("Có tốn quota không?");
+    expect(p.answer.startsWith("Không ạ — chạy cái này tốn nhiều quota: Full regression: ~40% quota tuần. Còn lại 15%.")).toBe(true);
+    expect(p.answer).not.toContain("*");
+    expect(p.answer.endsWith("…")).toBe(true);
+    expect(Array.from(p.answer).length).toBeLessThanOrEqual(280);
+  });
+
+  it("marks an answer the server had cut already, and names a new card as the answer", () => {
+    expect(answeredCardPreview(card({ followUp: followUp({ text: "Ngắn.", truncated: true }) }))!.answer).toBe("Ngắn…");
+    const p = answeredCardPreview(card({ followUp: followUp({ newCards: [{ id: "n1", title: "Chạy lại?" }, { id: "n2", title: "Khác" }] }) }))!;
+    expect(p).toEqual({ reply: "", answer: "New card: “Chạy lại?” and 1 more" });
+  });
+
+  it("is drawn folded under the summary, two lines at most, and gone once the card is open", async () => {
+    const c = card({ followUp: followUp({ text: "## Đã xong\n\nĐã merge **PR #12**.", reply: "merge đi em" }) });
+    view = await mount(createElement(AnsweredCardFold, { card: c }));
+    expect(q("[data-answered-reply]")?.textContent).toBe("You: merge đi em");
+    const answer = q("[data-answered-answer]")!;
+    expect(answer.textContent).toBe("Manager: Đã xong Đã merge PR #12.");
+    expect(answer.className).toContain("line-clamp-2");
+    expect(q("[data-answered-reply]")!.className).toContain("truncate");
+    await click(q("[data-answered-toggle]"));
+    expect(q("[data-answered-preview]")).toBeNull();
+    expect(q("[data-card-followup]")).not.toBeNull();
+    await click(q("[data-answered-toggle]"));
+  });
+
+  it("leaves a card with no answer under it as it was", async () => {
+    view = await mount(createElement(AnsweredCardFold, { card: card() }));
+    expect(q("[data-answered-preview]")).toBeNull();
+    expect(q("[data-answered-toggle]")!.className).toContain("items-center");
   });
 });

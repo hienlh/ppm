@@ -15,7 +15,7 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { ChevronDown } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import { TEXT_BUTTON } from "@/lib/control-size";
+import { TEXT_BUTTON, TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 import { CHAT_MESSAGE_TEXT } from "@/lib/chat-message-text";
 import { cardWithdrawal, type AssistantCard } from "../../../../shared/assistant-cards";
 import { CardMenu } from "./card-menu";
@@ -155,7 +155,8 @@ export function CardText({ text, fold, className, projectName }: { text: string;
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="mt-1 inline-flex min-h-11 items-center gap-1 text-xs font-medium text-primary md:min-h-7"
+          // A text button: 28px, 26px on a phone (docs/design-guidelines.md rule 3; no 44px minimum).
+          className={cn("mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary", TEXT_CONTROL_HEIGHT)}
           data-card-text-toggle=""
         >
           {open ? "Show less" : "Show more"}

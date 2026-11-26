@@ -76,7 +76,7 @@ export interface ForwardEnv {
   note(assistantSessionId: string, line: string): void;
   trace(sessionId: string, providerId: string, payload: Record<string, unknown>): void;
   /** Starts following the turn that will answer words sent under `clientMessageId`. */
-  expectFollowup?(input: { cardId: string; clientMessageId: string; origin: FollowupOrigin; sessionId: string }): FollowupHandle;
+  expectFollowup?(input: { cardId: string; clientMessageId: string; origin: FollowupOrigin; sessionId: string; reply?: string }): FollowupHandle;
   /** Likewise for words about a task, whose answer goes back under the user's own message. */
   expectTaskFollowup?(input: { clientMessageId: string; sessionId: string; context: TaskFollowupContext }): FollowupHandle;
   /** Writes a reply's images where the manager chat can read them; PPM's uploads folder by default. */
@@ -149,7 +149,8 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
   // provider names that turn before the send returns.
   const clientMessageId = `card-${crypto.randomUUID()}`;
   const following = how.followUp
-    ? env.expectFollowup?.({ cardId: card.id, clientMessageId, origin: how.followUp, sessionId: target.sessionId }) ?? null
+    // The words go along so the answer can be shown beside the start of what it answers.
+    ? env.expectFollowup?.({ cardId: card.id, clientMessageId, origin: how.followUp, sessionId: target.sessionId, reply: text }) ?? null
     : null;
   let delivered: DeliverUserWordsResult;
   try {
