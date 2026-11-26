@@ -194,16 +194,26 @@ ${VIRTUAL_DISPLAY_SAFETY}
 ${RESCUE_WINDOW}
 ${RATE_LIMIT}
 ${actions.map((a) => a.body).join("\n")}
+# One run at a time: the tasks are separate, so without this a Rescue firing while an action arms
+# the net could take the new net down, and two runs would race on the state files.
+$code = 2
+$mutex = New-Object Threading.Mutex($false, 'Global\\PPM-RemoteDesktopHelper')
+$held = $false
 try {
+  try { $held = $mutex.WaitOne(90000) } catch [Threading.AbandonedMutexException] { $held = $true }
+  if (-not $held) { throw 'Another helper run did not finish within 90 seconds.' }
   switch ($Action) {
 ${branches}
   }
   Write-HelperState ([bool]$r[0]) ([string]$r[1])
-  if (-not $r[0]) { exit 1 }
-  exit 0
+  if ($r[0]) { $code = 0 } else { $code = 1 }
 } catch {
   try { Write-HelperState $false ('Helper error: ' + $_.Exception.Message) } catch { }
-  exit 2
+  $code = 2
+} finally {
+  if ($held) { $mutex.ReleaseMutex() }
+  $mutex.Dispose()
 }
+exit $code
 `;
 }

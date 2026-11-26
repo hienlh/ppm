@@ -75,6 +75,14 @@ describe("helper.ps1", () => {
     expect(script).toContain("$StateDir = Join-Path $PSScriptRoot 'state'");
   });
 
+  it("runs one action at a time, and always lets go of the lock", () => {
+    const wait = script.indexOf("$mutex.WaitOne(");
+    expect(wait).toBeGreaterThan(0);
+    expect(wait).toBeLessThan(script.indexOf("switch ($Action)"));
+    expect(script).toMatch(/finally \{\n\s+if \(\$held\) \{ \$mutex\.ReleaseMutex\(\) \}/);
+    expect(script.trimEnd().endsWith("exit $code")).toBe(true);
+  });
+
   it("refuses to be built for anything but a user SID", () => {
     expect(() => buildHelperScript("S-1-5-18", [REATTACH_ACTION])).toThrow();
   });

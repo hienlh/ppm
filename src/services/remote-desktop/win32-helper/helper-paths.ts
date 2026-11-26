@@ -25,9 +25,9 @@ export const PPM_HELPER_ACTIONS: readonly PpmHelperAction[] = ["Reattach", "Disp
 /** How long after `Reattach`/`DisplayOn` the safety net runs unless confirmed. */
 export const RESCUE_MINUTES = 5;
 
-/** How many real changes the SYSTEM helper makes per `RATE_WINDOW_MINUTES`, whoever asks. The
- *  PC that locked up had its virtual display switched 8 times in 14 minutes; ordinary use is one
- *  on and one off per Remote Desktop session. */
+/** How many risky changes the SYSTEM helper makes per `RATE_WINDOW_MINUTES`, whoever asks:
+ *  session moves, and the virtual display switched *off*. The PC that locked up had its display
+ *  switched 8 times in 14 minutes; ordinary use is one off per Remote Desktop session. */
 export const RATE_WINDOW_MINUTES = 30;
 export const RATE_LIMITS = { reattach: 3, display: 4 } as const;
 

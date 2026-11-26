@@ -25,16 +25,29 @@ $global:TsconExit = 0
 $global:TriggerFails = $false
 $global:TriggerAt = $null
 
+# Monitors: @{ Id; Parent; Present (default true); Active (default true) }. Each fake honours the
+# switches the real cmdlet would, so dropping -PresentOnly or reading the wrong key fails a test.
 function Get-PnpDevice {
   [CmdletBinding()] param([string]$Class, [switch]$PresentOnly)
   if ($Class -eq 'Display') { return $global:VirtualDevices }
-  if ($Class -eq 'Monitor') { return @($global:Monitors | ForEach-Object { [pscustomobject]@{ InstanceId = $_.Id } }) }
+  if ($Class -eq 'Monitor') {
+    return @($global:Monitors | Where-Object { -not $PresentOnly -or $_.Present -ne $false } | ForEach-Object { [pscustomobject]@{ InstanceId = $_.Id } })
+  }
   throw ('unexpected device class ' + $Class)
 }
 function Get-PnpDeviceProperty {
   [CmdletBinding()] param([string]$InstanceId, [string]$KeyName)
+  if ($KeyName -ne 'DEVPKEY_Device_Parent') { return [pscustomobject]@{ Data = $null } }
   $m = @($global:Monitors | Where-Object { $_.Id -eq $InstanceId })[0]
   return [pscustomobject]@{ Data = $m.Parent }
+}
+function Get-CimInstance {
+  [CmdletBinding()] param([string]$Namespace, [string]$ClassName)
+  if ($Namespace -ne 'root\\wmi' -or $ClassName -ne 'WmiMonitorBasicDisplayParams') { throw ('unexpected WMI query ' + $Namespace + ' ' + $ClassName) }
+  $rows = @($global:Monitors | Where-Object { $_.Present -ne $false } | ForEach-Object { [pscustomobject]@{ InstanceName = ($_.Id + '_0'); Active = ($_.Active -ne $false) } })
+  # Like the real cmdlet: a non-terminating error, which -ErrorAction SilentlyContinue swallows.
+  if ($rows.Count -eq 0) { Write-Error 'Not supported'; return }
+  return $rows
 }
 function Enable-PnpDevice { [CmdletBinding(SupportsShouldProcess = $true)] param([string]$InstanceId) Add-Call ('enable ' + $InstanceId) }
 function Disable-PnpDevice { [CmdletBinding(SupportsShouldProcess = $true)] param([string]$InstanceId) Add-Call ('disable ' + $InstanceId) }

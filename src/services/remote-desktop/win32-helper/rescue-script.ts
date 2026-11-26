@@ -8,7 +8,8 @@
  * - Before `Reattach` or `DisplayOn` changes anything, the helper records `state\rescue.json` and
  *   gives `Rescue` a one-time trigger at now + N minutes (`StartWhenAvailable`, so a PC that was
  *   asleep runs it on waking). If the trigger cannot be set, the action does not run.
- * - "I can still reach this PC" in PPM runs `Confirm`, which removes the trigger and the record.
+ * - "I can still reach this PC" in PPM runs `Confirm`, which first does what `Rescue` would (reaching
+ *   PPM proves nothing about the console's screen), then removes the trigger and the record.
  * - When `Rescue` fires with the record still there, it turns the virtual display on if someone is
  *   signed in at the console and the PC has no monitor of its own (the state that locked a PC
  *   out), then removes the trigger and the record. It never signs anyone out and never moves a
@@ -69,17 +70,31 @@ function Stop-RescueWindow {
   Clear-RescueTrigger
   Remove-StateFile 'rescue.json'
 }
+
+# What Confirm and Rescue both do before taking the net down: a session signed in at a PC with no
+# monitor of its own gets the virtual display. Turning it on is never capped.
+function Set-ConsoleScreen {
+  if (-not (Test-VirtualDisplayNeeded)) { return 'The session at this PC has a screen.' }
+  $devices = ${FIND_DEVICES}
+  if ($devices.Count -eq 0) { return 'No virtual display driver to turn on.' }
+  foreach ($device in $devices) { Enable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
+  return 'Turned the virtual display on for the session at this PC.'
+}
 `;
 
 export const CONFIRM_ACTION: HelperActionScript = {
   action: "Confirm",
   call: "Invoke-Confirm",
   body: `
+# Reaching PPM says nothing about the console's screen: a session moved to the console of a PC
+# with no monitor and the display off still serves PPM. So confirming first does what the net
+# would have done, then takes the net down.
 function Invoke-Confirm {
   $armed = Read-StateJson 'rescue.json'
+  $what = Set-ConsoleScreen
   Stop-RescueWindow
-  if (-not $armed) { return @($true, 'Nothing was waiting for confirmation.') }
-  return @($true, ('Confirmed. The safety net for ' + $armed.action + ' is off.'))
+  if (-not $armed) { return @($true, ('Nothing was waiting for confirmation. ' + $what)) }
+  return @($true, ('Confirmed. The safety net for ' + $armed.action + ' is off. ' + $what))
 }
 `,
 };
@@ -98,16 +113,7 @@ function Invoke-Rescue {
   if ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -lt ([long]$armed.deadlineMs - 30000)) {
     return @($true, 'Not due yet.')
   }
-  $what = 'Nothing to change: the session at this PC has a screen.'
-  if (Test-VirtualDisplayNeeded) {
-    $devices = ${FIND_DEVICES}
-    if ($devices.Count -eq 0) {
-      $what = 'No virtual display driver to turn on.'
-    } else {
-      foreach ($device in $devices) { Enable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
-      $what = 'Turned the virtual display on for the session at this PC.'
-    }
-  }
+  $what = Set-ConsoleScreen
   Stop-RescueWindow
   return @($true, ('Safety net ran: ' + $armed.action + ' was not confirmed in time. ' + $what))
 }

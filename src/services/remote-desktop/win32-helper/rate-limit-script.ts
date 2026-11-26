@@ -6,8 +6,10 @@
  * in its own folder — is out of reach of another process of that same user. What is out of
  * reach is the helper's own `state` folder under Program Files, so the count lives there.
  *
- * Only real changes count: a refusal, an "already connected" or a "kept on" does not. The safety
- * net (`Rescue`) is never limited.
+ * Only real changes count: a refusal, an "already connected", an "already off" or a "kept on" does
+ * not. Only the risky direction is capped — moving the session and switching the display off.
+ * Turning the display on, `Confirm` and `Rescue` never are: refusing them could leave a session
+ * at the console with no screen.
  *
  * Same constraints as `helper-script.ts`: ASCII, no backticks.
  */
@@ -20,9 +22,11 @@ $RateWindowMs = ${RATE_WINDOW_MINUTES} * 60000
 
 function Get-RecentChanges([string]$Group) {
   $log = Read-StateJson 'recent-changes.json'
-  $cutoff = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $RateWindowMs
+  $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  $cutoff = $now - $RateWindowMs
   if (-not $log -or -not $log.$Group) { return ,@() }
-  return ,@($log.$Group | ForEach-Object { [long]$_ } | Where-Object { $_ -ge $cutoff })
+  # Entries from the future (the clock was set back) are dropped, or they would count for ever.
+  return ,@($log.$Group | ForEach-Object { [long]$_ } | Where-Object { $_ -ge $cutoff -and $_ -le ($now + 60000) })
 }
 
 # @($allowed, $message): the message says what to do instead when it is not allowed.

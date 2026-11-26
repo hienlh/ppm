@@ -186,7 +186,7 @@ if ($vddRecord -and -not $vddRecord.preexisting) {
 }
 
 const NOT_INSTALLED = psQuote("The virtual display driver is not installed.");
-const SWITCHED = psQuote("the virtual display was switched on or off");
+const SWITCHED = psQuote("the virtual display was switched off");
 
 export const DISPLAY_ON_ACTION: HelperActionScript = {
   action: "DisplayOn",
@@ -195,12 +195,11 @@ export const DISPLAY_ON_ACTION: HelperActionScript = {
 function Invoke-DisplayOn {
   $devices = ${FIND_DEVICES}
   if ($devices.Count -eq 0) { return @($false, ${NOT_INSTALLED}) }
-  $allowed = Test-ChangeAllowed 'display' ${RATE_LIMITS.display} ${SWITCHED}
-  if (-not $allowed[0]) { return @($false, $allowed[1]) }
+  # Not capped: turning on is the safe direction, and refusing it could leave a session that
+  # was just brought to the console with no screen.
   # Safety net first (rescue-script.ts); no net, no change.
   Start-RescueWindow 'DisplayOn'
   foreach ($device in $devices) { Enable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
-  Add-Change 'display'
   return @($true, 'The virtual display is on.')
 }
 `,
@@ -216,9 +215,12 @@ function Invoke-DisplayOff {
   $devices = ${FIND_DEVICES}
   if ($devices.Count -eq 0) { return @($false, ${NOT_INSTALLED}) }
   if (Test-VirtualDisplayNeeded) { return @($false, ${psQuote(KEPT_ON_MESSAGE)}) }
+  # A disabled device reports Status 'Error'; only switching off one that is on is a change.
+  $on = @($devices | Where-Object { [string]$_.Status -ne 'Error' })
+  if ($on.Count -eq 0) { return @($true, 'The virtual display is already off.') }
   $allowed = Test-ChangeAllowed 'display' ${RATE_LIMITS.display} ${SWITCHED}
   if (-not $allowed[0]) { return @($false, $allowed[1]) }
-  foreach ($device in $devices) { Disable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
+  foreach ($device in $on) { Disable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
   Add-Change 'display'
   return @($true, 'The virtual display is off.')
 }

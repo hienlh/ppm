@@ -45,6 +45,22 @@ describe.if(process.platform === "win32")("DisplayOff never leaves the console s
     expect(r.calls).toEqual([]);
   }, T);
 
+  it("counts only a present, active monitor on a PCI device", async () => {
+    const cases = {
+      // Other virtual displays live under ROOT and vanish when their own stream ends.
+      parsec: "@{ Id = 'DISPLAY\\PSCCDD0\\1'; Parent = 'ROOT\\DISPLAY\\0001' }",
+      // Unplugged long ago: still a device entry with a GPU parent, but not present.
+      unplugged: "@{ Id = 'DISPLAY\\XMI3447\\5&1'; Parent = 'PCI\\VEN_10DE&DEV_2709\\4&1'; Present = $false }",
+      // A closed laptop lid: present, not in use.
+      lidClosed: "@{ Id = 'DISPLAY\\BOE0000\\4&2'; Parent = 'PCI\\VEN_8086&DEV_A7A0\\3&1'; Active = $false }",
+    };
+    for (const monitor of Object.values(cases)) {
+      const r = await runHelperScenario({ pieces: DISPLAY, setup: `$global:ConsoleSession = 2; $global:Monitors = @(${monitor})`, call: "Invoke-DisplayOff" });
+      expect(r.ok).toBe(false);
+      expect(r.calls).toEqual([]);
+    }
+  }, 3 * T);
+
   it("turns off when the PC has a monitor of its own", async () => {
     const r = await runHelperScenario({ pieces: DISPLAY, setup: `$global:ConsoleSession = 2; $global:Monitors = @(${VIRTUAL}, ${PHYSICAL})`, call: "Invoke-DisplayOff" });
     expect(r.ok).toBe(true);
@@ -122,6 +138,18 @@ describe.if(process.platform === "win32")("Confirm and Rescue", () => {
     expect(r.ok).toBe(true);
     expect(r.message).toContain("Reattach");
     expect(r.calls).toEqual(["clear-trigger"]);
+    expect(r.state["rescue.json"]).toBeUndefined();
+  }, T);
+
+  it("Confirm does not take the net down over a console with no screen: it gives that session one first", async () => {
+    // Reaching PPM proves nothing about the console: a session moved there with the display off
+    // still serves PPM.
+    const r = await runHelperScenario({
+      pieces: ALL, setup: "$global:ConsoleSession = 2", call: "Invoke-Confirm",
+      stateFiles: { "rescue.json": armedFile(Date.now() + 60_000) },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.calls).toEqual(["enable ROOT\\DISPLAY\\0000", "clear-trigger"]);
     expect(r.state["rescue.json"]).toBeUndefined();
   }, T);
 
@@ -252,14 +280,34 @@ describe.if(process.platform === "win32")("a cap on how often SYSTEM changes any
     expect(kept.state["recent-changes.json"]).toBeUndefined();
   }, T);
 
-  it("caps switching the virtual display, on and off together", async () => {
+  it("caps switching the virtual display off, never on", async () => {
     const files = { "recent-changes.json": recentChanges("display", RATE_LIMITS.display) };
-    const on = await runHelperScenario({ pieces: ALL, call: "Invoke-DisplayOn", stateFiles: files });
-    expect(on.ok).toBe(false);
-    expect(on.calls).toEqual([]);
     const off = await runHelperScenario({ pieces: ALL, setup: `$global:Monitors = @(${PHYSICAL})`, call: "Invoke-DisplayOff", stateFiles: files });
     expect(off.ok).toBe(false);
+    expect(off.message).toStartWith("Refused:");
     expect(off.calls).toEqual([]);
+    // Refusing "on" could leave a session just brought to the console with no screen.
+    const on = await runHelperScenario({ pieces: ALL, setup: "$global:ConsoleSession = 2", call: "Invoke-DisplayOn", stateFiles: files });
+    expect(on.ok).toBe(true);
+    expect(on.calls).toEqual(["arm-trigger", "enable ROOT\\DISPLAY\\0000"]);
+  }, T);
+
+  it("switching off a display that is already off is not a change", async () => {
+    const r = await runHelperScenario({
+      pieces: ALL, setup: `${deviceWithStatus("Error")}; $global:Monitors = @(${PHYSICAL})`, call: "Invoke-DisplayOff",
+      stateFiles: { "recent-changes.json": recentChanges("display", RATE_LIMITS.display) },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("already off");
+    expect(r.calls).toEqual([]);
+  }, T);
+
+  it("does not let an entry from the future count for ever", async () => {
+    const r = await runHelperScenario({
+      pieces: ALL, setup: SESSION_2_DISCONNECTED, call: "Invoke-Reattach",
+      stateFiles: { "recent-changes.json": recentChanges("reattach", RATE_LIMITS.reattach, -24 * 60 * 60_000) },
+    });
+    expect(r.ok).toBe(true);
   }, T);
 
   it("never caps the safety net", async () => {
