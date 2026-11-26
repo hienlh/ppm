@@ -21,7 +21,7 @@ import {
   VDD_SIGNER_SUBJECT, VDD_VERSION, VDD_ZIP_FOLDER,
 } from "./vdd-catalog.ts";
 
-const FIND_DEVICES = `@(Get-PnpDevice -Class Display -ErrorAction SilentlyContinue | Where-Object { $_.HardwareID -contains ${psQuote(VDD_HARDWARE_ID)} })`;
+import { FIND_DEVICES, KEPT_ON_MESSAGE } from "./virtual-display-safety-script.ts";
 
 /** SetupAPI's root-device creation, as `devcon install` does it; PowerShell has no cmdlet. */
 export const CREATE_DEVICE_TYPE = `
@@ -152,25 +152,33 @@ if ($vddRecord -and -not $vddRecord.preexisting) {
 `;
 }
 
-function toggleBody(name: string, cmdlet: "Enable-PnpDevice" | "Disable-PnpDevice", done: string): string {
-  return `
-function ${name} {
-  $devices = ${FIND_DEVICES}
-  if ($devices.Count -eq 0) { return @($false, 'The virtual display driver is not installed.') }
-  foreach ($device in $devices) { ${cmdlet} -InstanceId $device.InstanceId -Confirm:$false }
-  return @($true, ${psQuote(done)})
-}
-`;
-}
+const NOT_INSTALLED = psQuote("The virtual display driver is not installed.");
 
 export const DISPLAY_ON_ACTION: HelperActionScript = {
   action: "DisplayOn",
   call: "Invoke-DisplayOn",
-  body: toggleBody("Invoke-DisplayOn", "Enable-PnpDevice", "The virtual display is on."),
+  body: `
+function Invoke-DisplayOn {
+  $devices = ${FIND_DEVICES}
+  if ($devices.Count -eq 0) { return @($false, ${NOT_INSTALLED}) }
+  foreach ($device in $devices) { Enable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
+  return @($true, 'The virtual display is on.')
+}
+`,
 };
 
+/** Refuses whenever the display is the only one the console session has (see
+ *  `virtual-display-safety-script.ts`, which the helper always includes). */
 export const DISPLAY_OFF_ACTION: HelperActionScript = {
   action: "DisplayOff",
   call: "Invoke-DisplayOff",
-  body: toggleBody("Invoke-DisplayOff", "Disable-PnpDevice", "The virtual display is off."),
+  body: `
+function Invoke-DisplayOff {
+  $devices = ${FIND_DEVICES}
+  if ($devices.Count -eq 0) { return @($false, ${NOT_INSTALLED}) }
+  if (Test-VirtualDisplayNeeded) { return @($false, ${psQuote(KEPT_ON_MESSAGE)}) }
+  foreach ($device in $devices) { Disable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
+  return @($true, 'The virtual display is off.')
+}
+`,
 };

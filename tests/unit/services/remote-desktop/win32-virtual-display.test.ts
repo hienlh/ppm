@@ -7,7 +7,7 @@ import {
 } from "../../../../src/services/remote-desktop/win32-helper/vdd-scripts.ts";
 import { isAscii } from "../../../../src/services/remote-desktop/win32-helper/powershell-text.ts";
 import {
-  GRACE_MS, IDLE_MS, VirtualDisplayLease, type LeaseDeps,
+  GRACE_MS, IDLE_MS, RETRY_MS, VirtualDisplayLease, type LeaseDeps,
 } from "../../../../src/services/remote-desktop/win32-helper/virtual-display-lease.ts";
 import { chooseVirtualDisplayMode } from "../../../../src/services/remote-desktop/win32-helper/virtual-display-mode.ts";
 
@@ -81,12 +81,17 @@ describe("driver install steps", () => {
 });
 
 /** A lease with a hand-cranked clock: timers run only when the test says so. */
-function harness(markerInitially = false) {
+function harness(markerInitially = false, offRefusals = 0) {
   let marker = markerInitially;
+  let refusalsLeft = offRefusals;
   const runs: string[] = [];
   const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
   const deps: LeaseDeps = {
-    run: async (action) => { runs.push(action); return { ok: true, message: "" }; },
+    run: async (action) => {
+      runs.push(action);
+      if (action === "DisplayOff" && refusalsLeft > 0) { refusalsLeft--; return { ok: false, message: "Kept on: ..." }; }
+      return { ok: true, message: "" };
+    },
     setMode: async () => { runs.push("setMode"); },
     readMarker: () => marker,
     writeMarker: (on) => { marker = on; },
@@ -142,6 +147,27 @@ describe("virtual display lease", () => {
     await h.fire();
     await h.lease.sweepOnStartup();
     expect(h.runs).toEqual([]);
+  });
+
+  it("keeps the marker when the helper keeps the display on, and asks again later", async () => {
+    const h = harness(false, 1);
+    await h.lease.turnOn();
+    await h.fire();
+    expect(h.runs).toEqual(["DisplayOn", "setMode", "DisplayOff"]);
+    expect(h.marker()).toBe(true);
+    expect(h.timers.filter((t) => t.live).map((t) => t.ms)).toEqual([RETRY_MS]);
+    await h.fire();
+    expect(h.runs).toEqual(["DisplayOn", "setMode", "DisplayOff", "DisplayOff"]);
+    expect(h.marker()).toBe(false);
+    expect(h.timers.some((t) => t.live)).toBe(false);
+  });
+
+  it("a session starting while a retry is pending cancels it", async () => {
+    const h = harness(true, 1);
+    await h.lease.sweepOnStartup();
+    expect(h.timers.filter((t) => t.live)).toHaveLength(1);
+    h.lease.acquire();
+    expect(h.timers.some((t) => t.live)).toBe(false);
   });
 
   it("turns off at startup a display a previous run left on", async () => {

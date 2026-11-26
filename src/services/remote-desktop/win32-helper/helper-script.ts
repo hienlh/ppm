@@ -17,6 +17,7 @@
  */
 import { HELPER_VERSION, type HelperAction } from "./helper-paths.ts";
 import { isUserSid, psQuote } from "./powershell-text.ts";
+import { VIRTUAL_DISPLAY_SAFETY } from "./virtual-display-safety-script.ts";
 
 /** One `switch` branch per action, each calling a function defined in `body`. */
 export interface HelperActionScript {
@@ -43,6 +44,15 @@ public static class PpmWts {
   static extern bool WTSQuerySessionInformationW(IntPtr server, int session, int infoClass, out IntPtr buffer, out int bytes);
   [DllImport("wtsapi32.dll")]
   static extern void WTSFreeMemory(IntPtr memory);
+  [DllImport("kernel32.dll")]
+  static extern int WTSGetActiveConsoleSessionId();
+  /** The session at the PC's own screen when someone is signed in to it, else -1 (the sign-in
+   *  screen, or no console session at all: the API answers 0xFFFFFFFF). */
+  public static int ConsoleUserSession() {
+    int id = WTSGetActiveConsoleSessionId();
+    if (id < 0) return -1;
+    return string.IsNullOrEmpty(Query(id, 5)) ? -1 : id;
+  }
   static string Query(int session, int infoClass) {
     IntPtr buffer; int bytes;
     if (!WTSQuerySessionInformationW(IntPtr.Zero, session, infoClass, out buffer, out bytes)) return null;
@@ -138,6 +148,7 @@ function Write-HelperState([bool]$Ok, [string]$Message) {
   Add-Content -LiteralPath $log -Value ($at + ' ' + $Action + ' ok=' + $Ok + ' ' + $Message) -Encoding UTF8
 }
 ${WTS_SESSION_LOOKUP}
+${VIRTUAL_DISPLAY_SAFETY}
 ${actions.map((a) => a.body).join("\n")}
 try {
   switch ($Action) {

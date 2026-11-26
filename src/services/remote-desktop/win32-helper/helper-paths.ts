@@ -12,7 +12,7 @@ import { join, win32 } from "node:path";
 import { getPpmDir } from "../../ppm-dir.ts";
 
 /** Bumped whenever the generated scripts change, so an older install reports "update needed". */
-export const HELPER_VERSION = 1;
+export const HELPER_VERSION = 2;
 
 /** Each action is its own task with a fixed command line: a task cannot be handed anything. */
 export const HELPER_ACTIONS = ["Reattach", "DisplayOn", "DisplayOff"] as const;

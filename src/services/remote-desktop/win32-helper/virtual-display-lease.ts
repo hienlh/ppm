@@ -10,6 +10,12 @@
  * - Every session holds the lease while it runs; when the last one closes → off after
  *   `GRACE_MS`, so a reconnect or a quality change that reopens the socket does not flap it.
  * - PPM starts and finds the marker (it died mid-session) → off.
+ *
+ * "Off" is a request, not an order: the helper refuses while the display is the only screen of
+ * a session signed in at the PC (`virtual-display-safety-script.ts`), which on a headless PC is
+ * the normal state once the session has been brought back. The marker then stays, and PPM asks
+ * again every `RETRY_MS` while no session holds the lease — it goes through once the session has
+ * left the console (an RDP sign-in, say).
  */
 import { join } from "node:path";
 import { createLogger } from "../../logger.ts";
@@ -23,6 +29,7 @@ const log = createLogger("remote-desktop");
 
 export const IDLE_MS = 2 * 60_000;
 export const GRACE_MS = 30_000;
+export const RETRY_MS = 10 * 60_000;
 
 export interface LeaseDeps {
   run(action: "DisplayOn" | "DisplayOff"): Promise<HelperRunResult>;
@@ -87,9 +94,9 @@ export class VirtualDisplayLease {
     if (this.deps.readMarker()) await this.turnOff("left on by a previous run");
   }
 
-  private schedule(ms: number): void {
+  private schedule(ms: number, why = "no session is using it"): void {
     this.cancel();
-    this.timer = this.deps.setTimer(() => { this.timer = null; void this.turnOff("no session is using it"); }, ms);
+    this.timer = this.deps.setTimer(() => { this.timer = null; void this.turnOff(why); }, ms);
   }
 
   private cancel(): void {
@@ -99,9 +106,11 @@ export class VirtualDisplayLease {
   private async turnOff(why: string): Promise<void> {
     if (this.holders > 0 || !this.deps.readMarker()) return;
     const result = await this.deps.run("DisplayOff");
-    // Keep the marker when the helper could not do it, so the next start tries again.
-    if (result.ok) this.deps.writeMarker(false);
     log.info(`virtual display off (${why}): ok=${result.ok} ${result.message}`);
+    if (result.ok) { this.deps.writeMarker(false); return; }
+    // Refused (or failed): keep the marker, so a restart tries too, and ask again later unless a
+    // session took the lease in the meantime.
+    if (this.holders === 0) this.schedule(RETRY_MS, "kept on earlier; trying again");
   }
 }
 
