@@ -30,7 +30,16 @@ const log = createLogger("telegram");
 /** What every call resolves to. `errorCode` is null when Telegram was never reached. */
 export type TelegramCallResult<T> =
   | { ok: true; result: T }
-  | { ok: false; errorCode: number | null; description: string; retryAfter?: number };
+  | {
+    ok: false; errorCode: number | null; description: string; retryAfter?: number;
+    /**
+     * Telegram was not heard from, but the request may well have reached it: the call timed out or
+     * the connection dropped after it was opened. Sending the same message again can then deliver
+     * it twice, because the Bot API has no idempotency key. A failure before any connection (refused,
+     * no DNS) leaves this unset: nothing was sent.
+     */
+    maybeSent?: true;
+  };
 
 /** An edit skipped because the same message was edited less than the interval ago. */
 export type TelegramEditResult = TelegramCallResult<true> | { ok: false; throttled: true };
@@ -40,8 +49,13 @@ export interface TelegramBotClientOptions {
   editIntervalMs?: number;
   /** Longest `retry_after` that is waited out; a longer one fails the call. Default 30 s. */
   maxRetryAfterS?: number;
-  /** Per-request deadline for everything but `getUpdates` and downloads. Default 10 s. */
+  /** Per-request deadline for everything but `getUpdates`, `sendMessage` and downloads. Default 10 s. */
   requestTimeoutMs?: number;
+  /**
+   * Deadline for `sendMessage`. Longer than other calls (default 30 s): a send that times out may
+   * still be delivered, and a slow Telegram answering late is better than a resend that duplicates.
+   */
+  sendTimeoutMs?: number;
   /** How a wait is slept; tests replace it to avoid real delays. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -93,6 +107,7 @@ export class TelegramBotClient {
   private readonly editIntervalMs: number;
   private readonly maxRetryAfterS: number;
   private readonly requestTimeoutMs: number;
+  private readonly sendTimeoutMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly lastEdit = new Map<string, number>();
 
@@ -102,6 +117,7 @@ export class TelegramBotClient {
     this.editIntervalMs = options.editIntervalMs ?? 1000;
     this.maxRetryAfterS = options.maxRetryAfterS ?? 30;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
+    this.sendTimeoutMs = options.sendTimeoutMs ?? 30_000;
     this.sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
   }
 
@@ -137,7 +153,7 @@ export class TelegramBotClient {
       ...(options.replyTo ? { reply_parameters: { message_id: options.replyTo, allow_sending_without_reply: true } } : {}),
       // Delivered without a sound or vibration: the message is there, the phone stays still.
       ...(options.silent ? { disable_notification: true } : {}),
-    });
+    }, { timeoutMs: this.sendTimeoutMs });
   }
 
   /**
@@ -352,7 +368,7 @@ export class TelegramBotClient {
   private async call<T>(
     method: string,
     body: Record<string, unknown>,
-    options: { signal?: AbortSignal; quiet?: boolean; notModifiedIsOk?: boolean; goneIsOk?: boolean } = {},
+    options: { signal?: AbortSignal; quiet?: boolean; notModifiedIsOk?: boolean; goneIsOk?: boolean; timeoutMs?: number } = {},
   ): Promise<TelegramCallResult<T>> {
     body = withoutVaultValues(body);
     let res = await this.request<T>(method, body, options);
@@ -386,19 +402,24 @@ export class TelegramBotClient {
   private async request<T>(
     method: string,
     body: Record<string, unknown>,
-    { signal, quiet }: { signal?: AbortSignal; quiet?: boolean },
+    { signal, quiet, timeoutMs }: { signal?: AbortSignal; quiet?: boolean; timeoutMs?: number },
   ): Promise<TelegramCallResult<T>> {
     try {
       const res = await fetch(botMethodUrl(this.token, method), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        signal: signal ?? AbortSignal.timeout(this.requestTimeoutMs),
+        signal: signal ?? AbortSignal.timeout(timeoutMs ?? this.requestTimeoutMs),
       });
       let json: TelegramApiResult<T>;
       try {
         json = (await res.json()) as TelegramApiResult<T>;
       } catch {
+        // A 2xx cut off mid-body (the deadline fired while it was read) was carried out; a gateway
+        // timeout may have been. Either may have delivered a message, so neither is a plain refusal.
+        if ((res.status >= 200 && res.status < 300) || res.status === 504) {
+          return { ok: false, errorCode: null, description: `answer cut off (HTTP ${res.status})`, maybeSent: true };
+        }
         return { ok: false, errorCode: res.status, description: `not a Bot API answer (HTTP ${res.status})` };
       }
       if (json.ok) return { ok: true, result: json.result as T };
@@ -414,9 +435,21 @@ export class TelegramBotClient {
   }
 
   /** Telegram was not reached. Logged unless `silent` (cancelled, or a poll that reports for itself); never with the token. */
-  private networkFailure(what: string, e: unknown, silent?: boolean): { ok: false; errorCode: null; description: string } {
+  private networkFailure(what: string, e: unknown, silent?: boolean): { ok: false; errorCode: null; description: string; maybeSent?: true } {
     const description = scrubToken(e instanceof Error ? e.message : String(e), this.token);
     if (!silent) log.warn(`${what} could not reach Telegram: ${description}`);
-    return { ok: false, errorCode: null, description };
+    return { ok: false, errorCode: null, description, ...(neverConnected(e) ? {} : { maybeSent: true as const }) };
   }
+}
+
+/**
+ * A network error raised before any request could have been sent: the address did not resolve or
+ * nothing accepted the connection. Anything else (a timeout, a connection dropped mid-way) leaves
+ * open whether Telegram received the request.
+ */
+const NEVER_CONNECTED = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|getaddrinfo|Unable to connect|ConnectionRefused|FailedToOpenSocket|DNS|ENETUNREACH|EHOSTUNREACH|ENETDOWN|network is unreachable/i;
+
+function neverConnected(e: unknown): boolean {
+  const text = e instanceof Error ? `${e.name} ${(e as { code?: string }).code ?? ""} ${e.message}` : String(e);
+  return NEVER_CONNECTED.test(text);
 }

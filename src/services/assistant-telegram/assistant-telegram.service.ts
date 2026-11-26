@@ -60,6 +60,7 @@ import { currentQuietWindowEnd } from "../assistant-wake/wake-quiet-hours.ts";
 import type { InlineKeyboardMarkup } from "../telegram/telegram-types.ts";
 import type { AssistantClock } from "../assistant-wake/assistant-clock.ts";
 import { CardReminders, quietWhileInPpm, TelegramSilence } from "./assistant-telegram-silence.ts";
+import { cardReminderSettings } from "./assistant-telegram-card-reminders.ts";
 import { AssistantTelegramTasks, type TaskTelegramDeps } from "./assistant-telegram-task-actions.ts";
 import { AssistantTelegramTaskCreated, type TaskCreatedDeps } from "./assistant-telegram-task-created.ts";
 import { AssistantTelegramSettingsChanges } from "./assistant-telegram-settings-changes.ts";
@@ -136,13 +137,17 @@ export interface BridgeStartOptions {
   voice?: TelegramVoiceDeps;
 }
 
-function bridgeConfig(): Pick<PPMBotConfig, "enabled" | "show_tool_calls" | "debounce_ms"> & { quiet_while_in_ppm: boolean } {
+function bridgeConfig(): Pick<PPMBotConfig, "enabled" | "show_tool_calls" | "debounce_ms">
+  & { quiet_while_in_ppm: boolean; card_reminders: boolean; card_reminder_minutes: number } {
   const c = configService.get("clawbot") as Partial<PPMBotConfig> | undefined;
+  const reminders = cardReminderSettings();
   return {
     enabled: c?.enabled === true,
     show_tool_calls: c?.show_tool_calls !== false,
     debounce_ms: typeof c?.debounce_ms === "number" ? c.debounce_ms : 2000,
     quiet_while_in_ppm: quietWhileInPpm(),
+    card_reminders: reminders.enabled,
+    card_reminder_minutes: reminders.minutes,
   };
 }
 

@@ -1755,9 +1755,17 @@ typed in PPM, or a PPM tab saw real input (`presence-tracker.ts`), within `QUIET
 
 A card that waits on a decision and went out silently (a session's approval or question, a
 watched or manager chat's, a manager's `needs_decision`, a `db_execute` approval notice) gets
-**one** reminder with a sound, as a reply to the card, if it still waits 5 minutes later
-(`CardReminders`, on the Assistant clock). Quiet hours win: a reminder due inside them is not sent,
-and what quiet hours hold is held as before. The switch is changed in Settings, by `/quiet` on the
+**one** reminder with a sound if it still waits `clawbot.card_reminder_minutes` later (5 by
+default; `CardReminders` in `assistant-telegram-card-reminders.ts`, on the Assistant clock). Cards
+of one Telegram chat coming due within 3 minutes of each other (never more than half the delay early) share one message, a line per card
+(project · title, a link into PPM when PPM has a public https address); a single card keeps the
+reply to the card itself. A card is reminded about once, ever. Quiet hours hold the reminder and,
+once they end, one message lists whatever still waits (nothing is sent if every card was answered
+or withdrawn meanwhile). `clawbot.card_reminders` turns reminders off (Settings → PPM Assistant →
+Telegram, or `settings_set assistant.telegram.card_reminders`); the delay is
+`assistant.telegram.card_reminder_minutes` (1–240). A reminder whose `sendMessage` times out is not
+sent again: it may have arrived (`assistant-telegram-send-queue.ts` sends any message again at most
+once after a timeout, after 30 s, and a reminder never). The quiet switch is changed in Settings, by `/quiet` on the
 phone or by the bell in the Assistant window; each change goes out as
 `assistant:telegram_quiet_changed` on `/ws/global`, so the three stay in step. Off, everything goes
 out with a sound as it did before. Reminders live in memory: a restart drops them, as it drops the

@@ -12,6 +12,13 @@
  *   a streaming answer) gives up after two minutes; the final one carries its text anyway.
  * - **Coalescing**: a task queued under the key of one still waiting replaces it, so a burst of
  *   streamed text becomes one edit with the newest text, not a backlog of stale ones.
+ * - **A send that may have arrived is not repeated blindly.** A `sendMessage` that times out has
+ *   often reached Telegram anyway (only the answer was lost), and the Bot API cannot be asked
+ *   whether it did. Retrying on every timeout once delivered one reminder five times while Telegram
+ *   was answering slowly. So a message is sent again at most once after such a failure, and only
+ *   after {@link MAYBE_SENT_RESEND_MS}; a message whose loss costs little (`ifMaybeSent: "drop"`,
+ *   such as a reminder) is not sent again at all. A card can therefore arrive twice, never more:
+ *   a card that never arrives would leave a decision waiting with nobody told.
  */
 import type { TelegramBotClient, TelegramCallResult, TelegramEditResult } from "../telegram/telegram-bot-client.ts";
 import type { InlineKeyboardMarkup, TelegramMessage } from "../telegram/telegram-types.ts";
@@ -38,6 +45,8 @@ export const DRAFT_DEADLINE_MS = 2 * 60_000;
 /** The client spaces edits of one message by this much; a skipped edit is tried again after it. */
 export const EDIT_INTERVAL_MS = 1000;
 const MAX_BACKOFF_MS = 30_000;
+/** Wait before the one resend of a message that may already have arrived: Telegram was struggling. */
+export const MAYBE_SENT_RESEND_MS = 30_000;
 
 /** What one Bot API answer means for the task that made the call. */
 export function outcomeOf(res: TelegramCallResult<unknown> | TelegramEditResult, attempts: number): TaskOutcome {
@@ -199,12 +208,20 @@ export function sendMessageTask(
   opts: {
     label: string; final?: boolean; key?: string;
     silent?: boolean | (() => boolean);
+    /**
+     * After a send that may have reached Telegram (it timed out): `resend-once` (default) sends it
+     * once more after {@link MAYBE_SENT_RESEND_MS}, so it arrives at most twice; `drop` gives up, for
+     * a message where a duplicate is worse than none.
+     */
+    ifMaybeSent?: "resend-once" | "drop";
     onSent?: (sent: TelegramMessage, info: SentInfo) => void;
     onDropped?: (why: string) => void;
   },
 ): SendTask {
   let attempts = 0;
   let silent: boolean | null = null;
+  /** A send already failed in a way that may have delivered it. */
+  let maybeDelivered = false;
   return {
     label: opts.label,
     final: opts.final ?? true,
@@ -223,6 +240,14 @@ export function sendMessageTask(
       if (res.ok) {
         queue.noteSent(chatId);
         opts.onSent?.(res.result, { silent });
+      }
+      if (!res.ok && "maybeSent" in res && res.maybeSent) {
+        if (maybeDelivered || opts.ifMaybeSent === "drop") {
+          return { kind: "failed", why: `Telegram did not answer (${res.description}); it may have arrived, so it is not sent again` };
+        }
+        maybeDelivered = true;
+        log.info(`${opts.label}: Telegram did not answer (${res.description}); sending it once more in ${MAYBE_SENT_RESEND_MS / 1000}s, it may arrive twice`);
+        return { kind: "retry", afterMs: MAYBE_SENT_RESEND_MS, why: res.description };
       }
       return outcomeOf(res, attempts);
     },

@@ -39,21 +39,21 @@ beforeEach(() => {
 });
 
 describe("GET/PUT /api/settings/clawbot", () => {
-  it("answers the four settings only, whatever an old PPMBot row holds", async () => {
+  it("answers the six settings only, whatever an old PPMBot row holds", async () => {
     configService.set("clawbot", {
       enabled: false, default_provider: "codex", system_prompt: "", show_tool_calls: false, show_thinking: true,
       permission_mode: "bypassPermissions", debounce_ms: 900,
     } as never);
     const res = await call("GET", "/api/settings/clawbot");
-    expect(res.json.data).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 900, quiet_while_in_ppm: true });
+    expect(res.json.data).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 900, quiet_while_in_ppm: true, card_reminders: true, card_reminder_minutes: 5 });
   });
 
   it("saves a subset, ignores PPMBot's old fields, and stores nothing else", async () => {
     configService.set("clawbot", { enabled: false, show_tool_calls: true, debounce_ms: 2000 });
     const res = await call("PUT", "/api/settings/clawbot", { debounce_ms: 500, permission_mode: "bypassPermissions", default_provider: "x", show_thinking: true });
     expect(res.status).toBe(200);
-    expect(res.json.data).toEqual({ enabled: false, show_tool_calls: true, debounce_ms: 500, quiet_while_in_ppm: true });
-    expect(configService.get("clawbot")).toEqual({ enabled: false, show_tool_calls: true, debounce_ms: 500, quiet_while_in_ppm: true });
+    expect(res.json.data).toEqual({ enabled: false, show_tool_calls: true, debounce_ms: 500, quiet_while_in_ppm: true, card_reminders: true, card_reminder_minutes: 5 });
+    expect(configService.get("clawbot")).toEqual({ enabled: false, show_tool_calls: true, debounce_ms: 500, quiet_while_in_ppm: true, card_reminders: true, card_reminder_minutes: 5 });
   });
 
   it("refuses values of the wrong kind", async () => {
@@ -78,17 +78,30 @@ describe("GET/PUT /api/settings/clawbot", () => {
     configService.set("clawbot", { enabled: false, show_tool_calls: true, debounce_ms: 2000, system_prompt: "Be brief." } as never);
     await call("PUT", "/api/settings/clawbot", { show_tool_calls: false });
     expect(configService.get("assistant")!.instructions).toContain("Be brief.");
-    expect(configService.get("clawbot")).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 2000, quiet_while_in_ppm: true });
+    expect(configService.get("clawbot")).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 2000, quiet_while_in_ppm: true, card_reminders: true, card_reminder_minutes: 5 });
+  });
+
+  it("saves the card reminder switch and its delay, and refuses a delay out of range", async () => {
+    configService.set("clawbot", { enabled: false, show_tool_calls: false, debounce_ms: 700 });
+    const res = await call("PUT", "/api/settings/clawbot", { card_reminders: false, card_reminder_minutes: 30 });
+    expect(res.status).toBe(200);
+    expect(res.json.data).toMatchObject({ card_reminders: false, card_reminder_minutes: 30 });
+    expect(configService.get("clawbot")).toMatchObject({ card_reminders: false, card_reminder_minutes: 30 });
+    for (const bad of [0, 241, 2.5, "10"]) {
+      expect((await call("PUT", "/api/settings/clawbot", { card_reminder_minutes: bad })).status).toBe(400);
+    }
+    expect((await call("PUT", "/api/settings/clawbot", { card_reminders: "no" })).status).toBe(400);
+    expect(configService.get("clawbot")).toMatchObject({ card_reminders: false, card_reminder_minutes: 30 });
   });
 
   it("turns \"quiet while I'm at PPM\" off and on, keeping the other settings", async () => {
     configService.set("clawbot", { enabled: false, show_tool_calls: false, debounce_ms: 700 });
     const off = await call("PUT", "/api/settings/clawbot", { quiet_while_in_ppm: false });
-    expect(off.json.data).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 700, quiet_while_in_ppm: false });
+    expect(off.json.data).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 700, quiet_while_in_ppm: false, card_reminders: true, card_reminder_minutes: 5 });
     expect((await call("GET", "/api/settings/clawbot")).json.data.quiet_while_in_ppm).toBe(false);
     const on = await call("PUT", "/api/settings/clawbot", { quiet_while_in_ppm: true });
     expect(on.json.data.quiet_while_in_ppm).toBe(true);
-    expect(configService.get("clawbot")).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 700, quiet_while_in_ppm: true });
+    expect(configService.get("clawbot")).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 700, quiet_while_in_ppm: true, card_reminders: true, card_reminder_minutes: 5 });
   });
 });
 

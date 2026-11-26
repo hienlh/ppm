@@ -10,4 +10,4 @@ export const QUIET_SWITCH_LABEL = "Quiet while I'm at PPM";
 
 export const QUIET_SWITCH_NOTE =
   "While you use PPM (or typed there in the last 5 minutes), messages on Telegram arrive without a sound. "
-  + "A card left unanswered for 5 minutes is sent once more with a sound. Quiet hours still apply.";
+  + "A card left unanswered gets one reminder with a sound (see below). Quiet hours still apply.";

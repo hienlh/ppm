@@ -277,6 +277,8 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
           this.deps.reminders?.schedule({
             chatId, messageId: sent.message_id, label: `${card.kind} card`,
             stillWaiting: () => this.isOpen(card.id),
+            // The title is the manager's own text: a vault value in it is replaced here too.
+            project: card.projectName ?? null, title: turnSecretScrubber.scrub(card.title), url,
           });
         }
       },

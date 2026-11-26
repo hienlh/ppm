@@ -51,6 +51,9 @@ export interface DescribedChat {
   title: string;
 }
 
+/** Told when a notice went out without a sound: which chat it named and the link to it. */
+type SilentSend = (chatId: string, messageId: number, about: { chat: DescribedChat; url: string | null }) => void;
+
 export interface DbNoticesDeps {
   queue: AssistantTelegramSendQueue;
   /** The link that opens a chat in PPM. */
@@ -226,10 +229,11 @@ export class AssistantTelegramDbNotices {
 
   /** The approval's notice waits on a decision: sent silently, it gets one reminder while the change still waits. */
   private sendApproval(p: Shown): void {
-    this.send(p.sessionId, "db approval", (chat) => approvalNoticeHtml(chat, p.input, p.expiresAt, this.quiet.clock.now()), (chatId, messageId) => {
+    this.send(p.sessionId, "db approval", (chat) => approvalNoticeHtml(chat, p.input, p.expiresAt, this.quiet.clock.now()), (chatId, messageId, about) => {
       this.deps.reminders?.schedule({
         chatId, messageId, label: "db approval",
         stillWaiting: () => this.quiet.stillWaiting(p.sessionId, p.requestId),
+        project: about.chat.project, title: `Database change from “${about.chat.title}”`, url: about.url,
       });
     });
   }
@@ -254,7 +258,7 @@ export class AssistantTelegramDbNotices {
   }
 
   private send(
-    sessionId: string, label: string, render: (chat: DescribedChat) => string, onSilentSend?: (chatId: string, messageId: number) => void,
+    sessionId: string, label: string, render: (chat: DescribedChat) => string, onSilentSend?: SilentSend,
     extraLinks?: () => Promise<{ label: string; url: string }[]>,
   ): void {
     let chats: string[];
@@ -265,7 +269,7 @@ export class AssistantTelegramDbNotices {
 
   private async deliver(
     chats: string[], asked: string, label: string, render: (chat: DescribedChat) => string,
-    onSilentSend?: (chatId: string, messageId: number) => void,
+    onSilentSend?: SilentSend,
     extraLinks?: () => Promise<{ label: string; url: string }[]>,
   ): Promise<void> {
     // Held through quiet hours, or sent just as Codex renamed the chat: name and link the chat as it is now.
@@ -289,7 +293,7 @@ export class AssistantTelegramDbNotices {
       }, {
         label,
         silent: () => this.deps.silence?.inPpm() ?? false,
-        ...(onSilentSend ? { onSent: (sent, info) => { if (info.silent) onSilentSend(chatId, sent.message_id); } } : {}),
+        ...(onSilentSend ? { onSent: (sent, info) => { if (info.silent) onSilentSend(chatId, sent.message_id, { chat, url }); } } : {}),
       }));
     }
   }
