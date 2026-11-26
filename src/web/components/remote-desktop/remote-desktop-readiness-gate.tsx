@@ -48,7 +48,8 @@ export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktop
         ? children
         : <Checklist caps={caps} failed={failed} onCancel={onCancel} onAccept={() => setAccepted(true)} runHostAction={runHostAction} />}
       {rescue.rescue && (
-        <div className="pointer-events-none absolute inset-x-0 top-2 z-30 flex justify-center px-4">
+        // Above the viewer's toolbar (z-40): for five minutes this is the one thing that matters.
+        <div className="pointer-events-none absolute inset-x-0 top-2 z-50 flex justify-center px-4">
           <RescueBar rescue={rescue.rescue} now={Date.now()} onConfirm={rescue.confirm} />
         </div>
       )}

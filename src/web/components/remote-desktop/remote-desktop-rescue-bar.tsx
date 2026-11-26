@@ -11,6 +11,8 @@ import { Loader2, ShieldCheck } from "@/lib/icons";
 import { TEXT_BUTTON } from "@/lib/control-size";
 import type { RescueState } from "./use-headless-rescue";
 
+export const STALE_AFTER_MS = 3 * 60_000;
+
 export function formatRescueTime(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
@@ -23,6 +25,9 @@ export function RescueBar({ rescue, now, onConfirm }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const due = now >= rescue.deadlineMs;
+  // The task should take its record down within a minute of the deadline. Still there well after
+  // means it failed, and without a button the bar would stay for good.
+  const stale = now >= rescue.deadlineMs + STALE_AFTER_MS;
 
   const confirm = async () => {
     setBusy(true);
@@ -41,13 +46,15 @@ export function RescueBar({ rescue, now, onConfirm }: {
     >
       <ShieldCheck className="hidden size-4 shrink-0 text-amber-300 md:block" />
       <p className="min-w-0 flex-1 leading-relaxed">
-        {due
-          ? "Safety net is running: Windows is making sure the session at this PC has a screen."
-          : <>Safety net: unless you confirm by <strong>{formatRescueTime(rescue.deadlineMs)}</strong>, Windows turns the
-            virtual display on for the session at this PC. It never signs you out.</>}
+        {stale
+          ? "The safety net did not report back. Its log is in Settings → Remote Desktop. Dismissing still makes sure the session at this PC has a screen."
+          : due
+            ? "Safety net is running: Windows is making sure the session at this PC has a screen."
+            : <>Safety net: unless you confirm by <strong>{formatRescueTime(rescue.deadlineMs)}</strong>, Windows turns the
+              virtual display on for the session at this PC. It never signs you out.</>}
         {error && <span className="mt-1 block text-red-300" role="alert">{error}</span>}
       </p>
-      {!due && (
+      {(!due || stale) && (
         <button
           type="button"
           disabled={busy}
@@ -56,7 +63,7 @@ export function RescueBar({ rescue, now, onConfirm }: {
           data-testid="remote-desktop-rescue-confirm"
         >
           {busy && <Loader2 className="size-3.5 animate-spin" />}
-          I can still reach this PC
+          {stale ? "Dismiss" : "I can still reach this PC"}
         </button>
       )}
     </div>

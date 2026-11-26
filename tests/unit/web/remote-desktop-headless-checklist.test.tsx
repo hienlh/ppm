@@ -113,6 +113,18 @@ describe("the safety net bar", () => {
     expect(view.container.querySelector('[data-testid="remote-desktop-rescue-bar"]')).toBeNull();
   });
 
+  it("offers Dismiss for a record the safety net never took down, so the bar cannot stay for good", async () => {
+    spies.push(routedGet(() => ({ action: "Reattach", armedMs: 0, deadlineMs: Date.now() - 4 * 60_000 })));
+    const post = spyOn(api, "post").mockResolvedValue({ ok: true, message: "" } as never);
+    spies.push(post);
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    await settle();
+    const button = view.container.querySelector('[data-testid="remote-desktop-rescue-confirm"]');
+    expect(button?.textContent).toContain("Dismiss");
+    await click(button);
+    expect(post).toHaveBeenCalledWith("/api/remote-desktop/headless-helper/confirm");
+  });
+
   it("says what is happening once the deadline has passed, with no button to press", async () => {
     spies.push(routedGet(() => ({ action: "Reattach", armedMs: 0, deadlineMs: Date.now() - 1000 })));
     view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
