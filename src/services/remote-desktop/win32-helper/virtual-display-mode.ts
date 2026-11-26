@@ -4,8 +4,13 @@
  * Measured on a headless Windows 11 host: the driver's modes are 800x600, 1366x768, 1920x1080,
  * 2560x1440 and 3840x2160, and Windows picks the first one — the session came up at 800x600@30.
  * Changing a display mode is an ordinary user call (`ChangeDisplaySettingsExW`), so PPM does it
- * itself right after the SYSTEM task enables the device; `CDS_UPDATEREGISTRY` makes Windows keep
- * it for the next time the device is enabled.
+ * itself right after the SYSTEM task enables the device.
+ *
+ * The change is dynamic only (`MODE_CHANGE_FLAGS` = 0): nothing is written to the registry, so it
+ * lasts until the device is turned off and PPM sets it again on every turn-on. It used to pass
+ * `CDS_UPDATEREGISTRY`, which leaves a saved display configuration behind that outlives the
+ * session and a restart — not something to leave on a PC that may have no one at it while it was
+ * still unproven which change locked that PC out.
  *
  * `bun:ffi` is required lazily and only on win32.
  */
@@ -37,7 +42,8 @@ const DM = { size: 68, fields: 72, width: 172, height: 176, frequency: 184 } as 
 const DM_PELSWIDTH = 0x80000, DM_PELSHEIGHT = 0x100000, DM_DISPLAYFREQUENCY = 0x400000;
 const DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x1;
 const ENUM_CURRENT_SETTINGS = -1;
-const CDS_UPDATEREGISTRY = 0x1;
+/** `ChangeDisplaySettingsExW` flags: 0 = change now, save nothing. */
+export const MODE_CHANGE_FLAGS = 0;
 
 function wide(text: string): Uint16Array {
   const out = new Uint16Array(text.length + 1);
@@ -101,7 +107,7 @@ export function applyVirtualDisplayMode(): boolean {
     view.setUint32(DM.height, target.height, true);
     view.setUint32(DM.frequency, target.refresh, true);
     view.setUint32(DM.fields, DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY, true);
-    const result = user32.ChangeDisplaySettingsExW(ffi.ptr(name), ffi.ptr(dm), null, CDS_UPDATEREGISTRY, null);
+    const result = user32.ChangeDisplaySettingsExW(ffi.ptr(name), ffi.ptr(dm), null, MODE_CHANGE_FLAGS, null);
     log.info(`virtual display mode ${device} -> ${target.width}x${target.height}@${target.refresh}: result=${result}`);
     return result === 0;
   } catch (e) {

@@ -9,7 +9,8 @@ import { isAscii } from "../../../../src/services/remote-desktop/win32-helper/po
 import {
   GRACE_MS, IDLE_MS, RETRY_MS, VirtualDisplayLease, type LeaseDeps,
 } from "../../../../src/services/remote-desktop/win32-helper/virtual-display-lease.ts";
-import { chooseVirtualDisplayMode } from "../../../../src/services/remote-desktop/win32-helper/virtual-display-mode.ts";
+import { chooseVirtualDisplayMode, MODE_CHANGE_FLAGS } from "../../../../src/services/remote-desktop/win32-helper/virtual-display-mode.ts";
+import { readFileSync } from "node:fs";
 
 describe("pinned driver", () => {
   it("pins one release by URL, zip hash and every file's hash", () => {
@@ -186,6 +187,12 @@ describe("virtual display mode", () => {
   ];
   it("picks 1920x1080 at the highest refresh up to 60 Hz (Windows starts it at 800x600)", () => {
     expect(chooseVirtualDisplayMode(modes)).toEqual({ width: 1920, height: 1080, refresh: 60 });
+  });
+  it("changes the mode for now only and saves nothing in the registry", () => {
+    expect(MODE_CHANGE_FLAGS).toBe(0);
+    const source = readFileSync(new URL("../../../../src/services/remote-desktop/win32-helper/virtual-display-mode.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/CDS_UPDATEREGISTRY\s*=/);
+    expect(source).toMatch(/ChangeDisplaySettingsExW\([^;]*MODE_CHANGE_FLAGS, null\)/);
   });
   it("falls back to the largest mode that fits, never a bigger one", () => {
     expect(chooseVirtualDisplayMode(modes.filter((m) => m.width !== 1920))).toEqual({ width: 1366, height: 768, refresh: 60 });
