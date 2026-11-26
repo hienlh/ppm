@@ -273,6 +273,17 @@ describe("headless helper routes: the safety net", () => {
     expect(win.calls).toEqual([]);
   });
 
+  it("status checks only the tasks PPM starts: Rescue is not readable by the PPM user", async () => {
+    auth(true);
+    markInstalled();
+    win.tasks.delete(taskName("Rescue"));
+    const res = await remoteDesktopRoutes.request("http://localhost/headless-helper");
+    expect(await res.json()).toMatchObject({ data: { usable: true } });
+    const queried = win.calls.filter((c) => c[1] === "/query").map((c) => c[3]);
+    expect(queried).not.toContain(taskName("Rescue"));
+    expect(queried).toContain(taskName("Confirm"));
+  });
+
   it("there is no way to start Rescue from PPM", async () => {
     auth(true);
     markInstalled();

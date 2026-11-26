@@ -9,9 +9,10 @@ import { VIRTUAL_DISPLAY_SAFETY } from "../../../../src/services/remote-desktop/
 import { DISPLAY_OFF_ACTION, DISPLAY_ON_ACTION } from "../../../../src/services/remote-desktop/win32-helper/vdd-scripts.ts";
 import { REATTACH_ACTION, STATE_FILES } from "../../../../src/services/remote-desktop/win32-helper/helper-script.ts";
 import { CONFIRM_ACTION, RESCUE_ACTION, RESCUE_WINDOW } from "../../../../src/services/remote-desktop/win32-helper/rescue-script.ts";
-import { RESCUE_MINUTES } from "../../../../src/services/remote-desktop/win32-helper/helper-paths.ts";
+import { RATE_LIMITS, RATE_WINDOW_MINUTES, RESCUE_MINUTES } from "../../../../src/services/remote-desktop/win32-helper/helper-paths.ts";
+import { RATE_LIMIT } from "../../../../src/services/remote-desktop/win32-helper/rate-limit-script.ts";
 
-const DISPLAY = [STATE_FILES, VIRTUAL_DISPLAY_SAFETY, RESCUE_WINDOW, DISPLAY_ON_ACTION.body, DISPLAY_OFF_ACTION.body];
+const DISPLAY = [STATE_FILES, VIRTUAL_DISPLAY_SAFETY, RESCUE_WINDOW, RATE_LIMIT, DISPLAY_ON_ACTION.body, DISPLAY_OFF_ACTION.body];
 const ALL = [...DISPLAY, REATTACH_ACTION.body, CONFIRM_ACTION.body, RESCUE_ACTION.body];
 const T = 60_000;
 
@@ -158,4 +159,58 @@ describe.if(process.platform === "win32")("Confirm and Rescue", () => {
   it("never signs anyone out and never moves a session", () => {
     expect(RESCUE_ACTION.body).not.toMatch(/logoff|logout|tscon|Invoke-Tscon|ExitWindows|shutdown|Disable-PnpDevice/i);
   });
+});
+
+/** `recent-changes.json` with `count` changes in `group`, `ageMs` ago. */
+function recentChanges(group: keyof typeof RATE_LIMITS, count: number, ageMs = 60_000): string {
+  const at = Date.now() - ageMs;
+  return JSON.stringify({ reattach: [], display: [], [group]: Array.from({ length: count }, (_, i) => at + i) });
+}
+
+describe.if(process.platform === "win32")("a cap on how often SYSTEM changes anything", () => {
+  it("refuses a fourth Reattach within the window, before arming or moving anything", async () => {
+    const r = await runHelperScenario({
+      pieces: ALL, setup: SESSION_2_DISCONNECTED, call: "Invoke-Reattach",
+      stateFiles: { "recent-changes.json": recentChanges("reattach", RATE_LIMITS.reattach) },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.message).toStartWith("Refused:");
+    expect(r.message).toContain(`${RATE_WINDOW_MINUTES} minutes`);
+    expect(r.calls).toEqual([]);
+  }, T);
+
+  it("counts only changes inside the window", async () => {
+    const r = await runHelperScenario({
+      pieces: ALL, setup: SESSION_2_DISCONNECTED, call: "Invoke-Reattach",
+      stateFiles: { "recent-changes.json": recentChanges("reattach", RATE_LIMITS.reattach, (RATE_WINDOW_MINUTES + 1) * 60_000) },
+    });
+    expect(r.ok).toBe(true);
+    // The old entries fell out; the new one is recorded.
+    expect(JSON.parse(r.state["recent-changes.json"]!).reattach).toHaveLength(1);
+  }, T);
+
+  it("records a real change, and only a real change", async () => {
+    const done = await runHelperScenario({ pieces: ALL, setup: SESSION_2_DISCONNECTED, call: "Invoke-Reattach" });
+    expect(JSON.parse(done.state["recent-changes.json"]!)).toMatchObject({ reattach: [expect.any(Number)], display: [] });
+    const kept = await runHelperScenario({ pieces: ALL, setup: `$global:ConsoleSession = 2; $global:Monitors = @(${VIRTUAL})`, call: "Invoke-DisplayOff" });
+    expect(kept.state["recent-changes.json"]).toBeUndefined();
+  }, T);
+
+  it("caps switching the virtual display, on and off together", async () => {
+    const files = { "recent-changes.json": recentChanges("display", RATE_LIMITS.display) };
+    const on = await runHelperScenario({ pieces: ALL, call: "Invoke-DisplayOn", stateFiles: files });
+    expect(on.ok).toBe(false);
+    expect(on.calls).toEqual([]);
+    const off = await runHelperScenario({ pieces: ALL, setup: `$global:Monitors = @(${PHYSICAL})`, call: "Invoke-DisplayOff", stateFiles: files });
+    expect(off.ok).toBe(false);
+    expect(off.calls).toEqual([]);
+  }, T);
+
+  it("never caps the safety net", async () => {
+    const r = await runHelperScenario({
+      pieces: ALL, setup: "$global:ConsoleSession = 2", call: "Invoke-Rescue",
+      stateFiles: { "recent-changes.json": recentChanges("display", 50), "rescue.json": armedFile(Date.now() - 1000) },
+    });
+    expect(r.calls).toEqual(["enable ROOT\\DISPLAY\\0000", "clear-trigger"]);
+  }, T);
 });

@@ -19,7 +19,12 @@ export function HeadlessHelperConfirm({ onConfirm, onCancel }: { onConfirm: () =
       <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
         <li>A small script in <code>Program Files\PPM\RemoteDesktopHelper</code> that only administrators can change.</li>
         <li>Scheduled tasks under <code>\PPM-RemoteDesktop</code> that run that script as SYSTEM. They take no input,
-          only your Windows user can start them, and they only ever act on your own session.</li>
+          only your Windows user can start them, they only ever move your own session, and they make at most a few
+          changes per half hour.</li>
+        <li>A safety net: after PPM brings your session back or turns the virtual display on, you have 5 minutes to
+          confirm you can still reach the PC. If you don&apos;t, Windows turns the virtual display on for the session at
+          the PC&apos;s screen. It never signs you out. PPM also never turns the virtual display off while it is the
+          only screen of someone signed in at the PC.</li>
         <li>A virtual display driver (Virtual Display Driver 25.7.23, MIT, signed by SignPath Foundation). PPM checks its
           signature and the hash of every file before installing it, leaves it off, and turns it on only while a Remote
           Desktop session needs a screen. Windows may ask once more whether to trust the publisher.</li>

@@ -12,7 +12,7 @@
  *   0 done · 10 a staged payload did not match its hash · 20 the install itself failed (its
  *   message is in `state\install-result.json` when the state folder exists).
  */
-import { HELPER_VERSION, TASK_FOLDER_NAME, type HelperAction } from "./helper-paths.ts";
+import { HELPER_VERSION, PPM_HELPER_ACTIONS, TASK_FOLDER_NAME, type HelperAction } from "./helper-paths.ts";
 import { isUserSid, psQuote } from "./powershell-text.ts";
 
 export const EXIT_OK = 0;
@@ -70,12 +70,20 @@ export interface InstallScriptOptions {
   extraSteps?: string;
 }
 
+/** SYSTEM and Administrators only: nobody else can read, start, change or delete the task. */
+export const SYSTEM_ONLY_SDDL = "D:P(A;;FA;;;SY)(A;;FA;;;BA)";
+
+/** The tasks PPM itself starts also give the PPM user read + execute — and only that user. */
+export function userTaskSddl(userSid: string): string {
+  if (!isUserSid(userSid)) throw new Error("refusing a non-user SID");
+  return `${SYSTEM_ONLY_SDDL}(A;;GRGX;;;${userSid})`;
+}
+
 export function buildInstallScript(opts: InstallScriptOptions): string {
   if (!isUserSid(opts.userSid)) throw new Error("refusing to install for a non-user SID");
   const actions = opts.actions.map(psQuote).join(", ");
-  // Read + execute for the PPM user only. No other user can start these tasks, and no
-  // ordinary user can change or delete them.
-  const taskSddl = `D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;${opts.userSid})`;
+  // Only what PPM starts is startable by its user; `Rescue` runs from its own trigger alone.
+  const userActions = opts.actions.filter((a) => (PPM_HELPER_ACTIONS as readonly string[]).includes(a)).map(psQuote).join(", ");
   return `# PPM Remote Desktop helper installer v${HELPER_VERSION}. Runs elevated, from bytes the bootstrap verified.
 ${PRELUDE}
 $UserSid = ${psQuote(opts.userSid)}
@@ -98,7 +106,9 @@ foreach ($action in @(${actions})) {
   # StartWhenAvailable: the safety net's one-time trigger still runs if the PC slept through it.
   $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
   Register-ScheduledTask -TaskName $action -TaskPath $TaskPath -Action $taskAction -Principal $principal -Settings $settings -Force | Out-Null
-  $service.GetFolder($TaskPath.TrimEnd('\\')).GetTask($action).SetSecurityDescriptor(${psQuote(taskSddl)}, 0)
+  $sddl = ${psQuote(SYSTEM_ONLY_SDDL)}
+  if (@(${userActions}) -contains $action) { $sddl = ${psQuote(userTaskSddl(opts.userSid))} }
+  $service.GetFolder($TaskPath.TrimEnd('\\')).GetTask($action).SetSecurityDescriptor($sddl, 0)
 }
 $record = @{ version = ${HELPER_VERSION}; userSid = $UserSid; actions = @(${actions}); installedAt = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress
 Write-AsciiFile (Join-Path $StateDir 'install.json') $record

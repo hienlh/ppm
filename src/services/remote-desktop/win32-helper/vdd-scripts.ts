@@ -22,6 +22,7 @@ import {
 } from "./vdd-catalog.ts";
 
 import { FIND_DEVICES, KEPT_ON_MESSAGE } from "./virtual-display-safety-script.ts";
+import { RATE_LIMITS } from "./helper-paths.ts";
 
 /** SetupAPI's root-device creation, as `devcon install` does it; PowerShell has no cmdlet. */
 export const CREATE_DEVICE_TYPE = `
@@ -153,6 +154,7 @@ if ($vddRecord -and -not $vddRecord.preexisting) {
 }
 
 const NOT_INSTALLED = psQuote("The virtual display driver is not installed.");
+const SWITCHED = psQuote("the virtual display was switched on or off");
 
 export const DISPLAY_ON_ACTION: HelperActionScript = {
   action: "DisplayOn",
@@ -161,9 +163,12 @@ export const DISPLAY_ON_ACTION: HelperActionScript = {
 function Invoke-DisplayOn {
   $devices = ${FIND_DEVICES}
   if ($devices.Count -eq 0) { return @($false, ${NOT_INSTALLED}) }
+  $allowed = Test-ChangeAllowed 'display' ${RATE_LIMITS.display} ${SWITCHED}
+  if (-not $allowed[0]) { return @($false, $allowed[1]) }
   # Safety net first (rescue-script.ts); no net, no change.
   Start-RescueWindow 'DisplayOn'
   foreach ($device in $devices) { Enable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
+  Add-Change 'display'
   return @($true, 'The virtual display is on.')
 }
 `,
@@ -179,7 +184,10 @@ function Invoke-DisplayOff {
   $devices = ${FIND_DEVICES}
   if ($devices.Count -eq 0) { return @($false, ${NOT_INSTALLED}) }
   if (Test-VirtualDisplayNeeded) { return @($false, ${psQuote(KEPT_ON_MESSAGE)}) }
+  $allowed = Test-ChangeAllowed 'display' ${RATE_LIMITS.display} ${SWITCHED}
+  if (-not $allowed[0]) { return @($false, $allowed[1]) }
   foreach ($device in $devices) { Disable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false }
+  Add-Change 'display'
   return @($true, 'The virtual display is off.')
 }
 `,

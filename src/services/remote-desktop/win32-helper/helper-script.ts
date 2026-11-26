@@ -18,7 +18,8 @@
  * Plain ASCII, no backticks: Windows PowerShell 5.1 reads a BOM-less file in the system code
  * page, and a backtick would end this TypeScript template.
  */
-import { HELPER_VERSION, type HelperAction } from "./helper-paths.ts";
+import { HELPER_VERSION, RATE_LIMITS, type HelperAction } from "./helper-paths.ts";
+import { RATE_LIMIT } from "./rate-limit-script.ts";
 import { isUserSid, psQuote } from "./powershell-text.ts";
 import { VIRTUAL_DISPLAY_SAFETY } from "./virtual-display-safety-script.ts";
 import { RESCUE_WINDOW } from "./rescue-script.ts";
@@ -148,6 +149,8 @@ function Invoke-Reattach {
   }
   if ($disconnected.Count -gt 1) { return @($false, 'The PPM user has more than one disconnected session; not choosing one.') }
   $id = $disconnected[0].Id
+  $allowed = Test-ChangeAllowed 'reattach' ${RATE_LIMITS.reattach} 'the session was brought back'
+  if (-not $allowed[0]) { return @($false, $allowed[1]) }
   # The safety net goes up before the session moves: if it cannot, the session stays where it is.
   Start-RescueWindow 'Reattach'
   $code = Invoke-Tscon $id
@@ -156,6 +159,7 @@ function Invoke-Reattach {
     if ($code -eq -1) { return @($false, 'tscon.exe is not available on this edition of Windows.') }
     return @($false, ('tscon failed with exit code ' + $code + ' for session ' + $id + '.'))
   }
+  Add-Change 'reattach'
   return @($true, ('Session ' + $id + ' is back on the PC screen.'))
 }
 `,
@@ -188,6 +192,7 @@ function Write-HelperState([bool]$Ok, [string]$Message) {
 ${WTS_SESSION_LOOKUP}
 ${VIRTUAL_DISPLAY_SAFETY}
 ${RESCUE_WINDOW}
+${RATE_LIMIT}
 ${actions.map((a) => a.body).join("\n")}
 try {
   switch ($Action) {

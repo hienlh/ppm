@@ -9,11 +9,11 @@ import {
   buildHelperScript, REATTACH_ACTION, WTS_SESSION_LOOKUP,
 } from "../../../../src/services/remote-desktop/win32-helper/helper-script.ts";
 import { readWindowsSession } from "../../../../src/services/remote-desktop/remote-desktop-win32-session.ts";
-import { whoamiExe } from "../../../../src/services/remote-desktop/win32-helper/helper-paths.ts";
+import { HELPER_ACTIONS, whoamiExe } from "../../../../src/services/remote-desktop/win32-helper/helper-paths.ts";
 import { helperInstallPlan } from "../../../../src/services/remote-desktop/win32-helper/helper-install-plan.ts";
 import { CREATE_DEVICE_TYPE } from "../../../../src/services/remote-desktop/win32-helper/vdd-scripts.ts";
 import {
-  buildBootstrap, buildElevationLauncher, buildInstallScript, buildUninstallScript,
+  buildBootstrap, buildElevationLauncher, buildInstallScript, buildUninstallScript, SYSTEM_ONLY_SDDL, userTaskSddl,
 } from "../../../../src/services/remote-desktop/win32-helper/install-script.ts";
 
 const SID = "S-1-5-21-1111111111-2222222222-3333333333-1001";
@@ -87,6 +87,15 @@ describe("install.ps1 / uninstall.ps1", () => {
     expect(install).toContain(`'D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;${SID})'`);
     expect(install).toContain("-UserId 'S-1-5-18'");
     expect(install).toContain("-MultipleInstances IgnoreNew");
+  });
+
+  it("lets the PPM user start only what PPM starts; the safety net is SYSTEM's alone", () => {
+    const full = buildInstallScript({ userSid: SID, actions: [...HELPER_ACTIONS] });
+    expect(full).toContain(`$sddl = '${SYSTEM_ONLY_SDDL}'`);
+    expect(full).toContain("if (@('Reattach', 'DisplayOn', 'DisplayOff', 'Confirm') -contains $action)");
+    expect(userTaskSddl(SID)).toBe(`D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;${SID})`);
+    expect(SYSTEM_ONLY_SDDL).not.toContain("S-1-5-21");
+    expect(() => userTaskSddl("S-1-1-0")).toThrow();
   });
 
   it("runs PowerShell by absolute path with a fixed command line", () => {

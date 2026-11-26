@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { createLogger } from "../../logger.ts";
 import {
-  helperPaths, HELPER_VERSION, powershellExe, schtasksExe, taskName, whoamiExe, type HelperAction, type PpmHelperAction,
+  helperPaths, HELPER_VERSION, powershellExe, PPM_HELPER_ACTIONS, schtasksExe, taskName, whoamiExe, type HelperAction, type PpmHelperAction,
 } from "./helper-paths.ts";
 import { helperSystem, type HelperSystem } from "./helper-system.ts";
 import {
@@ -103,7 +103,9 @@ export async function getHelperStatus(force = false): Promise<HelperStatus> {
   const plan = helperInstallPlan();
   let tasksPresent = false;
   if (installed && !otherUser && !outdated) {
-    tasksPresent = (await Promise.all(plan.actions.map((a) => taskExists(sys, a)))).every(Boolean);
+    // Only the tasks PPM starts: `Rescue` is not even readable by this user, by design.
+    const mine = plan.actions.filter((a): a is PpmHelperAction => (PPM_HELPER_ACTIONS as readonly string[]).includes(a));
+    tasksPresent = (await Promise.all(mine.map((a) => taskExists(sys, a)))).every(Boolean);
   }
   const status: HelperStatus = {
     supported: true,
