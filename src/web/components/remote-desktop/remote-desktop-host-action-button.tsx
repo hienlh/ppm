@@ -2,7 +2,8 @@
  * A checklist button that asks the *host* to do something (show a macOS permission prompt, run
  * the Windows helper's task). Some of these take seconds — bringing a Windows session back waits
  * for the helper's answer — so the button shows it is working and then says what happened,
- * instead of leaving the user to guess from the next poll.
+ * instead of leaving the user to guess from the next poll. When the host never answered, it says
+ * so in a neutral colour: the task may still have worked, and the checklist re-reads the truth.
  */
 import { useState } from "react";
 import { Loader2 } from "@/lib/icons";
@@ -29,7 +30,11 @@ export function HostActionButton({ className, label, run }: {
         {label}
       </button>
       {result?.message && (
-        <p role={result.ok ? "status" : "alert"} className={`text-xs ${result.ok ? "text-emerald-300" : "text-red-300"}`}>
+        <p
+          role={result.ok || result.pending ? "status" : "alert"}
+          className={`text-xs ${result.ok ? "text-emerald-300" : result.pending ? "text-white/70" : "text-red-300"}`}
+          data-result={result.ok ? "ok" : result.pending ? "pending" : "failed"}
+        >
           {result.message}
         </p>
       )}

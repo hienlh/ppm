@@ -20,7 +20,7 @@ export function formatRescueTime(ms: number): string {
 export function RescueBar({ rescue, now, onConfirm }: {
   rescue: RescueState;
   now: number;
-  onConfirm: () => Promise<{ ok: boolean; message: string }>;
+  onConfirm: () => Promise<{ ok: boolean; message: string; pending?: boolean }>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +34,8 @@ export function RescueBar({ rescue, now, onConfirm }: {
     setError(null);
     try {
       const r = await onConfirm();
-      if (!r.ok) setError(r.message || "The PC did not answer.");
+      // `pending`: the PC has not answered yet; the bar goes away by itself once it does.
+      if (!r.ok && !r.pending) setError(r.message || "The PC did not answer.");
     } finally { setBusy(false); }
   };
 

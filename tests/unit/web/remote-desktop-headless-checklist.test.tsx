@@ -60,6 +60,20 @@ describe("Windows checklist rows", () => {
     expect(view.container.textContent).toContain("Session 2 is back on the PC screen.");
   });
 
+  it("a host that has not answered yet is 'not known', not a failure", async () => {
+    spies.push(spyOn(api, "get").mockResolvedValue(disconnectedCaps() as never));
+    spies.push(spyOn(api, "post").mockResolvedValue({ ok: false, pending: true, message: "The PC has not answered yet." } as never));
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    await settle();
+    const button = [...view.container.querySelectorAll("button")].find((b) => b.textContent?.includes("Bring session back"));
+    await click(button ?? null);
+    await settle();
+    const line = view.container.querySelector('[data-result]');
+    expect(line?.getAttribute("data-result")).toBe("pending");
+    expect(line?.getAttribute("role")).toBe("status");
+    expect(line?.className).not.toContain("text-red");
+  });
+
   it("uses the standard text-button size, not a 44px minimum", async () => {
     spies.push(spyOn(api, "get").mockResolvedValue(disconnectedCaps() as never));
     view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);

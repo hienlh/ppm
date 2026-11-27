@@ -22,10 +22,13 @@ export type RequirementAction =
  *  fixed tasks. */
 export type HostAction = "request" | "open-settings" | "reattach" | "display-on";
 
-/** What a host action reports back; `message` only for actions with a real outcome to tell. */
+/** What a host action reports back; `message` only for actions with a real outcome to tell.
+ *  `pending`: the host started it but has not said how it went — not a failure; the checklist's
+ *  own polling shows what really happened. */
 export interface HostActionResult {
   ok: boolean;
   message?: string;
+  pending?: boolean;
 }
 
 export interface RemoteDesktopRequirement {
@@ -135,6 +138,7 @@ export function normalizeCapabilities(raw: RemoteDesktopCapabilities): RemoteDes
 }
 
 export const READINESS_POLL_MS = 2000;
+export const PENDING_RECHECK_MS = 30_000;
 
 export function useRemoteDesktopReadiness(poll: boolean): {
   caps: RemoteDesktopCapabilities | null;
@@ -177,6 +181,9 @@ export function useRemoteDesktopReadiness(poll: boolean): {
       result = { ok: false, message: e instanceof Error ? e.message : String(e) };
     }
     refresh();
+    // Not answered yet: the host may still finish it (measured: 27 s). One more read once it
+    // likely has, on top of the gate's own polling, which stops as soon as the host looks ready.
+    if (result?.pending) setTimeout(refresh, PENDING_RECHECK_MS);
     return result;
   }, [refresh]);
 

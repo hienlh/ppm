@@ -82,7 +82,7 @@ describe("driver install steps", () => {
 });
 
 /** A lease with a hand-cranked clock: timers run only when the test says so. */
-function harness(markerInitially = false, offRefusals = 0) {
+function harness(markerInitially = false, offRefusals = 0, onPending: { late: Promise<{ ok: boolean; message: string } | null> } | null = null) {
   let marker = markerInitially;
   let refusalsLeft = offRefusals;
   const runs: string[] = [];
@@ -90,9 +90,11 @@ function harness(markerInitially = false, offRefusals = 0) {
   const deps: LeaseDeps = {
     run: async (action) => {
       runs.push(action);
+      if (action === "DisplayOn" && onPending) return { ok: false, pending: true, message: "not known yet" };
       if (action === "DisplayOff" && refusalsLeft > 0) { refusalsLeft--; return { ok: false, message: "Kept on: ..." }; }
       return { ok: true, message: "" };
     },
+    lateAnswer: () => onPending?.late ?? Promise.resolve(null),
     setMode: async () => { runs.push("setMode"); },
     readMarker: () => marker,
     writeMarker: (on) => { marker = on; },
@@ -148,6 +150,27 @@ describe("virtual display lease", () => {
     await h.fire();
     await h.lease.sweepOnStartup();
     expect(h.runs).toEqual([]);
+  });
+
+  it("a DisplayOn answered after the request stopped waiting is still recorded as PPM's", async () => {
+    let answer!: (r: { ok: boolean; message: string }) => void;
+    const h = harness(false, 0, { late: new Promise((resolve) => { answer = resolve; }) });
+    const result = await h.lease.turnOn();
+    expect(result.pending).toBe(true);
+    expect(h.marker()).toBe(false);
+    answer({ ok: true, message: "The virtual display is on." });
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(h.marker()).toBe(true);
+    expect(h.runs).toEqual(["DisplayOn", "setMode"]);
+    expect(h.timers.filter((t) => t.live).map((t) => t.ms)).toEqual([IDLE_MS]);
+  });
+
+  it("a DisplayOn that never answers records nothing", async () => {
+    const h = harness(false, 0, { late: Promise.resolve(null) });
+    await h.lease.turnOn();
+    await Promise.resolve(); await Promise.resolve();
+    expect(h.marker()).toBe(false);
+    expect(h.runs).toEqual(["DisplayOn"]);
   });
 
   it("keeps the marker when the helper keeps the display on, and asks again later", async () => {

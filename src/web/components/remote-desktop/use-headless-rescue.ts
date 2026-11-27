@@ -24,7 +24,7 @@ export function isRescueState(value: unknown): value is RescueState {
 export function useHeadlessRescue(enabled: boolean): {
   rescue: RescueState | null;
   refresh: () => void;
-  confirm: () => Promise<{ ok: boolean; message: string }>;
+  confirm: () => Promise<{ ok: boolean; message: string; pending?: boolean }>;
 } {
   const [rescue, setRescue] = useState<RescueState | null>(null);
   const [tick, setTick] = useState(0);
@@ -48,7 +48,7 @@ export function useHeadlessRescue(enabled: boolean): {
 
   const confirm = useCallback(async () => {
     try {
-      return await api.post<{ ok: boolean; message: string }>("/api/remote-desktop/headless-helper/confirm");
+      return await api.post<{ ok: boolean; message: string; pending?: boolean }>("/api/remote-desktop/headless-helper/confirm");
     } catch (e) {
       return { ok: false, message: e instanceof Error ? e.message : String(e) };
     } finally {

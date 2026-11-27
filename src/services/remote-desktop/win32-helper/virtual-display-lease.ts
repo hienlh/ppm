@@ -20,7 +20,7 @@
 import { join } from "node:path";
 import { createLogger } from "../../logger.ts";
 import { helperPaths } from "./helper-paths.ts";
-import { runHelperAction, type HelperRunResult } from "./helper-service.ts";
+import { lateHelperAnswer, runHelperAction, type HelperRunResult } from "./helper-service.ts";
 import { helperSystem } from "./helper-system.ts";
 import { parseJson } from "./helper-json.ts";
 import { applyVirtualDisplayMode } from "./virtual-display-mode.ts";
@@ -33,6 +33,8 @@ export const RETRY_MS = 10 * 60_000;
 
 export interface LeaseDeps {
   run(action: "DisplayOn" | "DisplayOff"): Promise<HelperRunResult>;
+  /** The answer to a `run` that came back `pending`, whenever it lands (null if never). */
+  lateAnswer(action: "DisplayOn"): Promise<HelperRunResult | null>;
   /** Give the display that just came on a usable size (Windows starts it at 800x600). */
   setMode(): Promise<void>;
   readMarker(): boolean;
@@ -47,6 +49,7 @@ function markerPath(): string {
 
 const realDeps: LeaseDeps = {
   run: (action) => runHelperAction(action),
+  lateAnswer: (action) => lateHelperAnswer(action),
   // The device takes a moment to appear after the task enables it, so a few short tries.
   setMode: async () => {
     for (let attempt = 0; attempt < 6; attempt++) {
@@ -69,12 +72,22 @@ export class VirtualDisplayLease {
   /** Turn the display on for a session about to start. */
   async turnOn(): Promise<HelperRunResult> {
     const result = await this.deps.run("DisplayOn");
-    if (result.ok) {
-      this.deps.writeMarker(true);
-      await this.deps.setMode();
-      if (this.holders === 0) this.schedule(IDLE_MS);
+    if (result.ok) await this.adopt();
+    // The helper may still turn it on after the request stopped waiting (measured: 27 s). PPM must
+    // then still record that it did, or it never turns the display off again.
+    else if (result.pending) {
+      void this.deps.lateAnswer("DisplayOn").then(async (late) => {
+        if (late?.ok) { log.info("virtual display came on after the request stopped waiting"); await this.adopt(); }
+      });
     }
     return result;
+  }
+
+  /** The display is on because PPM asked: remember that, size it, and start the idle clock. */
+  private async adopt(): Promise<void> {
+    this.deps.writeMarker(true);
+    await this.deps.setMode();
+    if (this.holders === 0) this.schedule(IDLE_MS);
   }
 
   /** A remote-desktop session started. */

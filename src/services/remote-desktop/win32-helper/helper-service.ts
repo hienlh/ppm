@@ -24,7 +24,13 @@ import { parseJson } from "./helper-json.ts";
 
 const log = createLogger("remote-desktop");
 
-export interface HelperRunResult { ok: boolean; message: string }
+export interface HelperRunResult {
+  ok: boolean;
+  message: string;
+  /** The task was started but has not answered yet: whether it did anything is not known.
+   *  Never reported as a failure — the page re-reads the host's real state instead. */
+  pending?: boolean;
+}
 export interface HelperJob { kind: "install" | "uninstall"; state: "running" | "done" | "error"; message: string | null }
 export interface HelperStatus {
   supported: boolean;
@@ -62,7 +68,16 @@ export function getRescueState(): RescueState | null {
 
 const STATUS_TTL_MS = 5000;
 const RUN_TIMEOUT_MS = 15_000;
-const ANSWER_WAIT_MS = 20_000;
+/** How long a request waits for the helper. The slowest run measured on a real host was 27 s
+ *  (a DisplayOn while a capture was running); twice that, plus margin. */
+export const ANSWER_WAIT_MS = 60_000;
+/** After that, how long PPM keeps watching for a late answer in the background, so that what the
+ *  helper did is still recorded (above all: who turned the virtual display on). Under the task's
+ *  own 2-minute execution limit, plus its start. */
+export const LATE_ANSWER_MS = 3 * 60_000;
+/** What the page is told when the wait runs out. */
+export const PENDING_MESSAGE = "The PC has not answered yet, so it is not known whether this happened. "
+  + "PPM keeps checking; the list shows the PC's real state.";
 const ELEVATION_TIMEOUT_MS = 10 * 60_000;
 
 let cachedSid: string | null = null;
@@ -72,7 +87,7 @@ let running: Promise<HelperRunResult> | null = null;
 
 /** Tests only. */
 export function resetHelperServiceForTests(): void {
-  cachedSid = null; cachedStatus = null; job = null; running = null;
+  cachedSid = null; cachedStatus = null; job = null; running = null; lateWatches.clear();
 }
 
 async function currentUserSid(sys: HelperSystem): Promise<string | null> {
@@ -189,25 +204,54 @@ export function startHelperJob(kind: "install" | "uninstall"): HelperJob {
   return current;
 }
 
+/** The helper's answer to the run of `action` started at `started`, once it lands, or null when
+ *  `waitMs` passes first. */
+async function awaitAnswer(sys: HelperSystem, action: PpmHelperAction, started: number, waitMs: number): Promise<HelperRunResult | null> {
+  const deadline = sys.now() + waitMs;
+  // The helper stamps its answer in UTC; allow for a clock a little behind PPM's.
+  while (sys.now() < deadline) {
+    await sys.sleep(500);
+    const last = parseJson<{ action?: string; ok?: boolean; message?: string; at?: string; startedAt?: string; ms?: number; lockMs?: number }>(
+      sys.readText(helperPaths().lastRun));
+    const at = last?.at ? Date.parse(last.at) : NaN;
+    if (last?.action === action && at >= started - 2000) {
+      cachedStatus = null;
+      // When the script itself started, and how long its run took (written by helpers since v3),
+      // so a slow answer says whether Windows was slow to start it or the work itself was slow.
+      const startDelay = last.startedAt ? Date.parse(last.startedAt) - started : NaN;
+      const timing = Number.isFinite(startDelay) ? ` (started ${startDelay} ms after the request, ran ${last.ms} ms, lock wait ${last.lockMs} ms)` : "";
+      log.info(`headless helper ${action}: ok=${!!last.ok} ${last.message ?? ""}${timing}`);
+      return { ok: !!last.ok, message: last.message ?? "" };
+    }
+  }
+  return null;
+}
+
+/** Background watches for answers that came after the request gave up, by action. */
+const lateWatches = new Map<PpmHelperAction, Promise<HelperRunResult | null>>();
+
 async function runOnce(sys: HelperSystem, action: PpmHelperAction): Promise<HelperRunResult> {
   const status = await getHelperStatus(true);
   if (!status.usable) return { ok: false, message: "The headless helper is not set up for this Windows user." };
   const started = sys.now();
   const r = await sys.run([schtasksExe(), "/run", "/tn", taskName(action)], RUN_TIMEOUT_MS);
   if (r.code !== 0) return { ok: false, message: `Could not start the helper task: ${(r.stderr || r.stdout).trim()}` };
-  const deadline = started + ANSWER_WAIT_MS;
-  // The helper stamps its answer in UTC; allow for a clock a little behind PPM's.
-  while (sys.now() < deadline) {
-    await sys.sleep(500);
-    const last = parseJson<{ action?: string; ok?: boolean; message?: string; at?: string }>(sys.readText(helperPaths().lastRun));
-    const at = last?.at ? Date.parse(last.at) : NaN;
-    if (last?.action === action && at >= started - 2000) {
-      cachedStatus = null;
-      log.info(`headless helper ${action}: ok=${!!last.ok} ${last.message ?? ""}`);
-      return { ok: !!last.ok, message: last.message ?? "" };
-    }
-  }
-  return { ok: false, message: `The helper did not answer within ${ANSWER_WAIT_MS / 1000} seconds.` };
+  const answer = await awaitAnswer(sys, action, started, ANSWER_WAIT_MS);
+  if (answer) return answer;
+  // Not a failure: the task is running and may still do what it was asked. Keep watching, so the
+  // answer is logged and a caller that must act on it (the display lease) still can.
+  log.warn(`headless helper ${action}: no answer within ${ANSWER_WAIT_MS / 1000} s; still watching`);
+  lateWatches.set(action, awaitAnswer(sys, action, started, LATE_ANSWER_MS).then((late) => {
+    if (!late) log.warn(`headless helper ${action}: never answered`);
+    return late;
+  }));
+  return { ok: false, pending: true, message: PENDING_MESSAGE };
+}
+
+/** The late answer of the last `action` that came back `pending`: resolves when the helper
+ *  answers, or null if it never does. Null at once when nothing is being watched. */
+export function lateHelperAnswer(action: PpmHelperAction): Promise<HelperRunResult | null> {
+  return lateWatches.get(action) ?? Promise.resolve(null);
 }
 
 /** Runs one fixed task. One at a time: a second request waits for the first's answer. Never

@@ -8,7 +8,9 @@ import { createHash } from "node:crypto";
 import { remoteDesktopRoutes } from "../../src/server/routes/remote-desktop.ts";
 import { configService } from "../../src/services/config.service.ts";
 import { setHelperSystem } from "../../src/services/remote-desktop/win32-helper/helper-system.ts";
-import { resetHelperServiceForTests } from "../../src/services/remote-desktop/win32-helper/helper-service.ts";
+import {
+  lateHelperAnswer, PENDING_MESSAGE, resetHelperServiceForTests,
+} from "../../src/services/remote-desktop/win32-helper/helper-service.ts";
 import { HELPER_ACTIONS, helperPaths, HELPER_VERSION, taskName } from "../../src/services/remote-desktop/win32-helper/helper-paths.ts";
 import { VDD_ZIP_SHA256, VDD_ZIP_URL } from "../../src/services/remote-desktop/win32-helper/vdd-catalog.ts";
 import { bootstrapOf, createFakeWindows, FAKE_SID, type FakeWindows } from "../helpers/fake-windows-helper-system.ts";
@@ -200,12 +202,36 @@ describe("headless helper: bring the session back", () => {
     expect(await res.json()).toMatchObject({ data: { ok: false, message: "No Windows session of the PPM user was found." } });
   });
 
-  it("ignores an answer older than the request and gives up after the wait", async () => {
+  it("ignores an answer older than the request, and after the wait says 'not known yet', not 'failed'", async () => {
     auth(true);
     markInstalled();
     win.files.set(helperPaths().lastRun, JSON.stringify({ action: "Reattach", ok: true, message: "old", at: "2020-01-01T00:00:00Z" }));
     const res = await remoteDesktopRoutes.request("http://localhost/requirements/win-session/reattach", { method: "POST" });
-    expect(await res.json()).toMatchObject({ data: { ok: false, message: expect.stringContaining("did not answer") } });
+    expect(await res.json()).toMatchObject({ data: { ok: false, pending: true, message: PENDING_MESSAGE } });
+  });
+
+  it("an answer that lands after the wait is still picked up, and a late DisplayOn is recorded as PPM's", async () => {
+    auth(true);
+    markInstalled();
+    // The helper answers 70 s (on the pretend clock) after the task starts: past the request's wait.
+    let startedAt = 0;
+    win.onTaskRun = () => { startedAt = win.now(); };
+    const sleep = win.sleep;
+    win.sleep = async (ms) => {
+      await sleep(ms);
+      if (startedAt && win.now() - startedAt >= 70_000 && !win.files.has("late-written")) {
+        win.files.set("late-written", "1");
+        win.files.set(helperPaths().lastRun, JSON.stringify({ action: "DisplayOn", ok: true, message: "The virtual display is on.", at: new Date(win.now()).toISOString() }));
+      }
+    };
+    const res = await remoteDesktopRoutes.request("http://localhost/requirements/win-display/display-on", { method: "POST" });
+    expect(await res.json()).toMatchObject({ data: { ok: false, pending: true } });
+    const late = await lateHelperAnswer("DisplayOn");
+    expect(late).toEqual({ ok: true, message: "The virtual display is on." });
+    // The lease adopts the display once the late answer is in: PPM's marker says it turned it on.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const marker = [...win.files.entries()].find(([k]) => k.endsWith("virtual-display-on.json"));
+    expect(JSON.parse(marker![1]).on).toBe(true);
   });
 
   it("turns on the virtual display through its own fixed task and remembers PPM did it", async () => {

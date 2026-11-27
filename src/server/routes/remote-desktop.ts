@@ -18,7 +18,7 @@ import { mintRemoteDesktopNonce } from "../../services/remote-desktop/remote-des
 import { listDisplays } from "../../services/remote-desktop/remote-desktop-displays.ts";
 import { HOST_ACTIONS, remoteDesktopReadiness, runHostAction } from "../../services/remote-desktop/remote-desktop-requirements.ts";
 import {
-  getHelperStatus, getRescueState, runHelperAction, startHelperJob,
+  ANSWER_WAIT_MS, getHelperStatus, getRescueState, runHelperAction, startHelperJob,
 } from "../../services/remote-desktop/win32-helper/helper-service.ts";
 import { resolveWhepTarget } from "../../services/remote-desktop/remote-desktop-whep-registry.ts";
 import {
@@ -97,10 +97,10 @@ remoteDesktopRoutes.post("/requirements/ffmpeg/install", (c) => {
 });
 
 /** A Windows helper task can take well over Bun.serve's 10-second idle limit to answer (measured:
- *  20 s for a Reattach whose PowerShell started slowly). Cut off, the page reported a failure while
- *  tscon went on to move the session anyway. The helper's own wait is 20 s, plus its status
- *  checks; 60 s covers both. */
-const HELPER_ANSWER_SECONDS = 60;
+ *  20 s and 27 s). Cut off, the page reported a failure while the task went on to do its work.
+ *  The request waits `ANSWER_WAIT_MS` for the answer, after up to `RUN_TIMEOUT_MS` each for the
+ *  status checks and starting the task; this covers all three. */
+const HELPER_ANSWER_SECONDS = Math.ceil(ANSWER_WAIT_MS / 1000) + 60;
 
 // Same guards as /session: these pop dialogs / open panes on the host, which is host control too.
 remoteDesktopRoutes.post("/requirements/:id/:action", async (c) => {
