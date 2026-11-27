@@ -177,17 +177,24 @@ param(
   [string]$Action
 )
 $ErrorActionPreference = 'Stop'
+# When this script began running and how long each part took: a slow answer then says whether
+# Windows was slow to start the task (startedAt against PPM's request), the lock was held, or the
+# work itself was slow. Two runs on a real host took 20 s and 27 s against a usual 0.5-3 s.
+$RunStartedAt = [DateTime]::UtcNow.ToString('o')
+$RunClock = [Diagnostics.Stopwatch]::StartNew()
+$LockMs = 0
 $UserSid = ${psQuote(userSid)}
 $StateDir = Join-Path $PSScriptRoot 'state'
 
 ${STATE_FILES}
 function Write-HelperState([bool]$Ok, [string]$Message) {
   $at = [DateTime]::UtcNow.ToString('o')
-  Write-StateFile 'last-run.json' (@{ action = $Action; ok = $Ok; message = $Message; at = $at; version = ${HELPER_VERSION} } | ConvertTo-Json -Compress)
+  $ms = $RunClock.ElapsedMilliseconds
+  Write-StateFile 'last-run.json' (@{ action = $Action; ok = $Ok; message = $Message; at = $at; startedAt = $RunStartedAt; ms = $ms; lockMs = $LockMs; version = ${HELPER_VERSION} } | ConvertTo-Json -Compress)
   $log = Join-Path $StateDir 'helper.log'
   Assert-NotReparse $log
   if ((Test-Path -LiteralPath $log) -and ((Get-Item -LiteralPath $log).Length -gt 262144)) { Remove-Item -LiteralPath $log -Force }
-  Add-Content -LiteralPath $log -Value ($at + ' ' + $Action + ' ok=' + $Ok + ' ' + $Message) -Encoding UTF8
+  Add-Content -LiteralPath $log -Value ($at + ' ' + $Action + ' ok=' + $Ok + ' started=' + $RunStartedAt + ' ms=' + $ms + ' lockMs=' + $LockMs + ' ' + $Message) -Encoding UTF8
 }
 ${WTS_SESSION_LOOKUP}
 ${VIRTUAL_DISPLAY_SAFETY}
@@ -200,7 +207,9 @@ $code = 2
 $mutex = New-Object Threading.Mutex($false, 'Global\\PPM-RemoteDesktopHelper')
 $held = $false
 try {
+  $beforeLock = $RunClock.ElapsedMilliseconds
   try { $held = $mutex.WaitOne(90000) } catch [Threading.AbandonedMutexException] { $held = $true }
+  $LockMs = $RunClock.ElapsedMilliseconds - $beforeLock
   if (-not $held) { throw 'Another helper run did not finish within 90 seconds.' }
   switch ($Action) {
 ${branches}

@@ -75,6 +75,15 @@ describe("helper.ps1", () => {
     expect(script).toContain("$StateDir = Join-Path $PSScriptRoot 'state'");
   });
 
+  it("records when the run started, how long it took and how long it waited for the lock", () => {
+    // Two runs on a real host took 20 s and 27 s against a usual 0.5-3 s, and the log could not
+    // say whether Windows started the task late or the work itself was slow.
+    expect(script.indexOf("$RunStartedAt = [DateTime]::UtcNow")).toBeLessThan(script.indexOf("function "));
+    expect(script).toContain("startedAt = $RunStartedAt; ms = $ms; lockMs = $LockMs");
+    expect(script).toContain("' started=' + $RunStartedAt + ' ms=' + $ms + ' lockMs=' + $LockMs");
+    expect(script.indexOf("$beforeLock = ")).toBeLessThan(script.indexOf("$mutex.WaitOne("));
+  });
+
   it("runs one action at a time, and always lets go of the lock", () => {
     const wait = script.indexOf("$mutex.WaitOne(");
     expect(wait).toBeGreaterThan(0);

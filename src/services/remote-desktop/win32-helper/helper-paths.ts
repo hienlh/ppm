@@ -12,7 +12,7 @@ import { join, win32 } from "node:path";
 import { getPpmDir } from "../../ppm-dir.ts";
 
 /** Bumped whenever the generated scripts change, so an older install reports "update needed". */
-export const HELPER_VERSION = 2;
+export const HELPER_VERSION = 3;
 
 /** Each action is its own task with a fixed command line: a task cannot be handed anything.
  *  `Confirm` and `Rescue` are the safety net behind `Reattach`/`DisplayOn` (`rescue-script.ts`). */
