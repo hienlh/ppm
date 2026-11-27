@@ -88,6 +88,50 @@ describe("Windows checklist rows", () => {
   });
 });
 
+describe("Windows' fallback screen in the checklist", () => {
+  function fallbackCaps() {
+    return {
+      platform: "win32", platformSupported: true, videoReady: true, inputReady: true,
+      requirements: [{
+        id: "win-display", ok: false, gates: "choice", title: "Windows' fallback screen (1024x768)",
+        detail: "No monitor is plugged into this PC.",
+        actions: [
+          { kind: "host", label: "Turn on virtual display (1920x1080)", action: "display-on" },
+          { kind: "continue", label: "Continue at 1024x768" },
+        ],
+      }],
+    };
+  }
+
+  it("stops before streaming although the host is ready, and 'Continue at 1024x768' goes on", async () => {
+    spies.push(spyOn(api, "get").mockResolvedValue(fallbackCaps() as never));
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div data-testid="viewer" /></RemoteDesktopReadinessGate>);
+    await settle();
+    expect(view.container.querySelector('[data-testid="viewer"]')).toBeNull();
+    expect(view.container.textContent).toContain("choose one");
+    await click(view.container.querySelector('[data-testid="remote-desktop-requirement-win-display-continue"]'));
+    await settle();
+    expect(view.container.querySelector('[data-testid="viewer"]')).not.toBeNull();
+  });
+
+  it("'Turn on virtual display' asks the host, and both buttons take the standard size", async () => {
+    spies.push(spyOn(api, "get").mockResolvedValue(fallbackCaps() as never));
+    const post = spyOn(api, "post").mockResolvedValue({ ok: true, message: "The virtual display is on." } as never);
+    spies.push(post);
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    await settle();
+    const buttons = [...view.container.querySelectorAll('[data-testid="remote-desktop-requirement-win-display"] button')];
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual(["Turn on virtual display (1920x1080)", "Continue at 1024x768"]);
+    for (const b of buttons) {
+      expect(b.className).toContain("h-7");
+      expect(b.className).toContain("max-md:h-[26px]");
+    }
+    await click(buttons[0]!);
+    await settle();
+    expect(post).toHaveBeenCalledWith("/api/remote-desktop/requirements/win-display/display-on");
+  });
+});
+
 describe("the safety net bar", () => {
   const RESCUE_PATH = "/api/remote-desktop/headless-helper/rescue";
   const deadline = Date.now() + 4 * 60_000;

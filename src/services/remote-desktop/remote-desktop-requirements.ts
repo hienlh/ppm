@@ -44,13 +44,17 @@ export type RequirementAction =
   /** Something only the host can do — show an OS permission prompt, open its Settings pane.
    *  `POST /api/remote-desktop/requirements/:id/:action`. Never a client-side URL: a
    *  `x-apple.systempreferences:` link means nothing on the phone driving the session. */
-  | { kind: "host"; label: string; action: HostAction };
+  | { kind: "host"; label: string; action: HostAction }
+  /** Go on as things are: answers a `choice` row, in the client, without asking the host. */
+  | { kind: "continue"; label: string };
 
 export interface RemoteDesktopRequirement {
   id: string;
   ok: boolean;
   /** Which part of the feature this blocks: no video = nothing to show; no input = view-only. */
-  gates: "video" | "input";
+  /** `choice`: blocks nothing, but the checklist stops so the user picks one of the row's actions
+   *  before streaming (Windows' fallback screen: a better display, or carry on as is). */
+  gates: "video" | "input" | "choice";
   title: string;
   /** One sentence: what it is for and what to do. Shown only while `ok` is false. */
   detail: string;

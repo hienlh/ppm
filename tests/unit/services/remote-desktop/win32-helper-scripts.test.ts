@@ -12,6 +12,7 @@ import { readWindowsSession } from "../../../../src/services/remote-desktop/remo
 import { HELPER_ACTIONS, whoamiExe } from "../../../../src/services/remote-desktop/win32-helper/helper-paths.ts";
 import { helperInstallPlan } from "../../../../src/services/remote-desktop/win32-helper/helper-install-plan.ts";
 import { CREATE_DEVICE_TYPE } from "../../../../src/services/remote-desktop/win32-helper/vdd-scripts.ts";
+import { HARDWARE_MONITOR_QUERY } from "../../../../src/services/remote-desktop/win32-helper/hardware-monitor-count.ts";
 import {
   buildBootstrap, buildElevationLauncher, buildInstallScript, buildUninstallScript, SYSTEM_ONLY_SDDL, userTaskSddl,
 } from "../../../../src/services/remote-desktop/win32-helper/install-script.ts";
@@ -198,6 +199,8 @@ describe.if(process.platform === "win32")("generated scripts parse in Windows Po
       "install.ps1": buildInstallScript({ userSid: SID, actions: plan.actions, extraSteps: plan.installSteps }),
       "uninstall.ps1": buildUninstallScript({ actions: plan.actions, extraSteps: plan.uninstallSteps }),
       "bootstrap.ps1": buildBootstrap([{ variable: "HelperBytes", path: "C:\\a", sha256: HASH }], { variable: "ScriptBytes", path: "C:\\b", sha256: HASH }),
+      // PPM's own read of the helper's monitor definition (Windows' fallback screen).
+      "hardware-monitors.ps1": HARDWARE_MONITOR_QUERY,
     };
     for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
     const check = `$bad = 0; foreach ($f in Get-ChildItem -LiteralPath ${psQuote(dir)} -Filter *.ps1) {

@@ -61,29 +61,44 @@ function readWide(view: DataView, offset: number, chars: number): string {
   return s;
 }
 
+function openUser32() {
+  const ffi = require("bun:ffi") as typeof import("bun:ffi");
+  const { FFIType: T } = ffi;
+  const user32 = ffi.dlopen("user32.dll", {
+    EnumDisplayDevicesW: { args: [T.ptr, T.u32, T.ptr, T.u32], returns: T.i32 },
+    EnumDisplaySettingsW: { args: [T.ptr, T.i32, T.ptr], returns: T.i32 },
+    ChangeDisplaySettingsExW: { args: [T.ptr, T.ptr, T.ptr, T.u32, T.ptr], returns: T.i32 },
+  }).symbols;
+  return { ffi, user32 };
+}
+
+/** The virtual display's device name (`\\.\DISPLAYn`) when it is attached to this session's
+ *  desktop, else null. */
+function findAttachedVirtualDisplay(api: ReturnType<typeof openUser32>): string | null {
+  for (let i = 0; i < 32; i++) {
+    const dd = new Uint8Array(DISPLAY_DEVICE_SIZE);
+    const view = new DataView(dd.buffer);
+    view.setUint32(0, DISPLAY_DEVICE_SIZE, true);
+    if (!api.user32.EnumDisplayDevicesW(null, i, api.ffi.ptr(dd), 0)) break;
+    const flags = view.getUint32(324, true);
+    if ((flags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) && VDD_ADAPTER.test(readWide(view, 68, 128))) return readWide(view, 4, 32);
+  }
+  return null;
+}
+
+/** Whether this session is showing the virtual display right now. False off Windows or on error. */
+export function isVirtualDisplayAttached(): boolean {
+  if (process.platform !== "win32") return false;
+  try { return findAttachedVirtualDisplay(openUser32()) !== null; } catch { return false; }
+}
+
 /** Find the virtual display's device and set its mode. Best effort: logs and returns false. */
 export function applyVirtualDisplayMode(): boolean {
   if (process.platform !== "win32") return false;
   try {
-    const ffi = require("bun:ffi") as typeof import("bun:ffi");
-    const { FFIType: T } = ffi;
-    const user32 = ffi.dlopen("user32.dll", {
-      EnumDisplayDevicesW: { args: [T.ptr, T.u32, T.ptr, T.u32], returns: T.i32 },
-      EnumDisplaySettingsW: { args: [T.ptr, T.i32, T.ptr], returns: T.i32 },
-      ChangeDisplaySettingsExW: { args: [T.ptr, T.ptr, T.ptr, T.u32, T.ptr], returns: T.i32 },
-    }).symbols;
-
-    let device: string | null = null;
-    for (let i = 0; i < 32 && !device; i++) {
-      const dd = new Uint8Array(DISPLAY_DEVICE_SIZE);
-      const view = new DataView(dd.buffer);
-      view.setUint32(0, DISPLAY_DEVICE_SIZE, true);
-      if (!user32.EnumDisplayDevicesW(null, i, ffi.ptr(dd), 0)) break;
-      const flags = view.getUint32(324, true);
-      if ((flags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) && VDD_ADAPTER.test(readWide(view, 68, 128))) {
-        device = readWide(view, 4, 32);
-      }
-    }
+    const api = openUser32();
+    const { ffi, user32 } = api;
+    const device = findAttachedVirtualDisplay(api);
     if (!device) { log.warn("virtual display mode: no attached Virtual Display Driver device"); return false; }
     const name = wide(device);
 

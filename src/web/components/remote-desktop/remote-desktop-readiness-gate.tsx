@@ -44,7 +44,7 @@ export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktop
   // One wrapper in every state, so the bar coming and going never remounts the viewer.
   return (
     <div className="relative h-full w-full">
-      {accepted || (caps?.videoReady && caps.inputReady)
+      {accepted || (caps?.videoReady && caps.inputReady && !hasOpenChoice(caps))
         ? children
         : <Checklist caps={caps} failed={failed} onCancel={onCancel} onAccept={() => setAccepted(true)} runHostAction={runHostAction} />}
       {rescue.rescue && (
@@ -57,6 +57,12 @@ export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktop
   );
 }
 
+/** A `choice` row still unanswered: the host works, but the user is asked first (Windows'
+ *  fallback screen: turn on the virtual display, or continue at the fallback's size). */
+export function hasOpenChoice(caps: RemoteDesktopCapabilities): boolean {
+  return caps.requirements.some((r) => !r.ok && r.gates === "choice");
+}
+
 function Checklist({ caps, failed, onCancel, onAccept, runHostAction }: {
   caps: RemoteDesktopCapabilities | null;
   failed: boolean;
@@ -64,7 +70,7 @@ function Checklist({ caps, failed, onCancel, onAccept, runHostAction }: {
   onAccept: () => void;
   runHostAction: (id: string, action: HostAction) => Promise<HostActionResult | null>;
 }) {
-  const pending = caps?.requirements.filter((r) => !r.ok) ?? [];
+  const pending = caps?.requirements.filter((r) => !r.ok && r.gates !== "choice") ?? [];
   const viewOnly = !!caps?.videoReady && !caps.inputReady;
   // The dock terminal opens *under* this surface (the mobile sheet covers the whole viewport),
   // so hand the command over and get out of the way; the entry stays in the nav to come back to.
@@ -88,7 +94,7 @@ function Checklist({ caps, failed, onCancel, onAccept, runHostAction }: {
 
         <ul className="flex flex-col gap-3">
           {caps?.requirements.map((r) => (
-            <RequirementRow key={r.id} req={r} onHostAction={runHostAction} onTerminal={onTerminal} />
+            <RequirementRow key={r.id} req={r} onHostAction={runHostAction} onTerminal={onTerminal} onAccept={onAccept} />
           ))}
         </ul>
 
@@ -118,6 +124,8 @@ function Checklist({ caps, failed, onCancel, onAccept, runHostAction }: {
 interface ActionHandlers {
   onHostAction: (id: string, a: HostAction) => Promise<HostActionResult | null>;
   onTerminal: (command: string) => void;
+  /** Answers a `choice` row: carry on as things are. */
+  onAccept: () => void;
 }
 
 function RequirementRow({ req, ...handlers }: { req: RemoteDesktopRequirement } & ActionHandlers) {
@@ -129,7 +137,7 @@ function RequirementRow({ req, ...handlers }: { req: RemoteDesktopRequirement } 
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="text-sm font-medium">
           {req.title}
-          {!req.ok && <span className="ml-2 text-xs font-normal text-white/50">{req.gates === "video" ? "required" : "for mouse & keyboard"}</span>}
+          {!req.ok && <span className="ml-2 text-xs font-normal text-white/50">{req.gates === "video" ? "required" : req.gates === "choice" ? "choose one" : "for mouse & keyboard"}</span>}
         </div>
         {!req.ok && (
           <>
@@ -153,9 +161,16 @@ function RequirementRow({ req, ...handlers }: { req: RemoteDesktopRequirement } 
   );
 }
 
-function ActionButton({ action, reqId, onHostAction, onTerminal }: { action: RequirementAction; reqId: string } & ActionHandlers) {
+function ActionButton({ action, reqId, onHostAction, onTerminal, onAccept }: { action: RequirementAction; reqId: string } & ActionHandlers) {
   const cls = `${GATE_BUTTON} bg-white/10 hover:bg-white/20`;
   if (action.kind === "install") return <FfmpegInstallButton label={action.label} />;
+  if (action.kind === "continue") {
+    return (
+      <button type="button" className={cls} onClick={onAccept} data-testid={`remote-desktop-requirement-${reqId}-continue`}>
+        {action.label}
+      </button>
+    );
+  }
   if (action.kind === "terminal") {
     return (
       <button type="button" className={cls} onClick={() => onTerminal(action.command)} title={action.command}>

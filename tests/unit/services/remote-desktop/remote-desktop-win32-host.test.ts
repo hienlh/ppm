@@ -15,13 +15,75 @@ const MONITOR: RemoteDisplay = {
  *  monitor list is counted so the "do not trust a disconnected session's monitors" rule shows. */
 function fakeHost(session: ReturnType<WindowsHostApi["session"]>, displays: RemoteDisplay[], helperUsable = false) {
   let displayReads = 0;
+  let monitorQueries = 0;
   const host: WindowsHostApi = {
     session: () => session,
     displays: () => { displayReads++; return displays; },
     helper: async () => ({ usable: helperUsable }),
+    virtualDisplayAttached: () => false,
+    hardwareMonitors: async () => { monitorQueries++; return 1; },
   };
-  return { host, reads: () => displayReads };
+  return { host, reads: () => displayReads, monitorQueries: () => monitorQueries };
 }
+
+/** What a headless Windows 11 host showed right after its session was brought to the console
+ *  with the virtual display off: one stand-in screen from the GPU and no Monitor device. */
+const FALLBACK: RemoteDisplay = {
+  id: "\\\\.\\DISPLAY1", label: "Display 1", primary: true, x: 0, y: 0, width: 1024, height: 768, captureIndex: 0,
+};
+const AT_CONSOLE = { sessionId: 2, state: "active", isConsole: true } as const;
+
+function fallbackHost(over: Partial<WindowsHostApi> = {}) {
+  const fake = fakeHost(AT_CONSOLE, [FALLBACK], true);
+  fake.host.helper = async () => ({ usable: true, virtualDisplay: true });
+  fake.host.hardwareMonitors = async () => 0;
+  Object.assign(fake.host, over);
+  return fake;
+}
+
+describe("Windows' fallback screen", () => {
+  it("stops the checklist to ask: a better display, or carry on at the fallback's size", async () => {
+    const rows = windowsHostRequirements(await snapshotWindowsHost(fallbackHost().host));
+    const row = rows.find((r) => r.id === WIN_DISPLAY_ID)!;
+    expect(row.ok).toBe(false);
+    expect(row.gates).toBe("choice");
+    expect(row.title).toBe("Windows' fallback screen (1024x768)");
+    expect(row.actions).toEqual([
+      { kind: "host", label: "Turn on virtual display (1920x1080)", action: "display-on" },
+      { kind: "continue", label: "Continue at 1024x768" },
+    ]);
+  });
+
+  it("does not stop video: the stream works at the fallback's size", async () => {
+    const r = await remoteDesktopReadiness("win32", null, fallbackHost().host);
+    expect(r.requirements.find((x) => x.id === WIN_DISPLAY_ID)?.gates).toBe("choice");
+    expect(r.videoReady).toBe(r.requirements.filter((x) => x.gates === "video").every((x) => x.ok));
+  });
+
+  it("is not the fallback when the PC has a monitor of its own, the virtual display is already on, or it cannot tell", async () => {
+    for (const over of [
+      { hardwareMonitors: async () => 1 },
+      { hardwareMonitors: async () => null },
+      { virtualDisplayAttached: () => true },
+      { helper: async () => ({ usable: true, virtualDisplay: false }) },
+      { session: () => ({ sessionId: 2, state: "active" as const, isConsole: false }) },
+    ]) {
+      const rows = windowsHostRequirements(await snapshotWindowsHost(fallbackHost(over as Partial<WindowsHostApi>).host));
+      expect(rows.find((r) => r.id === WIN_DISPLAY_ID)?.gates).not.toBe("choice");
+    }
+  });
+
+  it("does not start the PowerShell monitor query when a cheap check already rules it out", async () => {
+    const fake = fakeHost({ sessionId: 2, state: "active", isConsole: false }, [MONITOR], true);
+    await snapshotWindowsHost(fake.host);
+    expect(fake.monitorQueries()).toBe(0);
+    const attached = fallbackHost({ virtualDisplayAttached: () => true });
+    let queried = 0;
+    attached.host.hardwareMonitors = async () => { queried++; return 0; };
+    await snapshotWindowsHost(attached.host);
+    expect(queried).toBe(0);
+  });
+});
 
 describe("windowsHostRequirements with the headless helper", () => {
   it("offers to bring the session back, and says the PC will be left unlocked", async () => {

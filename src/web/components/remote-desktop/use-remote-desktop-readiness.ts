@@ -16,7 +16,9 @@ export type RequirementAction =
   | { kind: "terminal"; label: string; command: string }
   | { kind: "install"; label: string }
   | { kind: "link"; label: string; url: string }
-  | { kind: "host"; label: string; action: HostAction };
+  | { kind: "host"; label: string; action: HostAction }
+  /** Go on as things are: answers a `choice` row without asking the host. */
+  | { kind: "continue"; label: string };
 
 /** Mirrors the server's `HostAction`: `reattach` and `display-on` run the Windows helper's
  *  fixed tasks. */
@@ -34,7 +36,8 @@ export interface HostActionResult {
 export interface RemoteDesktopRequirement {
   id: string;
   ok: boolean;
-  gates: "video" | "input";
+  /** `choice`: blocks nothing, but the checklist stops so the user picks before streaming. */
+  gates: "video" | "input" | "choice";
   title: string;
   detail: string;
   /** A consequence to read before pressing an action. Absent on older hosts. */
