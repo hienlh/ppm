@@ -36,7 +36,10 @@ function rig(chat: number, store: CardDeskStore) {
   const codes = new ButtonCodes<BridgeAction>();
   const queue = new AssistantTelegramSendQueue(client, { canSend: () => true, scaleDelay: (ms) => ms / 1000 });
   let cards: AssistantTelegramManagerCards | null = null;
-  const desk = new AssistantTelegramCardsDesk({ queue, codes, store, enabled: () => true, restore: (c) => cards!.restoreDesk(c) });
+  const desk = new AssistantTelegramCardsDesk({
+    queue, codes, store, enabled: () => true, restore: (c) => cards!.restoreDesk(c),
+    timing: { debounceMs: 0, quietAfterUserMs: 0, minGapMs: 0, maxWaitMs: 0 },
+  });
   cards = new AssistantTelegramManagerCards({
     queue, codes, desk,
     chatLink: async () => "http://localhost/chat", sessionLink: async () => "http://localhost/session",
@@ -68,7 +71,7 @@ describe("a manager's card on the desk", () => {
     expect(pinnedText(chat)).not.toContain("Release 0.26.40 shipped");
     const cardMessage = getCardRow(decision.id)!.telegramRefs.find((r) => r.chatId === String(chat))!.messageId;
     const desk = store.get(String(chat))!;
-    expect(first.desk.replyTarget(String(chat), desk, Date.now() + 61_000)).toEqual({ to: cardMessage });
+    expect(first.desk.replyFor(String(chat), desk, { sentAt: Date.now() + 1_000, text: "the first one" })).toMatchObject({ to: cardMessage });
     first.desk.stop();
 
     // A restart: the same desk message is edited, the card back on it from the database.
@@ -78,7 +81,8 @@ describe("a manager's card on the desk", () => {
     expect(store.get(String(chat))).toBe(desk);
     expect(fake.pins(chat)).toEqual([desk]);
     expect(pinnedText(chat)).toContain("Which Telegram list style?");
-    expect(second.desk.replyTarget(String(chat), desk, Date.now() + 61_000)).toEqual({ to: cardMessage });
+    // After the restart the list is drawn again, and a reply is matched against that version.
+    expect(second.desk.replyFor(String(chat), desk, { sentAt: Date.now() + 1_000, text: "the first one" })).toMatchObject({ to: cardMessage });
 
     // Answered in PPM: the card ends, and the desk with it.
     expect(casCardStatus(decision.id, "open", "answered", { ok: true } as never, Date.now())).toBe(true);

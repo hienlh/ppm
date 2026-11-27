@@ -25,7 +25,8 @@ import { MAX_REPLY_IMAGE_BYTES, REPLY_IMAGE_SIZE_TEXT } from "../assistant-cards
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 import type { BridgeAction, DeskPress, ManagerCardPress, SettingsPress, TaskPress } from "./assistant-telegram-actions.ts";
-import type { DeskReply } from "./assistant-telegram-cards-desk-reply.ts";
+import type { DeskReplyRoute } from "./assistant-telegram-cards-desk.ts";
+import { DeskHeldReplies } from "./assistant-telegram-desk-held-replies.ts";
 import type { CardReplyMessage } from "./assistant-telegram-card-replies.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import type { TypedAnswerMessage } from "./assistant-telegram-typed-answers.ts";
@@ -91,17 +92,20 @@ export interface InboundDeps {
   /** `/tasks [project]`. */
   showTasks?: (chatId: string, args: string, reply: (html: string) => void) => void;
   /**
-   * The pinned card desk: its own buttons (`press`, the toast to show), where a reply to it goes (the
-   * card it showed when the reply was written, or a line saying why not; null when the reply is not
-   * to a desk), `/cards` (what to reply, or null), and a press on any button of the desk's message
-   * (`pressedOn`, true for the desk), after which it is drawn again (`redraw`).
+   * The pinned card desk: its own buttons (`press`, the toast to show), where a reply to it goes (a
+   * card's own message, or the cards to ask about; null when the reply is not to a desk), a waiting
+   * card's own message (`cardMessage`), `/cards` (what to reply, or null), a press on any button of
+   * the desk's message (`pressedOn`, true for the desk), after which it is drawn again (`redraw`),
+   * and every message the user writes (`noteUserActivity`: the desk holds still meanwhile).
    */
   desk?: {
     press(chatId: string, press: DeskPress, group: string): string;
-    replyTarget(chatId: string, messageId: number, sentAt: number): DeskReply | null;
+    replyFor(chatId: string, messageId: number, input: { sentAt: number; text: string; quote?: string | null }): DeskReplyRoute | null;
+    cardMessage(chatId: string, key: string): number | null;
     resend(chatId: string): string | null;
     pressedOn(chatId: string, messageId: number | undefined): boolean;
     redraw(chatId: string): void;
+    noteUserActivity(chatId: string): void;
   };
   /**
    * Words for the chat working on a task: a reply to a task card, or the next message after
@@ -145,6 +149,8 @@ export class AssistantTelegramInbound {
   private readonly voice: TelegramVoiceMessages | null;
   /** When each chat last sent the Assistant a photo, so a voice arriving after it says it follows it. */
   private readonly photoSentAt = new Map<string, number>();
+  /** Replies to the card list kept while the user is asked which card they answer. */
+  private readonly heldReplies: DeskHeldReplies | null;
   private stopped = false;
 
   constructor(private readonly deps: InboundDeps) {
@@ -160,6 +166,10 @@ export class AssistantTelegramInbound {
         const at = this.photoSentAt.get(chatId);
         return at !== undefined && this.now() - at < BACKLOG_AGE_MS ? new Date(at).toTimeString().slice(0, 5) : null;
       },
+    }) : null;
+    const desk = deps.desk;
+    this.heldReplies = desk ? new DeskHeldReplies({
+      codes: deps.codes, queue: deps.queue, now: this.now, cardMessage: (chatId, key) => desk.cardMessage(chatId, key),
     }) : null;
   }
 
@@ -194,6 +204,7 @@ export class AssistantTelegramInbound {
     for (const id of [...lane?.gathered?.updateIds ?? [], ...lane?.album?.updateIds ?? []]) this.deps.delivered(id);
     if (lane) { lane.gathered = null; lane.timer = null; lane.album = null; }
     for (const [id, b] of this.backlog) if (b.chatId === chatId) this.backlog.delete(id);
+    this.heldReplies?.forgetChat(chatId);
     this.forgetRefusals(chatId);
     this.photoSentAt.delete(chatId);
     this.voice?.forgetChat(chatId);
@@ -236,13 +247,20 @@ export class AssistantTelegramInbound {
     this.deps.delivered(update.update_id);
   }
 
-  private throughDesk(chatId: string, message: TelegramMessage): { message: TelegramMessage } | { refuse: string } {
+  private throughDesk(chatId: string, message: TelegramMessage): { message: TelegramMessage } | Extract<DeskReplyRoute, { ask: unknown }> {
     const replied = message.reply_to_message;
     if (!replied || !this.deps.desk) return { message };
-    let to: DeskReply | null = null;
-    try { to = this.deps.desk.replyTarget(chatId, replied.message_id, message.date * 1000); } catch { /* not the desk */ }
+    let to: DeskReplyRoute | null = null;
+    try {
+      to = this.deps.desk.replyFor(chatId, replied.message_id, {
+        sentAt: message.date * 1000, text: message.text ?? message.caption ?? "", quote: message.quote?.text ?? null,
+      });
+    } catch (e) {
+      log.warn(`Telegram chat ${chatId}: reply to the card list not routed: ${(e as Error).message}`);
+    }
     if (!to) return { message };
-    if ("refuse" in to) return to;
+    if ("ask" in to) return to;
+    log.info(`Telegram chat ${chatId}: reply to the card list goes to card ${to.key} (${to.why})`);
     // A quote highlighted on the desk may be another card's line: it does not travel with the reply.
     const { quote: _quote, ...rest } = message as TelegramMessage & { quote?: unknown };
     return { message: { ...rest, reply_to_message: { ...replied, message_id: to.to } } as TelegramMessage };
@@ -271,11 +289,12 @@ export class AssistantTelegramInbound {
     }
     // Allowed again (reconnected): a later refusal is worth saying once more.
     this.forgetRefusals(chatId);
-    // A reply to the pinned card desk is a reply to the card it showed, for everything below —
-    // or, when that card is not certain, not sent anywhere, with a line saying so.
+    try { this.deps.desk?.noteUserActivity(chatId); } catch { /* the desk only paces itself by it */ }
+    // A reply to the pinned card desk is a reply to the card the user was reading, for everything
+    // below — or, when that is not certain, kept while the user is asked which card it answers.
     const viaDesk = this.throughDesk(chatId, message);
-    if ("refuse" in viaDesk) {
-      this.reply(chatId, escapeTelegramHtml(viaDesk.refuse));
+    if ("ask" in viaDesk) {
+      this.heldReplies?.ask(chatId, message, updateId, viaDesk.ask, viaDesk.ended);
       return false;
     }
     message = viaDesk.message;
@@ -713,6 +732,13 @@ export class AssistantTelegramInbound {
     if (action.kind === "settings") {
       const toast = this.deps.pressSettings ? await this.deps.pressSettings(chatId, action, found.group) : "This button is no longer valid.";
       await this.deps.client.answerCallbackQuery(cq.id, toast);
+      return;
+    }
+    if (action.kind === "desk" && (action.op === "assign" || action.op === "to_assistant" || action.op === "discard")) {
+      const taken = this.heldReplies?.take(chatId, action, found.group) ?? { toast: "This button is no longer valid." };
+      await this.deps.client.answerCallbackQuery(cq.id, taken.toast);
+      // The kept words go on as if just sent: to the card picked, or to the Assistant.
+      if (taken.message) await this.message(chatId, taken.message, taken.updateId!);
       return;
     }
     if (action.kind === "desk") {

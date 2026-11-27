@@ -337,6 +337,8 @@ ${rememberLine(remember)}`;
             title: deskTitle(p.card, how.titleOnly, how.chatTitle), since: this.deps.now(), messageId: sent.message_id,
             stillWaiting: () => !card.done && this.cards.get(key) === card,
             view: () => card.view(), groups: [group],
+            // A one-question card's choices: words that are exactly one of them answer this card.
+            ...(card.isQuestion && questions.length === 1 && how.titleOnly === undefined ? { answers: questions[0]!.options.map((o) => o.label) } : {}),
           });
           // Pressed on before Telegram said the message was there: it still shows the first step.
           if (card.wizard && (card.wizard.step > 0 || card.selection.size > 0)) this.redraw(card);

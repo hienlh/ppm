@@ -20,10 +20,13 @@
  *   change sends a fresh desk.
  * - **Switched off** (`clawbot.card_desk`): nothing is sent; a desk already pinned is unpinned and
  *   says it is off.
- * - **A reply to the desk** goes to the card the phone showed when it was written, never to the
- *   card the server is about to show: `shown` is what Telegram confirmed, and a reply written before
- *   that card came up — or within a minute of a change the user did not make by pressing on the
- *   desk, or while the card was too long to show — is refused with one line rather than guessed.
+ * - **A reply to the desk** is matched against the versions of the desk the user could have seen
+ *   while writing it (every version Telegram confirmed is kept, per desk message), never against the
+ *   desk as it is now (`assistant-telegram-cards-desk-reply.ts`). Not certain, the words are kept and
+ *   the user is asked which card they answer: they are never dropped.
+ * - **Edits are spaced out**: a change waits a moment for the next one (`debounceMs`), the desk holds
+ *   still for a while after the user writes in the chat (`quietAfterUserMs`), and edits it makes by
+ *   itself keep a gap (`minGapMs`). What the user does on the desk itself is drawn at once.
  */
 import type { AssistantClock, Cancel } from "../assistant-wake/assistant-clock.ts";
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
@@ -37,7 +40,9 @@ import {
 import { cardDeskEnabled, memoryCardDeskStore, type CardDeskStore } from "./assistant-telegram-cards-desk-store.ts";
 import { BUTTON_URL_INVALID, outcomeOf, sendMessageTask, type AssistantTelegramSendQueue, type TaskOutcome } from "./assistant-telegram-send-queue.ts";
 import { createLogger } from "../logger.ts";
-import { DESK_REPLY_MOVED, deskReplyFor, type DeskReply, type ShownCard } from "./assistant-telegram-cards-desk-reply.ts";
+import { resolveDeskReply, type DeskReplyInput, type DeskSnapshot } from "./assistant-telegram-cards-desk-reply.ts";
+import { entryLine } from "./assistant-telegram-cards-desk-draw.ts";
+import { stripTelegramHtml } from "../telegram/telegram-html-format.ts";
 
 const log = createLogger("assistant-telegram");
 
@@ -49,7 +54,30 @@ const DESK_REMINT_MS = 12 * 60 * 60_000;
 const PRESS_SEEN_MS = 15_000;
 const EDIT_NOT_FOUND = /message to edit not found/i;
 const EDIT_REFUSED = /message can't be edited/i;
-const RETIRED_MAX = 200;
+/** Desk versions kept per desk message, and desk messages kept per process (oldest dropped first). */
+const SNAPSHOTS_PER_DESK = 40;
+const DESKS_REMEMBERED = 200;
+/** Versions older than this cannot be what a reply arriving now was written against. */
+const SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60_000;
+
+/** How the desk paces its own edits; tests set every value to 0. */
+export interface DeskTiming {
+  /** A change waits this long for the next one, so a burst is one edit. */
+  debounceMs: number;
+  /** After the user writes in the chat, the desk holds still this long: they may be replying to it. */
+  quietAfterUserMs: number;
+  /** Two edits the desk makes by itself are at least this far apart. */
+  minGapMs: number;
+  /** However the above add up, a pending change goes out within this long. */
+  maxWaitMs: number;
+}
+
+export const DESK_TIMING: DeskTiming = { debounceMs: 2_000, quietAfterUserMs: 45_000, minGapMs: 15_000, maxWaitMs: 120_000 };
+
+/** Where a reply to a desk goes: a card's own message, or a question with the cards to choose from. */
+export type DeskReplyRoute =
+  | { to: number; key: string; why: string }
+  | { ask: Array<{ key: string; label: string }>; ended: string[] };
 
 
 export interface CardsDeskDeps {
@@ -60,11 +88,13 @@ export interface CardsDeskDeps {
   clock?: AssistantClock;
   /** The cards that outlive a restart (a manager's open cards), put back for this chat. */
   restore?: (chatId: string) => Promise<void>;
+  timing?: Partial<DeskTiming>;
 }
 
 interface ChatDesk {
   current: string | null;
-  shown: ShownCard | null;
+  /** The card the phone shows whole, as Telegram confirmed it. */
+  shown: string | null;
   /**
    * A press on the desk's message (its own buttons or a card's) not yet followed by a move to
    * another card: the next move, if it comes within a few seconds, is the one the press made. Spent
@@ -80,6 +110,11 @@ interface ChatDesk {
   seq: number;
   /** What the message says now, so an identical draw is skipped. */
   drawn: string | null;
+  /** The last message the user wrote in the chat. */
+  userAt: number;
+  /** A change waiting to be drawn: when the first one came, and the timer that draws it. */
+  pendingSince: number;
+  timer: Cancel | null;
 }
 
 export class AssistantTelegramCardsDesk {
@@ -89,8 +124,9 @@ export class AssistantTelegramCardsDesk {
   private readonly clock: AssistantClock;
   private tick: Cancel | null = null;
   private stopped = false;
-  /** Desks retired by `/cards` or the switch, as `chat:message`, so a reply to one is answered. */
-  private readonly retired = new Set<string>();
+  /** Every version of every desk message Telegram confirmed, as `chat:message`, oldest first. */
+  private readonly history = new Map<string, DeskSnapshot[]>();
+  private readonly timing: DeskTiming;
   /** Chats whose surviving cards were put back since this process started. */
   private readonly restored = new Set<string>();
   private known: string[] = [];
@@ -98,6 +134,7 @@ export class AssistantTelegramCardsDesk {
   constructor(private readonly deps: CardsDeskDeps) {
     this.store = deps.store ?? memoryCardDeskStore();
     this.clock = deps.clock ?? assistantClock;
+    this.timing = { ...DESK_TIMING, ...deps.timing };
   }
 
   private enabled(): boolean {
@@ -106,7 +143,7 @@ export class AssistantTelegramCardsDesk {
 
   private desk(chatId: string): ChatDesk {
     let d = this.desks.get(chatId);
-    if (!d) this.desks.set(chatId, d = { current: null, shown: null, pressPending: 0, drawnAt: 0, index: 0, group: null, seq: 0, drawn: null });
+    if (!d) this.desks.set(chatId, d = { current: null, shown: null, pressPending: 0, drawnAt: 0, index: 0, group: null, seq: 0, drawn: null, userAt: 0, pendingSince: 0, timer: null });
     return d;
   }
 
@@ -115,7 +152,7 @@ export class AssistantTelegramCardsDesk {
     this.known = chats;
     await this.restoreAll();
     if (this.stopped) return;
-    for (const chatId of new Set([...this.store.chats(), ...chats])) this.changed(chatId);
+    for (const chatId of new Set([...this.store.chats(), ...chats])) this.changed(chatId, { now: true });
     this.armTick();
   }
 
@@ -137,6 +174,7 @@ export class AssistantTelegramCardsDesk {
     this.stopped = true;
     this.tick?.();
     this.tick = null;
+    for (const d of this.desks.values()) { d.timer?.(); d.timer = null; }
   }
 
   /** A card on the phone that waits on the user. */
@@ -166,16 +204,45 @@ export class AssistantTelegramCardsDesk {
   }
 
   /**
-   * A reply to the desk is a reply to the card it showed when the reply was written (`sentAt`, ms):
-   * the card's own message, which every module that takes words for a card already knows. Refused
-   * when that card is not certain; null when the reply is not to a desk at all.
+   * Where a reply to one of this chat's desk messages (the current one, or one `/cards` moved down)
+   * goes: the card's own message, which every module that takes words for a card already knows, or
+   * a question listing the cards. Null when the message was never a desk.
    */
-  replyTarget(chatId: string, messageId: number, sentAt: number): DeskReply | null {
-    if (this.retired.has(`${chatId}:${messageId}`)) return { refuse: DESK_REPLY_MOVED };
-    if (messageId !== this.messageOf(chatId)) return null;
-    const shown = this.desks.get(chatId)?.shown ?? null;
-    const target = shown ? this.entries.get(chatId)?.get(shown.key)?.messageId ?? null : null;
-    return deskReplyFor(shown, target, sentAt);
+  replyFor(chatId: string, messageId: number, input: DeskReplyInput): DeskReplyRoute | null {
+    const history = this.history.get(`${chatId}:${messageId}`);
+    if (!history && messageId !== this.messageOf(chatId)) return null;
+    const waiting = this.waiting(chatId);
+    const decision = resolveDeskReply(history ?? [], waiting.map((e) => ({ key: e.key, answers: e.answers ?? [] })), input);
+    if ("to" in decision) {
+      const target = this.cardMessage(chatId, decision.to);
+      if (target !== null) return { to: target, key: decision.to, why: decision.why };
+    }
+    const ask = "ask" in decision ? decision.ask : waiting.map((e) => e.key);
+    const lines = new Map((history ?? []).flatMap((s) => s.lines.map((l) => [l.key, l.text] as const)));
+    return {
+      ask: ask.map((key) => ({ key, label: this.label(chatId, key) ?? lines.get(key) ?? "A card" })),
+      ended: ("ended" in decision ? decision.ended : []).map((key) => lines.get(key)).filter((t): t is string => !!t),
+    };
+  }
+
+  /** A waiting card's own message in this chat; null when it no longer waits or has none. */
+  cardMessage(chatId: string, key: string): number | null {
+    const e = this.waiting(chatId).find((x) => x.key === key);
+    return e?.messageId ?? null;
+  }
+
+  /** "🔐 nxsys · Release 0.26.40: Bash", plain, as a button names a card. */
+  private label(chatId: string, key: string): string | null {
+    const e = this.entries.get(chatId)?.get(key);
+    if (!e) return null;
+    return [e.icon, e.project?.trim() ? `${e.project.trim()} ·` : "", e.title.replace(/\s+/g, " ").trim()].filter(Boolean).join(" ");
+  }
+
+  /** The user wrote in the chat: the desk holds still a while, in case they are replying to it. */
+  noteUserActivity(chatId: string): void {
+    const d = this.desk(chatId);
+    d.userAt = this.clock.now();
+    if (d.timer) this.schedule(chatId, d);
   }
 
   /**
@@ -189,16 +256,18 @@ export class AssistantTelegramCardsDesk {
     return true;
   }
 
-  /** Draws the desk again even if nothing seems to have changed. */
+  /** Draws the desk again at once, even if nothing seems to have changed (after a press on it). */
   redraw(chatId: string): void {
     const d = this.desks.get(chatId);
     if (d) d.drawn = null;
-    this.changed(chatId);
+    this.changed(chatId, { now: true });
   }
 
   forgetChat(chatId: string): void {
     const d = this.desks.get(chatId);
+    d?.timer?.();
     if (d?.group) this.deps.codes.dropGroup(d.group);
+    for (const key of [...this.history.keys()]) if (key.startsWith(`${chatId}:`)) this.history.delete(key);
     this.desks.delete(chatId);
     this.entries.delete(chatId);
     this.store.set(chatId, null);
@@ -216,9 +285,48 @@ export class AssistantTelegramCardsDesk {
     return sortEntries([...chat.values()]);
   }
 
-  /** Something on the desk may have changed: one redraw, queued, drawn when it runs. */
-  changed(chatId: string): void {
+  /**
+   * Something on the desk may have changed. Drawn at once when the user is acting on the desk
+   * (`now`, or a press on it moments ago); otherwise paced (`DeskTiming`).
+   */
+  changed(chatId: string, opts: { now?: boolean } = {}): void {
     if (this.stopped) return;
+    const d = this.desk(chatId);
+    const pressed = d.pressPending > 0 && this.clock.now() - d.pressPending <= PRESS_SEEN_MS;
+    if (opts.now || pressed) {
+      d.timer?.();
+      d.timer = null;
+      d.pendingSince = 0;
+      this.enqueueDraw(chatId);
+      return;
+    }
+    if (!d.pendingSince) d.pendingSince = this.clock.now();
+    this.schedule(chatId, d);
+  }
+
+  /** (Re)sets the timer of a paced change for the latest moment the pacing allows. */
+  private schedule(chatId: string, d: ChatDesk): void {
+    const now = this.clock.now();
+    const t = this.timing;
+    const at = Math.min(
+      Math.max(now + t.debounceMs, d.userAt + t.quietAfterUserMs, d.drawnAt + t.minGapMs),
+      d.pendingSince + t.maxWaitMs,
+    );
+    d.timer?.();
+    d.timer = null;
+    if (at <= now) {
+      d.pendingSince = 0;
+      this.enqueueDraw(chatId);
+      return;
+    }
+    d.timer = this.clock.setTimer(() => {
+      d.timer = null;
+      d.pendingSince = 0;
+      if (!this.stopped) this.enqueueDraw(chatId);
+    }, at - now);
+  }
+
+  private enqueueDraw(chatId: string): void {
     let attempts = 0;
     this.deps.queue.enqueue(chatId, {
       key: `card-desk:${chatId}`, final: true, label: "card desk",
@@ -249,7 +357,7 @@ export class AssistantTelegramCardsDesk {
     if (next < 0) return "This card is no longer waiting.";
     d.current = list[next]!.key;
     d.index = next;
-    this.changed(chatId);
+    this.changed(chatId, { now: true });
     return `${next + 1} of ${list.length}`;
   }
 
@@ -266,7 +374,7 @@ export class AssistantTelegramCardsDesk {
       this.retire(chatId, old, MOVED_DESK_HTML);
     }
     this.desk(chatId).drawn = null;
-    this.changed(chatId);
+    this.changed(chatId, { now: true });
     return null;
   }
 
@@ -310,8 +418,6 @@ export class AssistantTelegramCardsDesk {
 
   /** Unpins an old desk and leaves one line in its place. */
   private retire(chatId: string, messageId: number, html: string): void {
-    this.retired.add(`${chatId}:${messageId}`);
-    if (this.retired.size > RETIRED_MAX) this.retired.delete(this.retired.values().next().value!);
     let attempts = 0;
     this.deps.queue.enqueue(chatId, {
       final: true, label: "card desk retired",
@@ -360,7 +466,7 @@ export class AssistantTelegramCardsDesk {
         return { kind: "done" };
       }
       if (res.ok) {
-        this.settle(d, group, prevGroup, sig, drawn);
+        this.settle(chatId, messageId, d, group, prevGroup, sig, drawn, list);
         return { kind: "done" };
       }
       if (!("throttled" in res) && (EDIT_NOT_FOUND.test(res.description) || EDIT_REFUSED.test(res.description))) {
@@ -397,7 +503,7 @@ export class AssistantTelegramCardsDesk {
       return outcomeOf(sent, attempts);
     }
     this.store.set(chatId, sent.result.message_id);
-    this.settle(d, group, prevGroup, sig, drawn);
+    this.settle(chatId, sent.result.message_id, d, group, prevGroup, sig, drawn, list);
     const pinned = await client.pinChatMessage(chatId, sent.result.message_id);
     if (!pinned.ok) log.warn(`card desk for chat ${chatId}: could not pin it: ${pinned.description}`);
     return { kind: "done" };
@@ -408,21 +514,38 @@ export class AssistantTelegramCardsDesk {
     return this.stopped || this.desks.get(chatId) !== d;
   }
 
-  /** Telegram has the drawn desk: its buttons are the live ones, and what it shows is now `shown`. */
-  private settle(d: ChatDesk, group: string, prevGroup: string | null, sig: string, drawn: { current: DeskEntry | null; full: boolean }): void {
+  /**
+   * Telegram has the drawn desk: its buttons are the live ones, and this version is kept, so a reply
+   * is matched against what the phone showed rather than what the desk shows by then.
+   */
+  private settle(
+    chatId: string, messageId: number, d: ChatDesk, group: string, prevGroup: string | null, sig: string,
+    drawn: { html: string; current: DeskEntry | null }, list: DeskEntry[],
+  ): void {
     if (prevGroup && prevGroup !== group) this.deps.codes.dropGroup(prevGroup);
     d.group = group;
     d.drawn = sig;
     const now = this.clock.now();
     d.drawnAt = now;
     const key = drawn.current?.key ?? null;
-    if ((d.shown?.key ?? null) === key) {
-      if (d.shown) d.shown.full = drawn.full;
-      return;
-    }
-    const byPress = d.pressPending > 0 && now - d.pressPending <= PRESS_SEEN_MS;
-    d.pressPending = 0;
-    d.shown = key === null ? null : { key, from: now, byPress, full: drawn.full };
+    const moved = d.shown !== key;
+    const byPress = moved && d.pressPending > 0 && now - d.pressPending <= PRESS_SEEN_MS;
+    if (moved) d.pressPending = 0;
+    d.shown = key;
+    this.remember(chatId, {
+      messageId, from: now, shown: key, byPress,
+      lines: list.map((e, i) => ({ key: e.key, text: stripTelegramHtml(entryLine(e, i + 1, false, now)) })),
+      shownText: stripTelegramHtml(drawn.html),
+    });
+  }
+
+  private remember(chatId: string, snap: DeskSnapshot): void {
+    const id = `${chatId}:${snap.messageId}`;
+    const kept = (this.history.get(id) ?? []).filter((s) => snap.from - s.from <= SNAPSHOT_MAX_AGE_MS);
+    kept.push(snap);
+    this.history.delete(id);
+    this.history.set(id, kept.slice(-SNAPSHOTS_PER_DESK));
+    while (this.history.size > DESKS_REMEMBERED) this.history.delete(this.history.keys().next().value!);
   }
 }
 

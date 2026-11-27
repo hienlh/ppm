@@ -35,7 +35,8 @@ const fake = startFakeTelegram();
 process.env[TELEGRAM_API_BASE_ENV] = fake.url;
 
 const P = "stub-desk-e2e";
-const answers = new Map<string, (r: { approved: boolean }) => void>();
+const answers = new Map<string, (r: { approved: boolean; data?: unknown }) => void>();
+const answered: Array<{ sessionId: string; data?: unknown }> = [];
 providerRegistry.register({
   id: P, name: "Desk e2e", supportsAssistantSessions: true, supportsSharedContext: true,
   async createSession() { return { id: crypto.randomUUID(), providerId: P, title: "", createdAt: "" }; },
@@ -50,14 +51,25 @@ providerRegistry.register({
       return;
     }
     const requestId = crypto.randomUUID();
-    const answer = new Promise<{ approved: boolean }>((resolve) => answers.set(requestId, resolve));
-    yield { type: "approval_request", requestId, tool: "Bash", input: { command: message } };
-    const r = await answer;
-    yield { type: "text", content: r.approved ? "Ran it." : "Did not run it." };
+    const answer = new Promise<{ approved: boolean; data?: unknown }>((resolve) => answers.set(requestId, resolve));
+    if (message.startsWith("ask:")) {
+      // A question that takes the user's own words, as a chat's AskUserQuestion does.
+      yield {
+        type: "approval_request", requestId, tool: "AskUserQuestion", input: { questions: [] },
+        questions: [{ id: "q", question: message.slice(4), options: [], multiSelect: false, allowsFreeText: true }],
+      } as unknown as ChatEvent;
+      const r = await answer;
+      answered.push({ sessionId, data: r.data });
+      yield { type: "text", content: "Thanks." };
+    } else {
+      yield { type: "approval_request", requestId, tool: "Bash", input: { command: message } };
+      const r = await answer;
+      yield { type: "text", content: r.approved ? "Ran it." : "Did not run it." };
+    }
     yield { type: "done", sessionId };
   },
-  resolveApproval(requestId: string, approved: boolean) {
-    answers.get(requestId)?.({ approved });
+  resolveApproval(requestId: string, approved: boolean, data?: unknown) {
+    answers.get(requestId)?.({ approved, data });
     answers.delete(requestId);
   },
 } as unknown as AIProvider);
@@ -82,7 +94,7 @@ await assistantTelegramBridge.start({
   debounceMs: 30, pollTimeoutS: 1, scaleDelay: (ms) => ms / 1000,
   sessionLink: async (provider, id) => `https://ppm.example.com/assistant?session=${provider}/${id}`,
   chatLink: async (project, provider, id) => `https://ppm.example.com/project/${project}?openChat=${provider}/${id}`,
-  desk: { store: memoryCardDeskStore() }, silence, reminders: { delayMs: 1500 },
+  desk: { store: memoryCardDeskStore(), timing: { debounceMs: 0, quietAfterUserMs: 0, minGapMs: 0, maxWaitMs: 0 } }, silence, reminders: { delayMs: 1500 },
 });
 
 const ctl = () => chatControl()!;
@@ -101,7 +113,7 @@ async function ask(project: string, title: string, command: string): Promise<str
   setSessionTitle(id, title);
   watch.watch({ assistantSessionId: assistant, targetSessionId: id, targetProject: project, targetProvider: P, notifyOn: ["done"] });
   await ctl().sendUserMessage(id, command, { origin: "telegram", projectName: project, providerId: P });
-  await until(`card for ${title}`, () => sent().some((m) => m.text.includes(command) && !m.text.startsWith("🔔 Waiting")));
+  await until(`card for ${title}`, () => sent().some((m) => m.text.includes(command.replace(/^ask:/, "")) && !m.text.startsWith("🔔 Waiting")));
   return id;
 }
 
@@ -148,6 +160,24 @@ try {
     await until(`answer ${i + 1}`, () => desk()?.text.includes(i === 0 ? "Waiting for you (1)" : "Nothing is waiting"));
   }
   await shot("impl-06-all-answered", "Trả lời hết: danh sách vẫn ghim và ghi “Nothing is waiting for you”");
+
+  // ppm/99: the list moves to another card while the user is writing an answer to it.
+  const migration = await ask("nxsys", "Data migration", "ask:Which database should the NX-6318 migration run against?");
+  const region = await ask("ppm", "Release region", "ask:Which region gets 0.26.42 first?");
+  await until("both questions listed", () => desk()?.text.includes("Waiting for you (2)"));
+  const listed = desk()!.message_id;
+  const first = ctl().liveState(migration)!.card!.requestId;
+  ctl().answerApproval(migration, first, { approved: false }, "ws");
+  await until("list moved on by itself", () => desk()?.text.includes("Which region") && desk()?.text.includes("Waiting for you (1)"));
+  fake.pushText(ME, ME, "staging first, then eu-west", "private", {
+    reply_to_message: { message_id: listed, date: Math.floor(Date.now() / 1000), chat: { id: ME, type: "private" } },
+  });
+  const question = await until("which-card question", () => sent().find((m) => m.text.startsWith("❓ Which card is this an answer to?")));
+  await shot("impl-07-which-card", "ppm/99 — danh sách đổi thẻ lúc đang gõ: giữ câu trả lời, hỏi “Which card is this an answer to?”");
+  fake.pressButton(ME, ME, question.message_id, fake.buttons(ME, question.message_id)[0]![0]!.callback_data!);
+  await until("answer reached the card", () => answered.some((a) => a.sessionId === region && JSON.stringify(a.data).includes("staging first")));
+  await until("question closed", () => sent().find((m) => m.message_id === question.message_id)?.text.includes("Sent as an answer to"));
+  await shot("impl-08-sent-to-card", "ppm/99 — bấm thẻ: câu trả lời vào đúng thẻ đó, câu hỏi ghi “Sent as an answer to …”");
 
   writeFileSync(out, JSON.stringify({ chat: ME, shots }, null, 2));
   console.log(`ok: ${shots.length} snapshots`);

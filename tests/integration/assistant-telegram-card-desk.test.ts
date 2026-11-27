@@ -50,7 +50,10 @@ interface Rig {
 }
 
 let nextChat = 9_100_000;
-function rig(opts: { store?: CardDeskStore; sendTimeoutMs?: number; chat?: number; on?: boolean } = {}): Rig {
+/** No pacing: every change is drawn at once, so a test sees each one. */
+const AT_ONCE = { debounceMs: 0, quietAfterUserMs: 0, minGapMs: 0, maxWaitMs: 0 };
+
+function rig(opts: { store?: CardDeskStore; sendTimeoutMs?: number; chat?: number; on?: boolean; timing?: Partial<typeof AT_ONCE> } = {}): Rig {
   const chat = opts.chat ?? nextChat++;
   const clock = manualClock();
   clock.at = 10 * 60 * 60_000;
@@ -59,7 +62,7 @@ function rig(opts: { store?: CardDeskStore; sendTimeoutMs?: number; chat?: numbe
   const queue = new AssistantTelegramSendQueue(client, { canSend: () => true, scaleDelay: (ms) => ms / 1000 });
   const store = opts.store ?? memoryCardDeskStore();
   const on = { value: opts.on ?? true };
-  const desk = new AssistantTelegramCardsDesk({ queue, codes, store, clock, enabled: () => on.value });
+  const desk = new AssistantTelegramCardsDesk({ queue, codes, store, clock, enabled: () => on.value, timing: { ...AT_ONCE, ...opts.timing } });
   return { chat, chatId: String(chat), desk, codes, queue, clock, store, on, idle: () => queue.whenIdle() };
 }
 
@@ -178,11 +181,11 @@ describe("the pinned card desk", () => {
     await r.idle();
     const id = deskMessages(r)[0]!.message_id;
     // Written a while after the card came up by itself: it answers that card.
-    expect(r.desk.replyTarget(r.chatId, id, r.clock.now() + 61_000)).toEqual({ to: 54 });
-    // Written right after the desk moved by itself, or before the card came up: not certain, refused.
-    expect(r.desk.replyTarget(r.chatId, id, r.clock.now() + 5_000)).toMatchObject({ refuse: expect.stringContaining("pinned list changed") });
-    expect(r.desk.replyTarget(r.chatId, id, r.clock.now() - 5_000)).toMatchObject({ refuse: expect.stringContaining("pinned list changed") });
-    expect(r.desk.replyTarget(r.chatId, id + 1000, r.clock.now())).toBeNull();
+    expect(r.desk.replyFor(r.chatId, id, { sentAt: r.clock.now() + 5_000, text: "go" })).toEqual({ to: 54, key: "card:req-4", why: "one card shown" });
+    // Written before the list showed anything: nothing was seen, so the words are kept and the user asked.
+    expect(r.desk.replyFor(r.chatId, id, { sentAt: r.clock.now() - 5_000, text: "go" }))
+      .toEqual({ ask: [{ key: "card:req-4", label: "🔐 nxsys · Deploy 4" }], ended: [] });
+    expect(r.desk.replyFor(r.chatId, id + 1000, { sentAt: r.clock.now(), text: "go" })).toBeNull();
   });
 
   it("goes to the card's own message with a line quoting it", async () => {
@@ -251,7 +254,7 @@ describe("the pinned card desk", () => {
 });
 
 describe("the pinned card desk, after review", () => {
-  it("routes a reply at once to the card the user moved to by pressing, and refuses one to a moved desk", async () => {
+  it("routes a reply at once to the card the user moved to by pressing, and one to a moved desk by what it showed", async () => {
     const r = rig();
     r.desk.put(r.chatId, card(r, 2));
     r.desk.put(r.chatId, card(r, 1));
@@ -260,10 +263,11 @@ describe("the pinned card desk, after review", () => {
     r.desk.pressedOn(r.chatId, id);
     expect(pressDesk(r, id, "2")).toBe("2 of 2");
     await r.idle();
-    expect(r.desk.replyTarget(r.chatId, id, r.clock.now())).toEqual({ to: 51 });
+    expect(r.desk.replyFor(r.chatId, id, { sentAt: r.clock.now(), text: "ok" })).toMatchObject({ to: 51 });
     expect(r.desk.resend(r.chatId)).toBeNull();
     await r.idle();
-    expect(r.desk.replyTarget(r.chatId, id, r.clock.now() + 120_000)).toMatchObject({ refuse: expect.stringContaining("moved down") });
+    // A reply to the list /cards moved down answers what that list showed.
+    expect(r.desk.replyFor(r.chatId, id, { sentAt: r.clock.now() + 120_000, text: "ok" })).toMatchObject({ to: 51 });
   });
 
   it("records and pins nothing when the bridge stops while the desk is on its way", async () => {
@@ -317,6 +321,43 @@ describe("the pinned card desk, after review", () => {
     await r.desk.refresh();
     await r.idle();
     expect(deskMessages(r)[0]!.text).toContain("Waiting for you (1)");
+  });
+});
+
+describe("the pinned card desk, paced", () => {
+  const PACED = { debounceMs: 2_000, quietAfterUserMs: 45_000, minGapMs: 15_000, maxWaitMs: 120_000 };
+  const edits = (r: Rig) => fake.calls.filter((c) => c.method === "editMessageText" && Number(c.body.chat_id) === r.chat).length;
+
+  it("draws a burst of changes as one edit, and holds still after the user writes", async () => {
+    const r = rig({ timing: PACED });
+    r.desk.put(r.chatId, card(r, 3));
+    r.clock.fire();
+    await r.idle();
+    const id = deskMessages(r)[0]!.message_id;
+    const before = edits(r);
+    r.desk.put(r.chatId, card(r, 2));
+    r.desk.put(r.chatId, card(r, 1));
+    await r.idle();
+    expect(edits(r)).toBe(before);
+    r.desk.noteUserActivity(r.chatId);
+    r.desk.remove(r.chatId, "card:req-2");
+    r.clock.fire();
+    await r.idle();
+    expect(edits(r)).toBe(before + 1);
+    expect(visible(r, id).text).toContain("Waiting for you (2)");
+  });
+
+  it("draws at once what the user does on the list", async () => {
+    const r = rig({ timing: PACED });
+    r.desk.put(r.chatId, card(r, 2));
+    r.desk.put(r.chatId, card(r, 1));
+    r.clock.fire();
+    await r.idle();
+    const id = deskMessages(r)[0]!.message_id;
+    r.desk.noteUserActivity(r.chatId);
+    expect(pressDesk(r, id, "2")).toBe("2 of 2");
+    await r.idle();
+    expect(visible(r, id).text).toContain("Allow deploy 1?");
   });
 });
 
