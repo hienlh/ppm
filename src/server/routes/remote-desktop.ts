@@ -10,6 +10,7 @@
  */
 import { Hono, type Context } from "hono";
 import { ok, err } from "../../types/api.ts";
+import { holdRequestOpen } from "../helpers/hold-request-open.ts";
 import { configService } from "../../services/config.service.ts";
 import { getFfmpegCapabilities, workingEncoders } from "../../services/media-transcode/ffmpeg-capabilities.ts";
 import { isRemoteDesktopEnabled } from "../../services/remote-desktop/remote-desktop-flag.ts";
@@ -95,12 +96,19 @@ remoteDesktopRoutes.post("/requirements/ffmpeg/install", (c) => {
   }
 });
 
+/** A Windows helper task can take well over Bun.serve's 10-second idle limit to answer (measured:
+ *  20 s for a Reattach whose PowerShell started slowly). Cut off, the page reported a failure while
+ *  tscon went on to move the session anyway. The helper's own wait is 20 s, plus its status
+ *  checks; 60 s covers both. */
+const HELPER_ANSWER_SECONDS = 60;
+
 // Same guards as /session: these pop dialogs / open panes on the host, which is host control too.
 remoteDesktopRoutes.post("/requirements/:id/:action", async (c) => {
   const rejected = assertSessionAllowed(c);
   if (rejected) return rejected;
   const action = HOST_ACTIONS.find((a) => a === c.req.param("action"));
   if (!action) return c.json(err("unknown action"), 404);
+  holdRequestOpen(c, HELPER_ANSWER_SECONDS);
   const result = await runHostAction(c.req.param("id"), action);
   if (result === null) return c.json(err("this requirement has no host action"), 404);
   return c.json(ok(result));
@@ -127,7 +135,10 @@ remoteDesktopRoutes.post("/headless-helper/:kind", async (c) => {
   if (rejected) return rejected;
   const kind = c.req.param("kind");
   // "I can still reach this PC": the user answers the safety net.
-  if (kind === "confirm") return c.json(ok(await runHelperAction("Confirm")));
+  if (kind === "confirm") {
+    holdRequestOpen(c, HELPER_ANSWER_SECONDS);
+    return c.json(ok(await runHelperAction("Confirm")));
+  }
   if (kind !== "install" && kind !== "uninstall") return c.json(err("unknown helper action"), 404);
   try {
     return c.json(ok(startHelperJob(kind)), 202);
