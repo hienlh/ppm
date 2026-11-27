@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { createLogger } from "../../logger.ts";
 import {
-  helperPaths, HELPER_VERSION, powershellExe, PPM_HELPER_ACTIONS, schtasksExe, taskName, whoamiExe, type HelperAction, type PpmHelperAction,
+  helperPaths, HELPER_VERSION, MIN_USABLE_HELPER_VERSION, powershellExe, PPM_HELPER_ACTIONS, schtasksExe, taskName, whoamiExe, type HelperAction, type PpmHelperAction,
 } from "./helper-paths.ts";
 import { helperSystem, type HelperSystem } from "./helper-system.ts";
 import {
@@ -34,11 +34,15 @@ export interface HelperRunResult {
 export interface HelperJob { kind: "install" | "uninstall"; state: "running" | "done" | "error"; message: string | null }
 export interface HelperStatus {
   supported: boolean;
-  /** Installed, current version, for this user, every task present: PPM can use it. */
+  /** Installed, a version PPM still runs, for this user, every task present: PPM can use it. */
   usable: boolean;
   installed: boolean;
-  /** Installed by an older PPM: reinstall to update. */
+  /** The installed version, or null when there is none (or no record of it). */
+  version: number | null;
+  /** Installed by an older PPM: an update is available. Still usable unless `tooOld`. */
   outdated: boolean;
+  /** Older than `MIN_USABLE_HELPER_VERSION`: refused until updated. */
+  tooOld: boolean;
   /** Installed for another Windows user; this user's PPM cannot run its tasks. */
   otherUser: boolean;
   virtualDisplay: boolean;
@@ -104,7 +108,7 @@ async function taskExists(sys: HelperSystem, action: HelperAction): Promise<bool
 export async function getHelperStatus(force = false): Promise<HelperStatus> {
   const sys = helperSystem();
   const unsupported: HelperStatus = {
-    supported: false, usable: false, installed: false, outdated: false, otherUser: false,
+    supported: false, usable: false, installed: false, version: null, outdated: false, tooOld: false, otherUser: false,
     virtualDisplay: false, lastRun: null, rescue: null, job,
   };
   if (sys.platform !== "win32") return unsupported;
@@ -114,18 +118,20 @@ export async function getHelperStatus(force = false): Promise<HelperStatus> {
   const installed = !!record && sys.exists(paths.helperScript);
   const sid = await currentUserSid(sys);
   const otherUser = installed && (!sid || record?.userSid !== sid);
-  const outdated = installed && record?.version !== HELPER_VERSION;
+  const version = installed && typeof record?.version === "number" ? record.version : null;
+  const outdated = installed && (version === null || version < HELPER_VERSION);
+  const tooOld = installed && (version === null || version < MIN_USABLE_HELPER_VERSION);
   const plan = helperInstallPlan();
   let tasksPresent = false;
-  if (installed && !otherUser && !outdated) {
+  if (installed && !otherUser && !tooOld) {
     // Only the tasks PPM starts: `Rescue` is not even readable by this user, by design.
     const mine = plan.actions.filter((a): a is PpmHelperAction => (PPM_HELPER_ACTIONS as readonly string[]).includes(a));
     tasksPresent = (await Promise.all(mine.map((a) => taskExists(sys, a)))).every(Boolean);
   }
   const status: HelperStatus = {
     supported: true,
-    usable: installed && !otherUser && !outdated && tasksPresent,
-    installed, outdated, otherUser,
+    usable: installed && !otherUser && !tooOld && tasksPresent,
+    installed, version, outdated, tooOld, otherUser,
     virtualDisplay: installed && (record?.actions ?? []).includes("DisplayOn"),
     lastRun: parseJson(sys.readText(paths.lastRun)),
     rescue: getRescueState(),
