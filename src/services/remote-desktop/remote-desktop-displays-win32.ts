@@ -34,6 +34,12 @@ function physicalPixels<T>(api: NonNullable<ReturnType<typeof loadUser32>>, read
   finally { if (previous) api.symbols.SetThreadDpiAwarenessContext(previous); }
 }
 
+/** Windows' stand-in "display" for a session with no output at all. Measured: the device name
+ *  comes back as a bare `WinDisc`, with no `\\.\` prefix; both spellings are matched. */
+export function isPlaceholderDisplay(deviceName: string): boolean {
+  return /^(?:\\\\\.\\)?windisc$/i.test(deviceName);
+}
+
 /** Decode MONITORINFOEXW, including signed origins for monitors left/above the primary. */
 export function decodeWindowsMonitorInfo(info: Uint8Array): RemoteDisplay | null {
   if (info.byteLength < MONITOR_INFO_EX_SIZE) return null;
@@ -47,6 +53,10 @@ export function decodeWindowsMonitorInfo(info: Uint8Array): RemoteDisplay | null
     device += String.fromCharCode(unit);
   }
   if (!device || width <= 0 || height <= 0) return null;
+  // `\\.\WinDisc` is the placeholder Windows reports when no output is attached at all (measured
+  // on a headless Windows 11 host: 1920x1080, and a capture of it is a blank white frame with the
+  // cursor on it). Counting it as a display hid the "no display" row and streamed nothing.
+  if (isPlaceholderDisplay(device)) return null;
   return {
     id: device,
     label: device.replace(/^\\\\\.\\DISPLAY/i, "Display "),

@@ -16,14 +16,32 @@ export type RequirementAction =
   | { kind: "terminal"; label: string; command: string }
   | { kind: "install"; label: string }
   | { kind: "link"; label: string; url: string }
-  | { kind: "host"; label: string; action: "request" | "open-settings" };
+  | { kind: "host"; label: string; action: HostAction }
+  /** Go on as things are: answers a `choice` row without asking the host. */
+  | { kind: "continue"; label: string };
+
+/** Mirrors the server's `HostAction`: `reattach` and `display-on` run the Windows helper's
+ *  fixed tasks. */
+export type HostAction = "request" | "open-settings" | "reattach" | "display-on";
+
+/** What a host action reports back; `message` only for actions with a real outcome to tell.
+ *  `pending`: the host started it but has not said how it went — not a failure; the checklist's
+ *  own polling shows what really happened. */
+export interface HostActionResult {
+  ok: boolean;
+  message?: string;
+  pending?: boolean;
+}
 
 export interface RemoteDesktopRequirement {
   id: string;
   ok: boolean;
-  gates: "video" | "input";
+  /** `choice`: blocks nothing, but the checklist stops so the user picks before streaming. */
+  gates: "video" | "input" | "choice";
   title: string;
   detail: string;
+  /** A consequence to read before pressing an action. Absent on older hosts. */
+  warning?: string;
   actions: RequirementAction[];
 }
 
@@ -123,13 +141,14 @@ export function normalizeCapabilities(raw: RemoteDesktopCapabilities): RemoteDes
 }
 
 export const READINESS_POLL_MS = 2000;
+export const PENDING_RECHECK_MS = 30_000;
 
 export function useRemoteDesktopReadiness(poll: boolean): {
   caps: RemoteDesktopCapabilities | null;
   /** 404 (feature flag off) or network failure — treat as "not available". */
   failed: boolean;
   refresh: () => void;
-  runHostAction: (id: string, action: "request" | "open-settings") => Promise<void>;
+  runHostAction: (id: string, action: HostAction) => Promise<HostActionResult | null>;
 } {
   const minimalMode = useSettingsStore((s) => s.minimalMode);
   const [caps, setCaps] = useState<RemoteDesktopCapabilities | null>(null);
@@ -156,9 +175,19 @@ export function useRemoteDesktopReadiness(poll: boolean): {
     return () => clearInterval(timer);
   }, [poll, ready, refresh, minimalMode]);
 
-  const runHostAction = useCallback(async (id: string, action: "request" | "open-settings") => {
-    try { await api.post(`/api/remote-desktop/requirements/${encodeURIComponent(id)}/${action}`); } catch { /* panel shows state on next poll */ }
+  const runHostAction = useCallback(async (id: string, action: HostAction): Promise<HostActionResult | null> => {
+    let result: HostActionResult | null = null;
+    try {
+      result = await api.post<HostActionResult>(`/api/remote-desktop/requirements/${encodeURIComponent(id)}/${action}`);
+    } catch (e) {
+      // The panel also shows the state on the next poll; the message says why this one failed.
+      result = { ok: false, message: e instanceof Error ? e.message : String(e) };
+    }
     refresh();
+    // Not answered yet: the host may still finish it (measured: 27 s). One more read once it
+    // likely has, on top of the gate's own polling, which stops as soon as the host looks ready.
+    if (result?.pending) setTimeout(refresh, PENDING_RECHECK_MS);
+    return result;
   }, [refresh]);
 
   return { caps, failed, refresh, runHostAction };

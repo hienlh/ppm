@@ -10,12 +10,16 @@
  */
 import { Hono, type Context } from "hono";
 import { ok, err } from "../../types/api.ts";
+import { holdRequestOpen } from "../helpers/hold-request-open.ts";
 import { configService } from "../../services/config.service.ts";
 import { getFfmpegCapabilities, workingEncoders } from "../../services/media-transcode/ffmpeg-capabilities.ts";
 import { isRemoteDesktopEnabled } from "../../services/remote-desktop/remote-desktop-flag.ts";
 import { mintRemoteDesktopNonce } from "../../services/remote-desktop/remote-desktop-nonce.ts";
 import { listDisplays } from "../../services/remote-desktop/remote-desktop-displays.ts";
-import { remoteDesktopReadiness, runHostAction } from "../../services/remote-desktop/remote-desktop-requirements.ts";
+import { HOST_ACTIONS, remoteDesktopReadiness, runHostAction } from "../../services/remote-desktop/remote-desktop-requirements.ts";
+import {
+  ANSWER_WAIT_MS, getHelperStatus, getRescueState, runHelperAction, startHelperJob,
+} from "../../services/remote-desktop/win32-helper/helper-service.ts";
 import { resolveWhepTarget } from "../../services/remote-desktop/remote-desktop-whep-registry.ts";
 import {
   relayStatus, startMediamtxInstall, uninstallMediamtx,
@@ -92,15 +96,55 @@ remoteDesktopRoutes.post("/requirements/ffmpeg/install", (c) => {
   }
 });
 
+/** A Windows helper task can take well over Bun.serve's 10-second idle limit to answer (measured:
+ *  20 s and 27 s). Cut off, the page reported a failure while the task went on to do its work.
+ *  The request waits `ANSWER_WAIT_MS` for the answer, after up to `RUN_TIMEOUT_MS` each for the
+ *  status checks and starting the task; this covers all three. */
+const HELPER_ANSWER_SECONDS = Math.ceil(ANSWER_WAIT_MS / 1000) + 60;
+
 // Same guards as /session: these pop dialogs / open panes on the host, which is host control too.
 remoteDesktopRoutes.post("/requirements/:id/:action", async (c) => {
   const rejected = assertSessionAllowed(c);
   if (rejected) return rejected;
-  const action = c.req.param("action");
-  if (action !== "request" && action !== "open-settings") return c.json(err("unknown action"), 404);
-  const okNow = await runHostAction(c.req.param("id"), action);
-  if (okNow === null) return c.json(err("this requirement has no host action"), 404);
-  return c.json(ok({ ok: okNow }));
+  const action = HOST_ACTIONS.find((a) => a === c.req.param("action"));
+  if (!action) return c.json(err("unknown action"), 404);
+  holdRequestOpen(c, HELPER_ANSWER_SECONDS);
+  const result = await runHostAction(c.req.param("id"), action);
+  if (result === null) return c.json(err("this requirement has no host action"), 404);
+  return c.json(ok(result));
+});
+
+/** The Windows headless helper (`win32-helper/`): status, and install/uninstall through one
+ *  administrator prompt on the host. Host control, so the same guards as `/session`. */
+remoteDesktopRoutes.get("/headless-helper", async (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  return c.json(ok(await getHelperStatus()));
+});
+
+/** The safety net armed by bringing the session back or turning the virtual display on: when
+ *  its `Rescue` task runs unless confirmed. Polled by the viewer; reads one small file. */
+remoteDesktopRoutes.get("/headless-helper/rescue", (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  return c.json(ok(getRescueState()));
+});
+
+remoteDesktopRoutes.post("/headless-helper/:kind", async (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  const kind = c.req.param("kind");
+  // "I can still reach this PC": the user answers the safety net.
+  if (kind === "confirm") {
+    holdRequestOpen(c, HELPER_ANSWER_SECONDS);
+    return c.json(ok(await runHelperAction("Confirm")));
+  }
+  if (kind !== "install" && kind !== "uninstall") return c.json(err("unknown helper action"), 404);
+  try {
+    return c.json(ok(startHelperJob(kind)), 202);
+  } catch (error) {
+    return c.json(err(error instanceof Error ? error.message : String(error)), 400);
+  }
 });
 
 remoteDesktopRoutes.post("/session", (c) => {

@@ -24,6 +24,7 @@ import { canvasCssSize } from "./remote-desktop-view-style";
 import { useRemoteDesktopRecorder } from "./use-remote-desktop-recorder";
 import { saveCanvasScreenshot } from "./remote-desktop-recording";
 import { RemoteDesktopCustomQualityDialog } from "./remote-desktop-custom-quality-dialog";
+import { RemoteDesktopInputBlockedBar } from "./remote-desktop-input-blocked-bar";
 
 export default function RemoteDesktopWindowContent({ id }: WindowContentProps) {
   const closeWindow = useWindowStore((s) => s.close);
@@ -46,7 +47,7 @@ function RemoteDesktopViewer() {
     showCursor, setShowCursor,
     codec, setCodec, audioOn, setAudioOn, getAudioTracks,
     privacyOn, privacyError, setPrivacyOn,
-    hostModeId, hostOriginalModeId, resolutionError, setHostMode,
+    hostModeId, hostOriginalModeId, resolutionError, setHostMode, inputBlocked,
     pendingHostClipboard, clearHostClipboard, sendClipboard, requestHostClipboard,
   } = useRemoteDesktopConnection(canvasRef, { displayId: display.displayId });
   const statsVisible = useSettingsStore((s) => s.remoteDesktopStatsVisible);
@@ -160,6 +161,7 @@ function RemoteDesktopViewer() {
         statsVisible={statsVisible}
         onToggleStats={toggleStats}
       />
+      <RemoteDesktopInputBlockedBar blocked={inputBlocked} />
       {/* Only after a real paste attempt: a host with no clipboard tool is not worth a warning
           until the user actually reaches for it. */}
       <RemoteDesktopClipboardNotice

@@ -18,13 +18,22 @@ import { detectLinuxSession, type LinuxSession } from "./remote-desktop-linux-se
 import { gstElements, type GstElements } from "./remote-desktop-capture-wayland.ts";
 import { getX11 } from "./remote-desktop-x11.ts";
 import {
+  realWindowsHost, snapshotWindowsHost, windowsHostRequirements, WIN_DISPLAY_ID, WIN_SESSION_ID, type WindowsHostApi,
+} from "./remote-desktop-win32-host.ts";
+import { runHelperAction } from "./win32-helper/helper-service.ts";
+import { virtualDisplayLease } from "./win32-helper/virtual-display-lease.ts";
+import {
   MAC_PERMISSION_SETTINGS_URL,
   macPermissionStatus,
   requestMacPermission,
   type MacPermissionId,
 } from "./remote-desktop-macos-permissions.ts";
 
-export type HostAction = "request" | "open-settings";
+/** `reattach`: run the Windows helper's fixed task that moves PPM's disconnected session back
+ *  to the console. `display-on`: its task that enables the virtual display, which PPM turns off
+ *  again when no session needs it (`win32-helper/`). */
+export type HostAction = "request" | "open-settings" | "reattach" | "display-on";
+export const HOST_ACTIONS: readonly HostAction[] = ["request", "open-settings", "reattach", "display-on"];
 
 export type RequirementAction =
   /** Type `command` into a PPM terminal — that shell runs on the host, so this works from a phone. */
@@ -35,16 +44,23 @@ export type RequirementAction =
   /** Something only the host can do — show an OS permission prompt, open its Settings pane.
    *  `POST /api/remote-desktop/requirements/:id/:action`. Never a client-side URL: a
    *  `x-apple.systempreferences:` link means nothing on the phone driving the session. */
-  | { kind: "host"; label: string; action: HostAction };
+  | { kind: "host"; label: string; action: HostAction }
+  /** Go on as things are: answers a `choice` row, in the client, without asking the host. */
+  | { kind: "continue"; label: string };
 
 export interface RemoteDesktopRequirement {
   id: string;
   ok: boolean;
   /** Which part of the feature this blocks: no video = nothing to show; no input = view-only. */
-  gates: "video" | "input";
+  /** `choice`: blocks nothing, but the checklist stops so the user picks one of the row's actions
+   *  before streaming (Windows' fallback screen: a better display, or carry on as is). */
+  gates: "video" | "input" | "choice";
   title: string;
   /** One sentence: what it is for and what to do. Shown only while `ok` is false. */
   detail: string;
+  /** A consequence the user must know before pressing an action (e.g. the PC unlocks at its
+   *  own screen). Drawn apart from `detail`; optional so older clients simply skip it. */
+  warning?: string;
   actions: RequirementAction[];
 }
 
@@ -267,9 +283,12 @@ async function linuxRequirements(session: LinuxSession): Promise<RemoteDesktopRe
   return [...waylandCaptureRequirements(await gstElements()), uinputRequirement()];
 }
 
+/** `windowsHost` is passed by tests: it otherwise reads the real session and monitors, which a
+ *  Linux runner does not have and a developer's desktop answers differently from a headless PC. */
 export async function remoteDesktopReadiness(
   platform: NodeJS.Platform = process.platform,
   linuxSession = platform === "linux" ? detectLinuxSession() : null,
+  windowsHost: WindowsHostApi = realWindowsHost,
 ): Promise<RemoteDesktopReadiness> {
   // On Linux "is this platform supported" means "is there a graphical session to capture" —
   // the grabber then depends on its type, which is a requirement rather than a hard no.
@@ -286,6 +305,7 @@ export async function remoteDesktopReadiness(
       requirements.push(macPermissionRequirement("accessibility", status.accessibility));
     }
     if (platform === "linux" && linuxSession) requirements.push(...await linuxRequirements(linuxSession));
+    if (platform === "win32") requirements.push(...windowsHostRequirements(await snapshotWindowsHost(windowsHost)));
   }
   const inputSupported = getInputBackend(platform, linuxSession) !== null;
   return {
@@ -301,14 +321,23 @@ export async function remoteDesktopReadiness(
   };
 }
 
+export interface HostActionResult {
+  ok: boolean;
+  /** What happened, for actions whose outcome is not just the next poll (the Windows helper). */
+  message?: string;
+}
+
 /** Run a `host` action. Returns the requirement's `ok` afterwards, or null when the pair has
  *  no host path (caller answers 404). `open-settings` returns the current state — the grant
  *  lands later, the UI keeps polling. */
-export async function runHostAction(id: string, action: HostAction): Promise<boolean | null> {
+export async function runHostAction(id: string, action: HostAction): Promise<HostActionResult | null> {
+  if (id === WIN_SESSION_ID && action === "reattach") return runHelperAction("Reattach");
+  if (id === WIN_DISPLAY_ID && action === "display-on") return virtualDisplayLease.turnOn();
   if (id !== "screen-recording" && id !== "accessibility") return null;
-  if (action === "request") return requestMacPermission(id);
+  if (action !== "request" && action !== "open-settings") return null;
+  if (action === "request") return { ok: await requestMacPermission(id) };
   if (process.platform === "darwin") {
     Bun.spawn(["open", MAC_PERMISSION_SETTINGS_URL[id]], { stdout: "ignore", stderr: "ignore" });
   }
-  return (await macPermissionStatus())[id];
+  return { ok: (await macPermissionStatus())[id] };
 }

@@ -25,6 +25,7 @@ import {
 } from "../../../shared/remote-desktop-quality";
 import { CLIPBOARD_READ_DELAY_MS, writeClientClipboard } from "./remote-desktop-clipboard-client";
 import { useOpusAudioPlayer } from "./use-opus-audio-player";
+import { parseInputBlocked, type InputBlocked } from "./remote-desktop-input-blocked-bar";
 
 export type RemoteDesktopConnState = "connecting" | "streaming" | "error" | "closed";
 
@@ -111,6 +112,9 @@ export interface UseRemoteDesktopConnectionResult {
   hostOriginalModeId: string | null;
   /** Why the last switch failed, or null. */
   resolutionError: string | null;
+  /** The host is dropping this viewer's input because an administrator app has focus there;
+   *  null once input gets through again (the host says so). */
+  inputBlocked: InputBlocked | null;
   /** Ask the host to change its own display mode. Respawns the capture: `-video_size` is fixed
    *  at spawn, so the old grabber would keep reading a rectangle the framebuffer no longer has. */
   setHostMode: (modeId: string) => void;
@@ -202,6 +206,7 @@ export function useRemoteDesktopConnection(
   const [hostModeId, setHostModeId] = useState<string | null>(null);
   const [hostOriginalModeId, setHostOriginalModeId] = useState<string | null>(null);
   const [resolutionError, setResolutionError] = useState<string | null>(null);
+  const [inputBlocked, setInputBlocked] = useState<InputBlocked | null>(null);
 
   const sendMessage = useCallback((msg: Record<string, unknown>) => {
     const ws = wsRef.current;
@@ -314,6 +319,8 @@ export function useRemoteDesktopConnection(
     // A fresh session engages nothing, and the old session's grab died with its socket.
     setPrivacyOn(false);
     setPrivacyError(null);
+    // A new session is told the block in force when it starts; until then, nothing is known.
+    setInputBlocked(null);
     totalBytesRef.current = 0;
     decoder.reset();
 
@@ -382,6 +389,8 @@ export function useRemoteDesktopConnection(
             setResolutionError(null);
           } else if (msg.type === "resolutionError") {
             setResolutionError(typeof msg.message === "string" ? msg.message : "The host refused the mode.");
+          } else if (msg.type === "inputBlocked") {
+            setInputBlocked(parseInputBlocked(msg.blocked));
           } else if (msg.type === "privacy") {
             setPrivacyOn(msg.enabled === true);
             setPrivacyError(typeof msg.reason === "string" ? msg.reason : null);
@@ -486,6 +495,7 @@ export function useRemoteDesktopConnection(
     hostModeId,
     hostOriginalModeId,
     resolutionError,
+    inputBlocked,
     setHostMode,
     pendingHostClipboard,
     clearHostClipboard,

@@ -6,13 +6,24 @@
  *
  * Actions are generic (`terminal` types into a PPM dock terminal — the host's shell, so it works
  * from a phone; `host` asks the server to prompt/open Settings on the host; `link` opens on the
- * client). Same dark chrome and ≥44px targets as the warning gate, both surfaces.
+ * client). Same dark chrome as the warning gate; buttons take the standard sizes from
+ * `docs/design-guidelines.md` rule 3 (28px with text, 26px below `md`).
  */
 import { useState, type ReactNode } from "react";
-import { CheckCircle2, Circle, ExternalLink, Loader2, MonitorSmartphone, TerminalSquare } from "@/lib/icons";
+import { AlertTriangle, CheckCircle2, Circle, ExternalLink, Loader2, MonitorSmartphone, TerminalSquare } from "@/lib/icons";
+import { TEXT_BUTTON } from "@/lib/control-size";
 import { FfmpegInstallButton } from "./ffmpeg-install-button";
 import { runInTerminal } from "@/lib/run-in-terminal";
-import { useRemoteDesktopReadiness, type RemoteDesktopRequirement, type RequirementAction } from "./use-remote-desktop-readiness";
+import { HostActionButton } from "./remote-desktop-host-action-button";
+import {
+  useRemoteDesktopReadiness, type HostAction, type HostActionResult, type RemoteDesktopCapabilities,
+  type RemoteDesktopRequirement, type RequirementAction,
+} from "./use-remote-desktop-readiness";
+import { useHeadlessRescue } from "./use-headless-rescue";
+import { RescueBar } from "./remote-desktop-rescue-bar";
+
+/** Every button on this surface: the standard text-button size over this gate's own colours. */
+export const GATE_BUTTON = `inline-flex items-center justify-center ${TEXT_BUTTON}`;
 
 export interface RemoteDesktopReadinessGateProps {
   onCancel: () => void;
@@ -21,12 +32,49 @@ export interface RemoteDesktopReadinessGateProps {
 
 export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktopReadinessGateProps) {
   const [accepted, setAccepted] = useState(false);
-  const { caps, failed, runHostAction } = useRemoteDesktopReadiness(!accepted);
+  const { caps, failed, runHostAction: runOnHost } = useRemoteDesktopReadiness(!accepted);
+  const rescue = useHeadlessRescue(caps?.platform === "win32");
+  // Bringing the session back or turning the display on arms the safety net: show it at once.
+  const runHostAction = async (id: string, action: HostAction) => {
+    const result = await runOnHost(id, action);
+    rescue.refresh();
+    return result;
+  };
 
-  if (accepted || (caps?.videoReady && caps.inputReady)) return <>{children}</>;
+  // One wrapper in every state, so the bar coming and going never remounts the viewer.
+  return (
+    <div className="relative h-full w-full">
+      {accepted || (caps?.videoReady && caps.inputReady && !hasOpenChoice(caps))
+        ? children
+        : <Checklist caps={caps} failed={failed} onCancel={onCancel} onAccept={() => setAccepted(true)} runHostAction={runHostAction} />}
+      {rescue.rescue && (
+        // Above the viewer's toolbar (z-40): for five minutes this is the one thing that matters.
+        <div className="pointer-events-none absolute inset-x-0 top-2 z-50 flex justify-center px-4">
+          <RescueBar rescue={rescue.rescue} now={Date.now()} onConfirm={rescue.confirm} />
+        </div>
+      )}
+    </div>
+  );
+}
 
-  const pending = caps?.requirements.filter((r) => !r.ok) ?? [];
+/** A `choice` row still unanswered: the host works, but the user is asked first (Windows'
+ *  fallback screen: turn on the virtual display, or continue at the fallback's size). */
+export function hasOpenChoice(caps: RemoteDesktopCapabilities): boolean {
+  return caps.requirements.some((r) => !r.ok && r.gates === "choice");
+}
+
+function Checklist({ caps, failed, onCancel, onAccept, runHostAction }: {
+  caps: RemoteDesktopCapabilities | null;
+  failed: boolean;
+  onCancel: () => void;
+  onAccept: () => void;
+  runHostAction: (id: string, action: HostAction) => Promise<HostActionResult | null>;
+}) {
+  const pending = caps?.requirements.filter((r) => !r.ok && r.gates !== "choice") ?? [];
   const viewOnly = !!caps?.videoReady && !caps.inputReady;
+  // A `choice` row carries its own "continue as is" button; a second generic Continue beside it
+  // would be the same answer under a vaguer name.
+  const openChoice = !!caps && hasOpenChoice(caps);
   // The dock terminal opens *under* this surface (the mobile sheet covers the whole viewport),
   // so hand the command over and get out of the way; the entry stays in the nav to come back to.
   const onTerminal = (command: string) => { runInTerminal(command); onCancel(); };
@@ -49,7 +97,7 @@ export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktop
 
         <ul className="flex flex-col gap-3">
           {caps?.requirements.map((r) => (
-            <RequirementRow key={r.id} req={r} onHostAction={runHostAction} onTerminal={onTerminal} />
+            <RequirementRow key={r.id} req={r} onHostAction={runHostAction} onTerminal={onTerminal} onAccept={onAccept} />
           ))}
         </ul>
 
@@ -57,19 +105,21 @@ export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktop
           <p className="text-xs text-white/50">Re-checking every few seconds — this updates by itself once fixed.</p>
         )}
 
-        <div className="flex gap-2">
-          <button type="button" onClick={onCancel} className="min-h-11 flex-1 rounded-md bg-white/10 px-3 text-sm hover:bg-white/20">
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className={`${GATE_BUTTON} bg-white/10 hover:bg-white/20`}>
             Cancel
           </button>
-          <button
-            type="button"
-            disabled={!caps?.videoReady}
-            onClick={() => setAccepted(true)}
-            className="min-h-11 flex-1 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
-            data-testid="remote-desktop-readiness-continue"
-          >
-            {viewOnly ? "Continue (view only)" : "Continue"}
-          </button>
+          {!openChoice && (
+            <button
+              type="button"
+              disabled={!caps?.videoReady}
+              onClick={onAccept}
+              className={`${GATE_BUTTON} bg-primary font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40`}
+              data-testid="remote-desktop-readiness-continue"
+            >
+              {viewOnly ? "Continue (view only)" : "Continue"}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -77,8 +127,10 @@ export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktop
 }
 
 interface ActionHandlers {
-  onHostAction: (id: string, a: "request" | "open-settings") => Promise<void>;
+  onHostAction: (id: string, a: HostAction) => Promise<HostActionResult | null>;
   onTerminal: (command: string) => void;
+  /** Answers a `choice` row: carry on as things are. */
+  onAccept: () => void;
 }
 
 function RequirementRow({ req, ...handlers }: { req: RemoteDesktopRequirement } & ActionHandlers) {
@@ -90,11 +142,20 @@ function RequirementRow({ req, ...handlers }: { req: RemoteDesktopRequirement } 
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="text-sm font-medium">
           {req.title}
-          {!req.ok && <span className="ml-2 text-xs font-normal text-white/50">{req.gates === "video" ? "required" : "for mouse & keyboard"}</span>}
+          {!req.ok && <span className="ml-2 text-xs font-normal text-white/50">{req.gates === "video" ? "required" : req.gates === "choice" ? "choose one" : "for mouse & keyboard"}</span>}
         </div>
         {!req.ok && (
           <>
             <p className="text-sm text-white/70">{req.detail}</p>
+            {req.warning && (
+              <p
+                className="flex gap-2 rounded-md border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs text-amber-100"
+                data-testid={`remote-desktop-requirement-${req.id}-warning`}
+              >
+                <AlertTriangle className="mt-px size-3.5 shrink-0 text-amber-300" />
+                <span>{req.warning}</span>
+              </p>
+            )}
             <div className="flex flex-wrap gap-2">
               {req.actions.map((a) => <ActionButton key={a.label} action={a} reqId={req.id} {...handlers} />)}
             </div>
@@ -105,26 +166,29 @@ function RequirementRow({ req, ...handlers }: { req: RemoteDesktopRequirement } 
   );
 }
 
-function ActionButton({ action, reqId, onHostAction, onTerminal }: { action: RequirementAction; reqId: string } & ActionHandlers) {
-  const cls = "inline-flex min-h-11 items-center gap-1.5 rounded-md bg-white/10 px-3 text-sm hover:bg-white/20";
+function ActionButton({ action, reqId, onHostAction, onTerminal, onAccept }: { action: RequirementAction; reqId: string } & ActionHandlers) {
+  const cls = `${GATE_BUTTON} bg-white/10 hover:bg-white/20`;
   if (action.kind === "install") return <FfmpegInstallButton label={action.label} />;
+  if (action.kind === "continue") {
+    return (
+      <button type="button" className={cls} onClick={onAccept} data-testid={`remote-desktop-requirement-${reqId}-continue`}>
+        {action.label}
+      </button>
+    );
+  }
   if (action.kind === "terminal") {
     return (
       <button type="button" className={cls} onClick={() => onTerminal(action.command)} title={action.command}>
-        <TerminalSquare className="size-4" /> {action.label}
+        <TerminalSquare className="size-3.5" /> {action.label}
       </button>
     );
   }
   if (action.kind === "link") {
     return (
       <a className={cls} href={action.url} target="_blank" rel="noreferrer">
-        <ExternalLink className="size-4" /> {action.label}
+        <ExternalLink className="size-3.5" /> {action.label}
       </a>
     );
   }
-  return (
-    <button type="button" className={cls} onClick={() => void onHostAction(reqId, action.action)}>
-      {action.label}
-    </button>
-  );
+  return <HostActionButton className={cls} label={action.label} run={() => onHostAction(reqId, action.action)} />;
 }
