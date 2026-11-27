@@ -4,7 +4,7 @@ import {
   snapshotWindowsHost, UNLOCK_WARNING, windowsHostRequirements, WIN_DISPLAY_ID, WIN_SESSION_ID, type WindowsHostApi,
 } from "../../../../src/services/remote-desktop/remote-desktop-win32-host.ts";
 import { remoteDesktopReadiness } from "../../../../src/services/remote-desktop/remote-desktop-requirements.ts";
-import { explainCaptureFailure } from "../../../../src/services/remote-desktop/remote-desktop-capture-error.ts";
+import { explainCaptureFailure, SESSION_DISCONNECTED_MESSAGE } from "../../../../src/services/remote-desktop/remote-desktop-capture-error.ts";
 import type { RemoteDisplay } from "../../../../src/services/remote-desktop/remote-desktop-displays.ts";
 
 const MONITOR: RemoteDisplay = {
@@ -204,5 +204,29 @@ describe("explainCaptureFailure", () => {
   it("leaves other failures and other platforms as they were", async () => {
     expect(explainCaptureFailure("win32", "boom")).toBe("Capture failed: boom");
     expect(explainCaptureFailure("linux", "Failed to capture image (error 5)")).toBe("Capture failed: Failed to capture image (error 5)");
+  });
+
+  it("says the session is disconnected when Windows says so, whatever ffmpeg wrote", () => {
+    // The 27/11 failure: the phone's RDP app closed, then gdigrab reported only the missing stream.
+    const raw = "[out#0/h264 @ 000001] Output file does not contain any stream";
+    const msg = explainCaptureFailure("win32", raw, { sessionId: 2, state: "disconnected", isConsole: false });
+    expect(msg.startsWith(SESSION_DISCONNECTED_MESSAGE)).toBe(true);
+    expect(msg).toContain("Bring session back");
+    expect(msg).toContain(raw);
+    expect(explainCaptureFailure("win32", "boom", { sessionId: 2, state: "disconnected", isConsole: false }))
+      .toContain("disconnected");
+  });
+
+  it("maps a missing output stream without session state, and ignores an active session", () => {
+    const raw = "[out#0/h264 @ 000001] Output file does not contain any stream";
+    expect(explainCaptureFailure("win32", raw)).toContain("Windows refused the screen capture");
+    expect(explainCaptureFailure("win32", raw, { sessionId: 1, state: "active", isConsole: true }))
+      .toContain("Windows refused the screen capture");
+    expect(explainCaptureFailure("win32", "boom", { sessionId: 1, state: "active", isConsole: true })).toBe("Capture failed: boom");
+  });
+
+  it("never reads Windows session state off Windows", () => {
+    expect(explainCaptureFailure("linux", "boom", { sessionId: 2, state: "disconnected", isConsole: false }))
+      .toBe("Capture failed: boom");
   });
 });
