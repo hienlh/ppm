@@ -77,10 +77,13 @@ function Checklist({ caps, failed, onCancel, onAccept, runHostAction }: {
 
   return (
     <div
-      className="flex h-full w-full items-center justify-center overflow-y-auto bg-black p-4 text-white"
+      className="flex h-full w-full overflow-y-auto bg-black p-4 text-white"
       data-testid="remote-desktop-readiness-gate"
     >
-      <div className="flex w-full max-w-sm flex-col gap-4 rounded-xl border border-white/10 bg-white/5 p-5">
+      {/* `m-auto`, not `items-center`: centring a card taller than the scroller puts its top above
+          the scroll origin, where the title and the first rows can never be scrolled to. Auto
+          margins centre only while there is room. */}
+      <div className="m-auto flex w-full max-w-sm flex-col gap-4 rounded-xl border border-white/10 bg-white/5 p-5">
         <div className="flex items-center gap-2">
           <MonitorSmartphone className="size-5 shrink-0 text-primary" />
           <h2 className="text-base font-semibold">This host needs a few things</h2>

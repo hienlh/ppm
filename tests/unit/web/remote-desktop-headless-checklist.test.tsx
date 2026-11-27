@@ -75,6 +75,17 @@ describe("Windows checklist rows", () => {
     expect(line?.className).not.toContain("text-red");
   });
 
+  it("centres the card with auto margins, so a tall checklist scrolls from its title", async () => {
+    spies.push(spyOn(api, "get").mockResolvedValue(disconnectedCaps() as never));
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    await settle();
+    const gate = view.container.querySelector('[data-testid="remote-desktop-readiness-gate"]')!;
+    expect(gate.className).toContain("overflow-y-auto");
+    expect(gate.className).not.toContain("items-center");
+    expect(gate.className).not.toContain("justify-center");
+    expect((gate.firstElementChild as HTMLElement).className).toContain("m-auto");
+  });
+
   it("uses the standard text-button size, not a 44px minimum", async () => {
     spies.push(spyOn(api, "get").mockResolvedValue(disconnectedCaps() as never));
     view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
