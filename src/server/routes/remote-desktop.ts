@@ -20,6 +20,7 @@ import { HOST_ACTIONS, remoteDesktopReadiness, runHostAction } from "../../servi
 import {
   ANSWER_WAIT_MS, getHelperStatus, getRescueState, runHelperAction, startHelperJob,
 } from "../../services/remote-desktop/win32-helper/helper-service.ts";
+import { getRescueNotice } from "../../services/remote-desktop/win32-helper/rescue-notice.ts";
 import { resolveWhepTarget } from "../../services/remote-desktop/remote-desktop-whep-registry.ts";
 import {
   relayStatus, startMediamtxInstall, uninstallMediamtx,
@@ -123,18 +124,21 @@ remoteDesktopRoutes.get("/headless-helper", async (c) => {
 });
 
 /** The safety net armed by bringing the session back or turning the virtual display on: when
- *  its `Rescue` task runs unless confirmed. Polled by the viewer; reads one small file. */
+ *  its `Rescue` task runs unless confirmed (`armed`), and whether it last ran and turned the
+ *  virtual display on (`notice`). Polled by the viewer, which confirms by itself once a picture
+ *  comes through; reads two small files. */
 remoteDesktopRoutes.get("/headless-helper/rescue", (c) => {
   const rejected = assertSessionAllowed(c);
   if (rejected) return rejected;
-  return c.json(ok(getRescueState()));
+  return c.json(ok({ armed: getRescueState(), notice: getRescueNotice() }));
 });
 
 remoteDesktopRoutes.post("/headless-helper/:kind", async (c) => {
   const rejected = assertSessionAllowed(c);
   if (rejected) return rejected;
   const kind = c.req.param("kind");
-  // "I can still reach this PC": the user answers the safety net.
+  // The viewer answers the safety net by itself once a picture has come through for a few
+  // seconds: that picture is the proof the PC can still be reached through PPM.
   if (kind === "confirm") {
     holdRequestOpen(c, HELPER_ANSWER_SECONDS);
     return c.json(ok(await runHelperAction("Confirm")));

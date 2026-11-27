@@ -1,10 +1,11 @@
 /**
  * The Windows rows of the Remote Desktop checklist, mounted: the unlock warning is drawn apart
  * from the detail, the "Bring session back" button calls the host and then says what happened,
- * and the buttons take the standard 28/26px text-button size rather than the old 44px.
+ * and the buttons take the standard 28/26px text-button size rather than the old 44px. The safety
+ * net asks nobody anything: a proven picture confirms it, and only a net that ran says so.
  */
 import { afterAll, afterEach, describe, expect, it, spyOn } from "bun:test";
-import { act } from "react";
+import { act, useContext, useEffect } from "react";
 import { click, installDom, mount, uninstallDom, type Mounted } from "../../helpers/react-dom.tsx";
 
 installDom();
@@ -13,6 +14,7 @@ const { RemoteDesktopReadinessGate } = await import("../../../src/web/components
 const { api } = await import("../../../src/web/lib/api-client");
 const { describeHelper } = await import("../../../src/web/components/settings/remote-desktop-headless-helper.tsx");
 const { windowsSessionRow } = await import("../../../src/services/remote-desktop/remote-desktop-win32-session-row.ts");
+const { PictureProofContext } = await import("../../../src/web/components/remote-desktop/use-picture-proof.ts");
 
 const WARNING = "Bringing the session back signs it in at this PC's own screen and leaves it unlocked.";
 
@@ -188,63 +190,97 @@ describe("Windows' fallback screen in the checklist", () => {
   });
 });
 
-describe("the safety net bar", () => {
+describe("the safety net, confirmed by the picture", () => {
   const RESCUE_PATH = "/api/remote-desktop/headless-helper/rescue";
+  const CONFIRM_PATH = "/api/remote-desktop/headless-helper/confirm";
   const deadline = Date.now() + 4 * 60_000;
+  const ARMED = { action: "Reattach", armedMs: deadline - 300_000, deadlineMs: deadline };
+  const ready = () => ({ ...disconnectedCaps(), videoReady: true, inputReady: true, requirements: [] });
 
-  function routedGet(armed: () => unknown, caps: unknown = disconnectedCaps()) {
-    return spyOn(api, "get").mockImplementation((async (path: string) => (path === RESCUE_PATH ? armed() : caps)) as never);
+  function routedGet(rescue: () => unknown) {
+    return spyOn(api, "get").mockImplementation((async (path: string) => (path === RESCUE_PATH ? rescue() : ready())) as never);
   }
 
-  it("asks for \"I can still reach this PC\" while the net is armed, and goes once confirmed", async () => {
-    let armed: unknown = { action: "Reattach", armedMs: deadline - 300_000, deadlineMs: deadline };
-    spies.push(routedGet(() => armed));
-    const post = spyOn(api, "post").mockImplementation((async () => { armed = null; return { ok: true, message: "Confirmed." }; }) as never);
-    spies.push(post);
-    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
-    await settle();
-    const bar = view.container.querySelector('[data-testid="remote-desktop-rescue-bar"]');
-    expect(bar?.textContent).toContain("never signs you out");
-    await click(view.container.querySelector('[data-testid="remote-desktop-rescue-confirm"]'));
-    await settle();
-    expect(post).toHaveBeenCalledWith("/api/remote-desktop/headless-helper/confirm");
-    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-bar"]')).toBeNull();
-  });
+  /** Stands in for a viewer whose frames have kept coming for the proof window. */
+  function ProvenViewer() {
+    const report = useContext(PictureProofContext);
+    useEffect(() => { report(true); }, [report]);
+    return <div data-testid="viewer" />;
+  }
 
-  it("stays over the viewer once the host is ready, without replacing it", async () => {
-    const ready = { ...disconnectedCaps(), videoReady: true, inputReady: true, requirements: [] };
-    spies.push(routedGet(() => ({ action: "DisplayOn", armedMs: deadline - 300_000, deadlineMs: deadline }), ready));
+  afterEach(() => { try { localStorage.clear(); } catch { /* no storage */ } });
+
+  it("shows nothing and confirms nothing while there is no picture yet", async () => {
+    spies.push(routedGet(() => ({ armed: ARMED, notice: null })));
+    const post = spyOn(api, "post").mockResolvedValue({ ok: true, message: "" } as never);
+    spies.push(post);
     view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div data-testid="viewer" /></RemoteDesktopReadinessGate>);
     await settle();
     expect(view.container.querySelector('[data-testid="viewer"]')).not.toBeNull();
-    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-bar"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-testid^="remote-desktop-rescue"]')).toBeNull();
+    expect(view.container.textContent).not.toContain("I can still reach this PC");
+    expect(post).not.toHaveBeenCalled();
   });
 
-  it("shows nothing for a host that is not Windows or a record it cannot read", async () => {
-    spies.push(routedGet(() => ({ action: "Reattach", deadlineMs: "soon" })));
-    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+  it("confirms by itself once the viewer has a proven picture, once per armed record", async () => {
+    let rescue: unknown = { armed: ARMED, notice: null };
+    spies.push(routedGet(() => rescue));
+    const post = spyOn(api, "post").mockImplementation((async () => ({ ok: true, message: "Confirmed." })) as never);
+    spies.push(post);
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><ProvenViewer /></RemoteDesktopReadinessGate>);
     await settle();
-    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-bar"]')).toBeNull();
+    await settle();
+    expect(post).toHaveBeenCalledWith(CONFIRM_PATH);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(view.container.querySelector('[data-testid^="remote-desktop-rescue"]')).toBeNull();
+    rescue = { armed: null, notice: null };
   });
 
-  it("offers Dismiss for a record the safety net never took down, so the bar cannot stay for good", async () => {
-    spies.push(routedGet(() => ({ action: "Reattach", armedMs: 0, deadlineMs: Date.now() - 4 * 60_000 })));
+  it("does not confirm when nothing is armed", async () => {
+    spies.push(routedGet(() => ({ armed: null, notice: null })));
     const post = spyOn(api, "post").mockResolvedValue({ ok: true, message: "" } as never);
     spies.push(post);
-    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><ProvenViewer /></RemoteDesktopReadinessGate>);
     await settle();
-    const button = view.container.querySelector('[data-testid="remote-desktop-rescue-confirm"]');
-    expect(button?.textContent).toContain("Dismiss");
-    await click(button);
-    expect(post).toHaveBeenCalledWith("/api/remote-desktop/headless-helper/confirm");
+    expect(post).not.toHaveBeenCalled();
   });
 
-  it("says what is happening once the deadline has passed, with no button to press", async () => {
-    spies.push(routedGet(() => ({ action: "Reattach", armedMs: 0, deadlineMs: Date.now() - 1000 })));
+  it("still confirms against a host that answers with the bare record (before the notice existed)", async () => {
+    spies.push(routedGet(() => ARMED));
+    const post = spyOn(api, "post").mockResolvedValue({ ok: true, message: "" } as never);
+    spies.push(post);
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><ProvenViewer /></RemoteDesktopReadinessGate>);
+    await settle();
+    await settle();
+    expect(post).toHaveBeenCalledWith(CONFIRM_PATH);
+  });
+
+  it("says in one line when the net turned the virtual display on, and OK hides it for good", async () => {
+    const notice = { at: "2026-11-27T08:00:00.000Z", outcome: "display-on" };
+    spies.push(routedGet(() => ({ armed: null, notice })));
     view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
     await settle();
-    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-bar"]')?.textContent).toContain("Safety net is running");
-    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-confirm"]')).toBeNull();
+    const bar = view.container.querySelector('[data-testid="remote-desktop-rescue-notice"]');
+    expect(bar?.textContent).toContain("PPM turned the virtual display on because nobody could see this PC for 5 minutes.");
+    const ok = view.container.querySelector('[data-testid="remote-desktop-rescue-notice-dismiss"]') as HTMLElement;
+    expect(ok.className).toContain("h-7");
+    expect(ok.className).toContain("max-md:h-[26px]");
+    expect(ok.className).not.toContain("min-h-11");
+    await click(ok);
+    await settle();
+    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-notice"]')).toBeNull();
+    await view.unmount();
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    await settle();
+    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-notice"]')).toBeNull();
+  });
+
+  it("names a missing driver plainly", async () => {
+    spies.push(routedGet(() => ({ armed: null, notice: { at: "2026-11-27T08:00:00.000Z", outcome: "no-driver" } })));
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    await settle();
+    expect(view.container.querySelector('[data-testid="remote-desktop-rescue-notice"]')?.textContent)
+      .toContain("no virtual display to turn on");
   });
 });
 

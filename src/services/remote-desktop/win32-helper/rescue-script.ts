@@ -8,8 +8,10 @@
  * - Before `Reattach` or `DisplayOn` changes anything, the helper records `state\rescue.json` and
  *   gives `Rescue` a one-time trigger at now + N minutes (`StartWhenAvailable`, so a PC that was
  *   asleep runs it on waking). If the trigger cannot be set, the action does not run.
- * - "I can still reach this PC" in PPM runs `Confirm`, which first does what `Rescue` would (reaching
- *   PPM proves nothing about the console's screen), then removes the trigger and the record.
+ * - PPM's viewer runs `Confirm` by itself once a picture of the PC has come through for a few
+ *   seconds (`use-picture-proof.ts`). `Confirm` first does what `Rescue` would (reaching PPM proves
+ *   nothing about the console's screen), then removes the trigger and the record — so confirming
+ *   automatically is never less safe than letting the net run.
  * - When `Rescue` fires with the record still there, it turns the virtual display on if someone is
  *   signed in at the console and the PC has no monitor of its own (the state that locked a PC
  *   out), then removes the trigger and the record. It never signs anyone out and never moves a

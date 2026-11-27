@@ -47,7 +47,7 @@ export interface HelperStatus {
   otherUser: boolean;
   virtualDisplay: boolean;
   lastRun: { action: string; ok: boolean; message: string; at: string } | null;
-  /** The safety net waiting for "I can still reach this PC", or null. */
+  /** The safety net waiting to be confirmed (the viewer confirms once a picture comes through), or null. */
   rescue: RescueState | null;
   job: HelperJob | null;
 }

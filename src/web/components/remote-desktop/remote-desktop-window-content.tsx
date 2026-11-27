@@ -12,6 +12,7 @@ import { useWindowStore } from "@/components/floating-window/window-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
 import { useRemoteDesktopConnection } from "./use-remote-desktop-connection";
+import { usePictureProof } from "./use-picture-proof";
 import { useRemoteInputCapture } from "./use-remote-input-capture";
 import { RemoteDesktopStatsOverlay } from "./remote-desktop-stats-overlay";
 import { RemoteDesktopWarningGate } from "./remote-desktop-warning-gate";
@@ -50,6 +51,8 @@ function RemoteDesktopViewer() {
     hostModeId, hostOriginalModeId, resolutionError, setHostMode, inputBlocked,
     pendingHostClipboard, clearHostClipboard, sendClipboard, requestHostClipboard,
   } = useRemoteDesktopConnection(canvasRef, { displayId: display.displayId });
+  // A picture that keeps coming is what confirms the Windows safety net (the gate does the call).
+  usePictureProof(connState === "streaming", getFrameCount);
   const statsVisible = useSettingsStore((s) => s.remoteDesktopStatsVisible);
   const toggleStats = useSettingsStore((s) => s.toggleRemoteDesktopStatsVisible);
   const viewStyle = useSettingsStore((s) => s.remoteDesktopViewStyle);
