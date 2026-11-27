@@ -46,6 +46,47 @@ export function classifyInputBlock(s: {
   return null;
 }
 
+/** What the viewer is told: only the block a user can do something about from where they are.
+ *  The lock screen and the secure desktop have their own visible signs on the stream. */
+export interface InputBlockNotice {
+  reason: "elevated-window";
+  /** File name of the administrator app in front, when it could be read. */
+  app: string | null;
+}
+
+export function noticeFor(reason: InputBlockReason | null, fg: ForegroundProcess | null): InputBlockNotice | null {
+  return reason === "elevated-window" ? { reason, app: fg?.exe ?? null } : null;
+}
+
+let current: InputBlockNotice | null = null;
+const listeners = new Set<(notice: InputBlockNotice | null) => void>();
+
+/** The block in force now (null = input gets through), for a session that starts mid-block. */
+export function currentInputBlock(): InputBlockNotice | null {
+  return current;
+}
+
+/** Called with every change, including the change back to null once input gets through again. */
+export function onInputBlockChange(listener: (notice: InputBlockNotice | null) => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+/** The input backend reports each change of state here; repeats are dropped. */
+export function publishInputBlock(notice: InputBlockNotice | null): void {
+  if (notice?.reason === current?.reason && notice?.app === current?.app) return;
+  current = notice;
+  for (const listener of listeners) {
+    try { listener(notice); } catch { /* a closed session must not stop the others */ }
+  }
+}
+
+/** Tests only. */
+export function resetInputBlockForTests(): void {
+  current = null;
+  listeners.clear();
+}
+
 /** One log line per change of state, saying what to do about it. */
 export function describeInputBlock(reason: InputBlockReason, sent: number, count: number, fg: ForegroundProcess | null): string {
   if (reason === "desktop") return "input blocked: cannot reach input desktop";

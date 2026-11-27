@@ -21,6 +21,7 @@ import { RemoteDesktopMobileKeyBar } from "./remote-desktop-mobile-key-bar";
 import { RemoteDesktopMobileSettings } from "./remote-desktop-mobile-settings";
 import { useRemoteDesktopRecorder } from "./use-remote-desktop-recorder";
 import { saveCanvasScreenshot } from "./remote-desktop-recording";
+import { RemoteDesktopInputBlockedBar } from "./remote-desktop-input-blocked-bar";
 import { RemoteDesktopStatsOverlay } from "./remote-desktop-stats-overlay";
 import { letterboxedContentRect } from "./remote-desktop-coords";
 import { useRemoteDesktopDisplayChoice } from "./use-remote-desktop-display-choice";
@@ -43,7 +44,7 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
     connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect,
     getTotalBytes, getFrameCount, quality, setQuality, showCursor, setShowCursor,
     audioOn, setAudioOn, getAudioTracks, privacyOn, privacyError, setPrivacyOn,
-    hostModeId, hostOriginalModeId, resolutionError, setHostMode,
+    hostModeId, hostOriginalModeId, resolutionError, setHostMode, inputBlocked,
     pendingHostClipboard, clearHostClipboard, sendClipboard, requestHostClipboard,
   } = useRemoteDesktopConnection(canvasRef, { displayId: display.displayId });
   const statsVisible = useSettingsStore((s) => s.remoteDesktopStatsVisible);
@@ -177,6 +178,9 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
             )}
           </div>
         )}
+
+        {/* Top of the stage: the bottom belongs to the toolbar and the on-screen keyboard. */}
+        <RemoteDesktopInputBlockedBar blocked={inputBlocked} />
 
         {/* Hidden input the toolbar's Keyboard button focuses to bring up the soft keyboard —
             kept in normal layout flow (not display:none) since a hidden element cannot receive

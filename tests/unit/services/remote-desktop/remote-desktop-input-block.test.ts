@@ -3,9 +3,10 @@
  * WireGuard's window (High) was in front of a PPM at Medium, with nothing logged: SendInput
  * reports every event as sent even when UIPI drops them.
  */
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import {
-  classifyInputBlock, describeInputBlock, INTEGRITY, type ForegroundProcess,
+  classifyInputBlock, currentInputBlock, describeInputBlock, INTEGRITY, noticeFor, onInputBlockChange,
+  publishInputBlock, resetInputBlockForTests, type ForegroundProcess,
 } from "../../../../src/services/remote-desktop/remote-desktop-input-block.ts";
 import { inspectProcess, ownIntegrity } from "../../../../src/services/remote-desktop/remote-desktop-win32-integrity.ts";
 
@@ -48,6 +49,36 @@ describe("why input did not land", () => {
     expect(line).toContain("administrator");
     expect(line).toContain("Bring another window to the front");
     expect(describeInputBlock("rejected", 0, 2, null)).toBe("input blocked: SendInput accepted 0/2 events");
+  });
+});
+
+describe("telling every open viewer", () => {
+  afterEach(() => resetInputBlockForTests());
+
+  it("passes each change on, once, including the change back to 'gets through'", () => {
+    const seen: Array<unknown> = [];
+    const stop = onInputBlockChange((n) => seen.push(n));
+    publishInputBlock(noticeFor("elevated-window", wireguard));
+    publishInputBlock(noticeFor("elevated-window", wireguard));
+    expect(currentInputBlock()).toEqual({ reason: "elevated-window", app: "wireguard.exe" });
+    publishInputBlock(noticeFor(null, browser));
+    expect(seen).toEqual([{ reason: "elevated-window", app: "wireguard.exe" }, null]);
+    stop();
+    publishInputBlock(noticeFor("elevated-window", wireguard));
+    expect(seen).toHaveLength(2);
+  });
+
+  it("tells the viewer only about the block it can act on", () => {
+    expect(noticeFor("desktop", null)).toBeNull();
+    expect(noticeFor("rejected", browser)).toBeNull();
+  });
+
+  it("one listener failing does not stop the others", () => {
+    const seen: unknown[] = [];
+    onInputBlockChange(() => { throw new Error("socket gone"); });
+    onInputBlockChange((n) => seen.push(n));
+    publishInputBlock(noticeFor("elevated-window", wireguard));
+    expect(seen).toHaveLength(1);
   });
 });
 

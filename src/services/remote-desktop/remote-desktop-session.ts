@@ -31,6 +31,7 @@ import {
 import { createLogger } from "../logger.ts";
 import { explainCaptureFailure } from "./remote-desktop-capture-error.ts";
 import { virtualDisplayLease } from "./win32-helper/virtual-display-lease.ts";
+import { currentInputBlock, onInputBlockChange } from "./remote-desktop-input-block.ts";
 
 const log = createLogger("remote-desktop");
 
@@ -170,8 +171,14 @@ export class RemoteDesktopSession {
       throw e;
     }
     this.heartbeatTimer = setInterval(() => this.onHeartbeatTick(), HEARTBEAT_INTERVAL_MS);
+    // Windows drops injected input, silently, while an administrator window has focus
+    // (`remote-desktop-input-block.ts`); the viewer shows why, and hides it once input lands.
+    this.stopInputBlockNotices = onInputBlockChange((blocked) => this.send({ type: "inputBlocked", blocked }));
+    const blocked = currentInputBlock();
+    if (blocked) this.send({ type: "inputBlocked", blocked });
   }
 
+  private stopInputBlockNotices: (() => void) | null = null;
   private holdsDisplayLease = false;
   private releaseDisplayLease(): void {
     if (!this.holdsDisplayLease) return;
@@ -704,6 +711,8 @@ export class RemoteDesktopSession {
     this.closed = true;
     log.info(`session closed reason=${reason} duration=${Math.round((Date.now() - this.startedAt) / 1000)}s`);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.stopInputBlockNotices?.();
+    this.stopInputBlockNotices = null;
     this.capture?.stop();
     this.releaseDisplayLease();
     // Relay after capture: the publisher should go first so MediaMTX sees a clean disconnect.

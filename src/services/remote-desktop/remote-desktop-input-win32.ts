@@ -13,7 +13,7 @@
 import { codeToVk, MODIFIER_VK_CODES } from "./remote-desktop-vk-map.ts";
 import { RemoteInputUnavailableError, type InputTargetRect, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
 import { windowsVirtualScreen } from "./remote-desktop-displays.ts";
-import { classifyInputBlock, describeInputBlock } from "./remote-desktop-input-block.ts";
+import { classifyInputBlock, describeInputBlock, noticeFor, publishInputBlock } from "./remote-desktop-input-block.ts";
 import { foregroundProcess, ownIntegrity } from "./remote-desktop-win32-integrity.ts";
 import { createLogger } from "../logger.ts";
 
@@ -179,6 +179,8 @@ async function sendRaw(buf: Uint8Array, count: number): Promise<void> {
   if (key === lastBlock) return;
   const wasBlocked = lastBlock !== null;
   lastBlock = key;
+  // Every open viewer is told, and told again when input gets through, so its bar goes away.
+  publishInputBlock(noticeFor(reason, foreground));
   if (!reason) { if (wasBlocked) log.info("input reaches the input desktop again"); return; }
   log.warn(describeInputBlock(reason, sent, count, foreground));
 }
