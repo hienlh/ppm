@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DB_EXECUTE_APPROVAL, type DbApprovalAnswer, type DbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
-import { checkPpmPassword, ppmPasswordRequired } from "../ppm-password.ts";
+import { checkPpmPassword, ppmPasswordLockSeconds, ppmPasswordRequired } from "../ppm-password.ts";
+import { ppmPasswordLockedText } from "../../shared/ppm-password-limit.ts";
 import { dbAttentionEvents, type DbAttentionBus } from "./db-attention-events.ts";
 import { ppmCardEnd, type PpmCardEnd } from "../../shared/ppm-card-end.ts";
 
@@ -36,7 +37,7 @@ export type DbApprovalOutcome =
 
 export type DbApprovalAnswerResult =
   | { ok: true; approved: boolean }
-  | { ok: false; status: 400 | 403 | 404; error: string };
+  | { ok: false; status: 400 | 403 | 404 | 429; error: string };
 
 /**
  * How long the user has to answer. Every timeout above the call — the providers' MCP timeout
@@ -147,7 +148,10 @@ export function createDbApprovalBroker(opts: {
       entry.settle({ approved: false, reason: "declined", message: "The user declined the change, so nothing ran." });
       return { ok: true, approved: false };
     }
-    if (!checkPassword(body.password)) return { ok: false, status: 403, error: "Wrong password" };
+    if (!checkPassword(body.password)) {
+      const wait = ppmPasswordLockSeconds();
+      return wait > 0 ? { ok: false, status: 429, error: ppmPasswordLockedText(wait) } : { ok: false, status: 403, error: "Wrong password" };
+    }
     entry.settle({ approved: true });
     return { ok: true, approved: true };
   }

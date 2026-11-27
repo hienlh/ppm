@@ -635,9 +635,12 @@ export async function setConnectionReadonly(id: number, readonly: boolean): Prom
 
 export interface ConnectionsExport { version: number; exported_at: string; connections: unknown[] }
 
-/** Every saved connection with its credentials, for a file the user keeps; decrypted by the server on purpose. */
-export function exportConnections(): Promise<ConnectionsExport> {
-  return api.get<ConnectionsExport>("/api/db/connections/export");
+/**
+ * Every saved connection with its credentials, for a file the user keeps; decrypted by the server
+ * on purpose, and only once `ppmPassword` (PPM's own password, typed again) checks out.
+ */
+export function exportConnections(ppmPassword: string): Promise<ConnectionsExport> {
+  return api.post<ConnectionsExport>("/api/db/connections/export", { ppmPassword });
 }
 
 /** Connections read from an export: listed at once, and the palette told about their tables. */

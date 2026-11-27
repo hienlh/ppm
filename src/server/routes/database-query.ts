@@ -29,7 +29,7 @@ import { splitSqlScript, sqlCode } from "../../shared/split-sql-statements.ts";
 import type { DbQuerySession } from "../../types/database.ts";
 import { ok, err } from "../../types/api.ts";
 import { auditCaller, logQuery, logQueryAs } from "./query-audit-hook.ts";
-import { checkPpmPassword } from "../../services/ppm-password.ts";
+import { ppmPasswordRefusal } from "../../services/ppm-password.ts";
 import { connAudit, connConfig, databaseParam, holdRequestOpen, requestDatabase, resolveTargetConn } from "./database-route-helpers.ts";
 
 export const databaseQueryRoutes = new Hono();
@@ -76,9 +76,11 @@ databaseQueryRoutes.post("/:id/query/script", async (c) => {
     ...(Object.keys(params).length > 0 ? { params } : {}),
   };
   if (writeOnce) {
-    if (!checkPpmPassword(body.writeOnce?.password)) {
-      logQuery(c, { ...audit, status: "blocked", error: WRONG_PASSWORD, durationMs: Date.now() - startedAt });
-      return c.json(err(WRONG_PASSWORD), 403);
+    const refusal = ppmPasswordRefusal(body.writeOnce?.password);
+    if (refusal) {
+      const error = refusal.status === 429 ? refusal.error : WRONG_PASSWORD;
+      logQuery(c, { ...audit, status: "blocked", error, durationMs: Date.now() - startedAt });
+      return c.json(err(error), refusal.status);
     }
   } else if (conn.readonly && !isReadOnlyQuery(sql, dialect)) {
     logQuery(c, { ...audit, status: "blocked", error: READONLY_MESSAGE, durationMs: Date.now() - startedAt });

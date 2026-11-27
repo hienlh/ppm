@@ -7,6 +7,7 @@
  * Every line here is the editor's. The server counts the lines of the text it was sent, and the
  * statement at the cursor or a selection begins further down the editor than its line 1.
  */
+import { isPpmPasswordLockedText } from "../../../../shared/ppm-password-limit";
 import {
   isReadonlyRefusalText, WRONG_PASSWORD, type QueryResultSet, type QueryScriptEvent, type QueryStatementResult,
 } from "../../../../shared/db-query-script";
@@ -218,7 +219,7 @@ export function failQueryRun(run: QueryRun, error: string, now: number): QueryRu
  * with write access was refused for a wrong password: "Run with write access (once)" can run it.
  */
 export function refusedAsReadonly(run: QueryRun): boolean {
-  return run.done && run.messages.some((m) => m.level === "error" && (isReadonlyRefusalText(m.text) || m.text === WRONG_PASSWORD));
+  return run.done && run.messages.some((m) => m.level === "error" && (isReadonlyRefusalText(m.text) || m.text === WRONG_PASSWORD || isPpmPasswordLockedText(m.text)));
 }
 
 /** A line of Messages added after the run, about it: a result read again after a save. */

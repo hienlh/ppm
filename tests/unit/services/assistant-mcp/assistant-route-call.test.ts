@@ -392,7 +392,7 @@ describe("the internal app", () => {
     }
     const app = await internalRouteApp();
     for (const [method, path] of [
-      ["GET", "connections/export"], ["POST", "ai-approvals/abc"], ["POST", "connections/1/query"], ["PUT", "connections/1/cell"],
+      ["POST", "connections/export"], ["POST", "ai-approvals/abc"], ["POST", "connections/1/query"], ["PUT", "connections/1/cell"],
       ["DELETE", "connections/1/row"], ["POST", "connections/1/login"], ["POST", "connections/import"], ["POST", "connections/folder"],
       ["POST", "connections/1/duplicate"], ["POST", "test"], ["GET", "connections/file/tables"], ["GET", "connections/1/tables"],
     ]) {

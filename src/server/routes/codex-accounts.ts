@@ -6,6 +6,7 @@ import { addApiKeyAccount, startDeviceLogin, getDeviceLoginStatus, cancelDeviceL
 import { exportCodexEncrypted, importCodexEncrypted } from "../../services/codex-account-portability.ts";
 import { isCodexAccountAuthFailed } from "../../services/codex-account-auth-state.ts";
 import { ResetCreditRefusedError, spendCodexResetCredit } from "../../services/codex-reset-credit.service.ts";
+import { ppmPasswordRefusal } from "../../services/ppm-password.ts";
 
 /** Codex multi-account management. Mounted under /api/codex-accounts (auth-guarded). */
 export const codexAccountsRoutes = new Hono();
@@ -141,9 +142,16 @@ codexAccountsRoutes.delete("/browser-login/:id", (c) => {
   return c.json(ok({ cancelled: true }));
 });
 
-/** Download a password-encrypted backup of codex accounts (auth.json + apiKey creds). */
+/**
+ * Download a password-encrypted backup of codex accounts (auth.json + apiKey creds). Asks for
+ * PPM's password first: the backup's own password is chosen by whoever exports, so it alone
+ * would let anyone at an unlocked PPM take every login.
+ */
 codexAccountsRoutes.post("/export", async (c) => {
-  const body = await c.req.json<{ password?: string; accountIds?: string[] }>().catch(() => ({} as { password?: string; accountIds?: string[] }));
+  type Body = { password?: string; ppmPassword?: string; accountIds?: string[] };
+  const body = await c.req.json<Body>().catch(() => ({} as Body));
+  const refusal = ppmPasswordRefusal(body.ppmPassword);
+  if (refusal) return c.json(err(refusal.error), refusal.status);
   if (!body.password) return c.json(err("Password required"), 400);
   try {
     const blob = exportCodexEncrypted(body.password, body.accountIds);

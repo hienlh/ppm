@@ -51,6 +51,7 @@ import type { DbApprovalAnswer } from "../../shared/db-ai-tools.ts";
 import { sqlitePathRefusal } from "../../services/database/sqlite-path-guard.ts";
 import { dropCarriedSecrets } from "../../services/database/connection-endpoint-reset.ts";
 import { DB_CONNECTION_WRITE_PATHS, announceDbConnectionChanges } from "./database-connections-broadcast.ts";
+import { ppmPasswordRefusal } from "../../services/ppm-password.ts";
 
 export const databaseRoutes = new Hono();
 
@@ -245,11 +246,15 @@ databaseRoutes.get("/connections", (c) => {
 });
 
 /**
- * GET /api/db/connections/export — full connection data including credentials (decrypted): every
+ * POST /api/db/connections/export — full connection data including credentials (decrypted): every
  * password, the SSH and SSL ones too. The one route that sends a secret to the browser, on
  * purpose — Import recreates the connections from the file, and the menu says what it holds.
+ * So it asks for PPM's password (`ppmPassword` in the body), and is a POST to carry it.
  */
-databaseRoutes.get("/connections/export", (c) => {
+databaseRoutes.post("/connections/export", async (c) => {
+  const body = await c.req.json<{ ppmPassword?: string }>().catch(() => null);
+  const refusal = ppmPasswordRefusal(body?.ppmPassword);
+  if (refusal) return c.json(err(refusal.error), refusal.status);
   try {
     const conns = getConnections();
     const exported = conns.map(({ id, sort_order, created_at, updated_at, connection_config, ...rest }) => ({

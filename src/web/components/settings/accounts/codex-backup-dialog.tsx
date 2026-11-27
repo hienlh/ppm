@@ -17,15 +17,19 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { getAuthToken } from "@/lib/api-client";
 
 export function CodexBackupDialog({
-  mode, onOpenChange, password, onPasswordChange, busy, onExport, onImport, error,
+  mode, onOpenChange, password, onPasswordChange, ppmPassword, onPpmPasswordChange, busy, onExport, onImport, error,
 }: {
   /** Null closes the dialog; otherwise the direction it opened in. */
   mode: "export" | "import" | null;
   onOpenChange: (open: boolean) => void;
   password: string;
   onPasswordChange: (value: string) => void;
+  /** PPM's own password, asked for an export only: the server refuses to hand logins out without it. */
+  ppmPassword: string;
+  onPpmPasswordChange: (value: string) => void;
   busy: boolean;
   onExport: () => void;
   onImport: (file: File) => void;
@@ -33,6 +37,7 @@ export function CodexBackupDialog({
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const isExport = mode === "export";
+  const needsPpmPassword = isExport && !!getAuthToken();
 
   return (
     <Dialog open={mode !== null} onOpenChange={onOpenChange}>
@@ -64,6 +69,22 @@ export function CodexBackupDialog({
           </p>
         </div>
 
+        {needsPpmPassword && (
+          <div className="space-y-1.5">
+            <Label htmlFor="codex-backup-ppm-password" className="text-xs">PPM password</Label>
+            <Input
+              id="codex-backup-ppm-password"
+              type="password"
+              placeholder="The password you sign in to PPM with"
+              value={ppmPassword}
+              onChange={(e) => onPpmPasswordChange(e.target.value)}
+              className="text-xs"
+              autoComplete="current-password"
+            />
+            <p className="text-[10px] text-muted-foreground">Confirms it is you before logins leave this machine.</p>
+          </div>
+        )}
+
         {error && <div className="text-[11px] p-2 rounded bg-error/10 text-error">{error}</div>}
 
         <input
@@ -86,7 +107,7 @@ export function CodexBackupDialog({
           <Button
             size="sm"
             className="text-xs cursor-pointer gap-1.5"
-            disabled={!password.trim() || busy}
+            disabled={!password.trim() || busy || (needsPpmPassword && !ppmPassword)}
             onClick={() => (isExport ? onExport() : fileInput.current?.click())}
           >
             {busy

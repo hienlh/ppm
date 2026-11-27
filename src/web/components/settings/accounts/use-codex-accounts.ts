@@ -57,6 +57,8 @@ export function useCodexAccounts(onDone: () => void) {
   const [callbackUrl, setCallbackUrl] = useState("");
   const [submittingCallback, setSubmittingCallback] = useState(false);
   const [backupPassword, setBackupPassword] = useState("");
+  // PPM's own password, typed again for an export: the backup's password only encrypts the file.
+  const [ppmPassword, setPpmPassword] = useState("");
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -221,7 +223,7 @@ export function useCodexAccounts(onDone: () => void) {
       const headers: HeadersInit = { "Content-Type": "application/json" };
       const token = getAuthToken();
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch("/api/codex-accounts/export", { method: "POST", headers, body: JSON.stringify({ password: backupPassword }) });
+      const res = await fetch("/api/codex-accounts/export", { method: "POST", headers, body: JSON.stringify({ password: backupPassword, ppmPassword }) });
       if (!res.ok) { const j = await res.json().catch(() => ({})) as { error?: string }; throw new Error(j.error ?? `Export failed: ${res.status}`); }
       const text = await res.text();
       const blob = new Blob([text], { type: "application/json" });
@@ -230,6 +232,7 @@ export function useCodexAccounts(onDone: () => void) {
       a.download = "ppm-codex-accounts-backup.json";
       a.click();
       URL.revokeObjectURL(a.href);
+      setPpmPassword("");
       setMsg("Backup downloaded.");
       onDone();
     } catch (e) { setErr((e as Error).message); } finally { setExporting(false); }
@@ -250,7 +253,7 @@ export function useCodexAccounts(onDone: () => void) {
 
   return {
     accounts, strategy, usages, loading, apiKey, setApiKey, label, setLabel, adding,
-    err, setErr, device, deviceWaiting, backupPassword, setBackupPassword,
+    err, setErr, device, deviceWaiting, backupPassword, setBackupPassword, ppmPassword, setPpmPassword,
     exporting, importing, msg, setMsg,
     toggling,
     load, addApiKey,

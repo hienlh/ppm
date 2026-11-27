@@ -383,7 +383,7 @@ describe("DELETE /db/connections/:id", () => {
   });
 });
 
-describe("GET /db/connections/export", () => {
+describe("POST /db/connections/export", () => {
   it("exports connections with config", async () => {
     const app = createApp();
 
@@ -399,7 +399,9 @@ describe("GET /db/connections/export", () => {
     });
 
     // Export
-    const res = await app.request("/db/connections/export");
+    const res = await app.request("/db/connections/export", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
     expect(res.status).toBe(200);
     const json = await res.json() as any;
     expect(json.ok).toBe(true);

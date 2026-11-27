@@ -223,7 +223,7 @@ describe("Available to the AI chat", () => {
     expect((await call("GET", "/db/connections")).json.data.find((c: { id: number }) => c.id === off))
       .toMatchObject({ ai_access: 0 });
 
-    const exported = (await call("GET", "/db/connections/export")).json.data.connections;
+    const exported = (await call("POST", "/db/connections/export", {})).json.data.connections;
     expect(exported[0]).toMatchObject({ name: "private", ai_access: 0 });
     const imported = (await call("POST", "/db/connections/import", { connections: exported })).json.data.connections;
     expect(aiAccess(imported[0].id)).toBe(0);

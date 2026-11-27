@@ -4,6 +4,7 @@ import { configService } from "../../../src/services/config.service.ts";
 import { accountService } from "../../../src/services/account.service.ts";
 import { encryptWithPassword } from "../../../src/lib/account-crypto.ts";
 import { accountsRoutes } from "../../../src/server/routes/accounts.ts";
+import { _resetPpmPasswordAttempts } from "../../../src/services/ppm-password.ts";
 
 // Both routes that let account tokens leave the machine must ask for PPM's password.
 
@@ -30,6 +31,7 @@ const post = (path: string, body: unknown) =>
 
 let authBefore: ReturnType<typeof configService.get<"auth">>;
 beforeEach(() => {
+  _resetPpmPasswordAttempts();
   exported = [];
   authBefore ??= configService.get("auth");
   configService.set("auth", { ...authBefore, enabled: true, token: "ppm-pass" });

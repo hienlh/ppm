@@ -34,6 +34,7 @@ import { FEATURE_INTROS_CHANGED_EVENT } from "../../shared/feature-intros.ts";
 import { broadcastGlobalEvent } from "../ws/global.ts";
 import { CARD_REMINDER_MINUTES, validReminderMinutes } from "../../shared/assistant-telegram-card-reminders.ts";
 import { isUnlinkMap } from "../../shared/linked-session-unlinks";
+import { ppmPasswordRefusal } from "../../services/ppm-password.ts";
 
 const log = createLogger("settings");
 const assistantTelegramLog = createLogger("assistant-telegram");
@@ -503,10 +504,16 @@ settingsRoutes.post("/telegram/test", async (c) => {
 
 // ── Auth / Password ──────────────────────────────────────────────────
 
-/** PUT /settings/auth/password — change the access password (token) */
+/**
+ * PUT /settings/auth/password — change the access password (token). The current one is typed
+ * again (`current`): the browser holds the token already, so being signed in proves only that
+ * someone reached an open PPM, and the new password would lock its owner out.
+ */
 settingsRoutes.put("/auth/password", async (c) => {
   try {
-    const { password, confirm } = await c.req.json<{ password: string; confirm: string }>();
+    const { password, confirm, current } = await c.req.json<{ password: string; confirm: string; current?: string }>();
+    const refusal = ppmPasswordRefusal(current);
+    if (refusal) return c.json(err(refusal.status === 429 ? refusal.error : "Current password is wrong"), refusal.status);
     if (typeof password !== "string" || !password.trim()) {
       return c.json(err("Password is required"), 400);
     }

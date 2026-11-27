@@ -8,7 +8,7 @@ import { getAllAccountUsages, getUsageForAccount, refreshUsageForAccount, refres
 import { ok, err } from "../../types/api.ts";
 import { createLogger } from "../../services/logger.ts";
 import { LimitResetRefusedError, spendClaudeLimitReset } from "../../services/claude-limit-reset.service.ts";
-import { checkPpmPassword } from "../../services/ppm-password.ts";
+import { ppmPasswordRefusal } from "../../services/ppm-password.ts";
 
 const log = createLogger("accounts");
 
@@ -192,12 +192,11 @@ accountsRoutes.post("/oauth/refresh/:id", async (c) => {
   }
 });
 
-/**
+/*
  * Both routes that let account tokens leave the machine ask for PPM's password first. The
  * backup's own password only encrypts the file — whoever exports chooses it — so without
  * this anyone at an unlocked PPM could walk off with every account.
  */
-const WRONG_PPM_PASSWORD = "Wrong PPM password";
 
 /** POST /api/accounts/export — download password-encrypted accounts backup */
 accountsRoutes.post("/export", async (c) => {
@@ -205,7 +204,8 @@ accountsRoutes.post("/export", async (c) => {
     const { password, ppmPassword, accountIds, includeRefreshToken, refreshBeforeExport } = await c.req.json() as {
       password: string; ppmPassword?: string; accountIds?: string[]; includeRefreshToken?: boolean; refreshBeforeExport?: boolean;
     };
-    if (!checkPpmPassword(ppmPassword)) return c.json(err(WRONG_PPM_PASSWORD), 403);
+    const refusal = ppmPasswordRefusal(ppmPassword);
+    if (refusal) return c.json(err(refusal.error), refusal.status);
     if (!password) return c.json(err("Password required"), 400);
     if (refreshBeforeExport) await accountService.refreshBeforeExport(accountIds);
     const blob = accountService.exportEncrypted(password, accountIds, includeRefreshToken ?? false);
@@ -288,7 +288,8 @@ accountsRoutes.post("/test-export", async (c) => {
       accountIds: string[]; includeRefreshToken?: boolean; ppmPassword?: string;
     };
     // This one answers with the raw tokens, unencrypted.
-    if (!checkPpmPassword(ppmPassword)) return c.json(err(WRONG_PPM_PASSWORD), 403);
+    const refusal = ppmPasswordRefusal(ppmPassword);
+    if (refusal) return c.json(err(refusal.error), refusal.status);
     if (!accountIds?.length) return c.json(err("accountIds required"), 400);
 
     // Snapshot current tokens BEFORE export (export calls refreshBeforeExport which may change tokens)

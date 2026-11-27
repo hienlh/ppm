@@ -57,7 +57,7 @@ postgres.service.ts (postgres.js) · mysql.service.ts (mysql2, installed on dema
 
 | Area | Routes |
 |---|---|
-| Connections | `GET`/`POST /connections`, `GET`/`PUT`/`DELETE /connections/:id`, `GET /connections/:id/config`, `POST /connections/:id/duplicate`, `POST /connections/folder`, `GET /connections/export`, `POST /connections/import`, `POST /test`, `POST /connections/:id/test` |
+| Connections | `GET`/`POST /connections`, `GET`/`PUT`/`DELETE /connections/:id`, `GET /connections/:id/config`, `POST /connections/:id/duplicate`, `POST /connections/folder`, `POST /connections/export`, `POST /connections/import`, `POST /test`, `POST /connections/:id/test` |
 | Login | `POST /connections/:id/login`, `POST /connections/:id/disconnect` |
 | Tree | `GET /connections/:id/databases`, `/objects`, `/columns`, `/structure`, `/object-sql`, `/tables` (`?cached=1` reads PPM's own cache) |
 | Grid | `POST /connections/:id/grid`, `/grid/count`, `/grid/values`, `/grid/export`, `/grid/cell`; the export's file is `GET /grid-export/:ticket` |
@@ -139,7 +139,7 @@ CREATE TABLE connection_table_cache (
 );
 ```
 
-- `connection_config` is encrypted at rest and never sent to the browser, with one deliberate exception: **Export** (`GET /connections/export`) hands out every connection's config in plain text — database, SSH and SSL key passwords included — because Import recreates the connections from that file, and its menu says so. `GET /connections/:id/config` returns the form's fields with each secret replaced by a `has…` flag.
+- `connection_config` is encrypted at rest and never sent to the browser, with one deliberate exception: **Export** (`POST /connections/export`) hands out every connection's config in plain text — database, SSH and SSL key passwords included — because Import recreates the connections from that file, and its menu says so. It asks for PPM's password first (`ppmPassword` in the body, hence a POST), like the account exports and the password change; five wrong guesses in a row lock every such check for five minutes (`src/services/ppm-password.ts`). `GET /connections/:id/config` returns the form's fields with each secret replaced by a `has…` flag.
 - `StoredConnectionConfig` (`src/shared/db-connection-config.ts`) holds the URL or the host / port / user fields, `passwordMode` (`saved` or `ask`), `singleDatabase`, `allowedDatabases` (+ regex), `isolationLevel`, `queryTimeoutSec`, `ssh` and `ssl`.
 - **Ask for password**: the password is never stored. Database Log In holds the login in memory until **Disconnect**, which also closes the connection's pools.
 - **SSH tunnel**: password, key file or SSH agent. A host key is pinned on first use in PPM's own `known_hosts`. **SSL**: CA, client certificate and key files; `verify-full` checks the host name, an IP address included.
