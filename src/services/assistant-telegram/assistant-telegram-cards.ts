@@ -93,6 +93,8 @@ interface CardPresentation {
   askedOnPhone?: boolean;
   /** The project the card's chat is in, for its line on the pinned card desk; none for the Assistant's own. */
   project?: string;
+  /** The card's chat by name, which leads its line on the desk; none for the Assistant's own. */
+  chatTitle?: string;
 }
 
 /** A chat or project name inside a card's headline: plain (the headline is escaped), redacted, short. */
@@ -199,7 +201,7 @@ export class AssistantTelegramCards implements BridgeCards {
         questionHeadline: `Chat ${where} asks`,
       }),
       link: () => this.deps.chatLink(p.targetProject, p.targetProvider, p.targetSessionId),
-      project: p.targetProject,
+      project: p.targetProject, chatTitle: p.targetTitle,
       ...(p.titleOnly !== undefined ? { titleOnly: p.titleOnly } : {}),
       ...(p.onSent ? { onSent: p.onSent } : {}),
       ...(p.askedOnPhone ? { askedOnPhone: true } : {}),
@@ -332,7 +334,7 @@ ${rememberLine(remember)}`;
           this.deps.state.add(chatId, "cards", sent.message_id);
           this.deps.desk?.put(chatId, {
             key: deskKey(card.requestId), icon: card.isQuestion ? "❓" : "🔐", project: how.project ?? null,
-            title: deskTitle(p.card, how.titleOnly), since: this.deps.now(), messageId: sent.message_id,
+            title: deskTitle(p.card, how.titleOnly, how.chatTitle), since: this.deps.now(), messageId: sent.message_id,
             stillWaiting: () => !card.done && this.cards.get(key) === card,
             view: () => card.view(), groups: [group],
           });
@@ -622,16 +624,21 @@ ${rememberLine(remember)}`;
 export const deskKey = (requestId: string): string => `card:${requestId}`;
 
 /**
- * The card's line on the desk: the title it was limited to, else the first question, else what an
- * approval asks for (the same title its own message leads with).
+ * The card's line on the desk: the title it was limited to; else the chat it waits in, by name,
+ * then its first question or what an approval asks for (the title its own message leads with) —
+ * "Release 0.26.40: Bash" says which card it is where "Bash" alone does not.
  */
-function deskTitle(card: LiveApprovalCard, titleOnly: string | undefined): string {
+function deskTitle(card: LiveApprovalCard, titleOnly: string | undefined, chatTitle: string | undefined): string {
   if (titleOnly !== undefined) return titleOnly;
+  let what: string;
   if (card.isQuestion) {
     const q = card.questions?.[0];
-    return (q?.header || q?.question || "A question").trim();
+    what = (q?.header || q?.question || "A question").trim();
+  } else {
+    try { what = decidingInput(card).title; } catch { what = "An approval"; }
   }
-  try { return decidingInput(card).title; } catch { return "An approval"; }
+  const chat = chatTitle?.replace(/\s+/g, " ").trim();
+  return chat ? `${chat}: ${what}` : what;
 }
 
 /** Where a card is kept: one per chat and request. */

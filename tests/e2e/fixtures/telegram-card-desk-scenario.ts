@@ -20,6 +20,7 @@ import { configService } from "../../../src/services/config.service.ts";
 import { getDb, setSessionAssistant, setSessionProvider, setSessionTitle, upsertApprovedPairing } from "../../../src/services/db.service.ts";
 import { chatControl } from "../../../src/services/chat-control/chat-control.ts";
 import { AssistantWatchService } from "../../../src/services/assistant-watch/assistant-watch.service.ts";
+import { WATCH_OPENER } from "../../../src/services/assistant-watch/watch-event-text.ts";
 import { assistantTelegramBridge } from "../../../src/services/assistant-telegram/assistant-telegram.service.ts";
 import { memoryCardDeskStore } from "../../../src/services/assistant-telegram/assistant-telegram-cards-desk-store.ts";
 import type { TelegramSilence } from "../../../src/services/assistant-telegram/assistant-telegram-silence.ts";
@@ -42,6 +43,12 @@ providerRegistry.register({
   async listSessions() { return []; },
   async deleteSession() {},
   async *sendMessage(sessionId: string, message: string): AsyncIterable<ChatEvent> {
+    // The Assistant session is told a watched chat finished: it answers, it asks nothing.
+    if (message === WATCH_OPENER) {
+      yield { type: "text", content: "Noted." };
+      yield { type: "done", sessionId };
+      return;
+    }
     const requestId = crypto.randomUUID();
     const answer = new Promise<{ approved: boolean }>((resolve) => answers.set(requestId, resolve));
     yield { type: "approval_request", requestId, tool: "Bash", input: { command: message } };
@@ -118,6 +125,8 @@ try {
   const d = desk()!.message_id;
   fake.pressButton(ME, ME, d, button(d, "Allow")!);
   await until("first answered", () => !ctl().liveState(deploy)?.card);
+  // Allow on the desk is Allow on the card: the card's own message says so.
+  await until("the card says it was allowed", () => sent().some((m) => m.message_id !== d && m.text.includes("pension-auto-enrol") && m.text.includes("Allowed here")));
   await until("desk moved on", () => desk()?.text.includes("Waiting for you (2)"));
   await shot("impl-02-after-allow", "Bấm Allow ngay trên bàn: thẻ gốc ghi “Allowed here”, bàn chuyển sang thẻ kế");
 
