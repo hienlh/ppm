@@ -18,8 +18,8 @@ import type { WindowsSessionInfo } from "./remote-desktop-win32-session.ts";
 /** Said when the session is known to be disconnected: what happened, and the way back from a phone. */
 export const SESSION_DISCONNECTED_MESSAGE = "Your Windows session is disconnected — usually because a Remote "
   + "Desktop (RDP) app was closed — so there is nothing on its screen to capture. To bring it back: close "
-  + "this viewer and open Remote Desktop again, then tap \"Bring session back\" in the checklist (or connect "
-  + "once with RDP or TeamViewer and come back).";
+  + "this viewer and open Remote Desktop again, then tap \"Bring session back\" in the checklist (or sign "
+  + "in at the PC, or connect with TeamViewer; reopening RDP helps only while it stays open).";
 
 export function explainCaptureFailure(platform: NodeJS.Platform, reason: string, session?: WindowsSessionInfo | null): string {
   if (platform === "win32") {
