@@ -16,7 +16,8 @@ import {
   useRemoteDesktopReadiness, type HostAction, type HostActionResult, type RemoteDesktopCapabilities,
 } from "./use-remote-desktop-readiness";
 import { useHeadlessRescue } from "./use-headless-rescue";
-import { RescueBar } from "./remote-desktop-rescue-bar";
+import { RescueNoticeBar } from "./remote-desktop-rescue-notice";
+import { PictureProofContext } from "./use-picture-proof";
 import { GATE_BUTTON, RequirementRow } from "./remote-desktop-requirement-row";
 
 export { GATE_BUTTON } from "./remote-desktop-requirement-row";
@@ -29,27 +30,31 @@ export interface RemoteDesktopReadinessGateProps {
 export function RemoteDesktopReadinessGate({ onCancel, children }: RemoteDesktopReadinessGateProps) {
   const [accepted, setAccepted] = useState(false);
   const { caps, failed, runHostAction: runOnHost } = useRemoteDesktopReadiness(!accepted);
-  const rescue = useHeadlessRescue(caps?.platform === "win32");
-  // Bringing the session back or turning the display on arms the safety net: show it at once.
+  // The viewer below reports a proven picture; with one, the safety net is confirmed by itself.
+  const [pictureProven, setPictureProven] = useState(false);
+  const rescue = useHeadlessRescue(caps?.platform === "win32", pictureProven);
+  // Bringing the session back or turning the display on arms the safety net: read it at once.
   const runHostAction = async (id: string, action: HostAction) => {
     const result = await runOnHost(id, action);
     rescue.refresh();
     return result;
   };
 
-  // One wrapper in every state, so the bar coming and going never remounts the viewer.
+  // One wrapper in every state, so the notice coming and going never remounts the viewer.
   return (
-    <div className="relative h-full w-full">
-      {accepted || (caps?.videoReady && caps.inputReady && !hasOpenChoice(caps))
-        ? children
-        : <Checklist caps={caps} failed={failed} onCancel={onCancel} onAccept={() => setAccepted(true)} runHostAction={runHostAction} />}
-      {rescue.rescue && (
-        // Above the viewer's toolbar (z-40): for five minutes this is the one thing that matters.
-        <div className="pointer-events-none absolute inset-x-0 top-2 z-50 flex justify-center px-4">
-          <RescueBar rescue={rescue.rescue} now={Date.now()} onConfirm={rescue.confirm} />
-        </div>
-      )}
-    </div>
+    <PictureProofContext.Provider value={setPictureProven}>
+      <div className="relative h-full w-full">
+        {accepted || (caps?.videoReady && caps.inputReady && !hasOpenChoice(caps))
+          ? children
+          : <Checklist caps={caps} failed={failed} onCancel={onCancel} onAccept={() => setAccepted(true)} runHostAction={runHostAction} />}
+        {rescue.notice && (
+          // Above the viewer's toolbar (z-40).
+          <div className="pointer-events-none absolute inset-x-0 top-2 z-50 flex justify-center px-4">
+            <RescueNoticeBar notice={rescue.notice} onDismiss={rescue.dismissNotice} />
+          </div>
+        )}
+      </div>
+    </PictureProofContext.Provider>
   );
 }
 

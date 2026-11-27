@@ -11,6 +11,7 @@ import { RotateCw, MonitorX } from "@/lib/icons";
 import { useVisualViewport } from "@/hooks/use-visual-viewport";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useRemoteDesktopConnection } from "./use-remote-desktop-connection";
+import { usePictureProof } from "./use-picture-proof";
 import { useRemoteDesktopTouch, type RemoteDesktopInputMode } from "./use-remote-desktop-touch";
 import { useRemoteDesktopVirtualKeyboard } from "./use-remote-desktop-virtual-keyboard";
 import { RemoteDesktopMobileToolbar } from "./remote-desktop-mobile-toolbar";
@@ -53,6 +54,8 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
   const setClipboardSync = useSettingsStore((s) => s.setRemoteDesktopClipboardSync);
   const qualityChoice = useSettingsStore((st) => st.remoteDesktopQuality);
   const streaming = connState === "streaming";
+  // A picture that keeps coming is what confirms the Windows safety net (the gate does the call).
+  usePictureProof(streaming, getFrameCount);
 
   const { transform, virtualCursor, resetZoom } = useRemoteDesktopTouch({
     containerRef,

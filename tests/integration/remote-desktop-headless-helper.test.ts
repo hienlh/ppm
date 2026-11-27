@@ -280,14 +280,14 @@ describe("headless helper: bring the session back", () => {
 describe("headless helper routes: the safety net", () => {
   const rescuePath = () => `${helperPaths().stateDir}\\rescue.json`;
 
-  it("answers null when nothing is waiting, and the armed record when something is", async () => {
+  it("answers nothing armed when nothing is waiting, and the armed record when something is", async () => {
     auth(true);
     markInstalled();
     let res = await remoteDesktopRoutes.request("http://localhost/headless-helper/rescue");
-    expect(await res.json()).toMatchObject({ data: null });
+    expect(await res.json()).toMatchObject({ data: { armed: null, notice: null } });
     win.files.set(rescuePath(), JSON.stringify({ action: "Reattach", armedMs: 1000, deadlineMs: 301_000 }));
     res = await remoteDesktopRoutes.request("http://localhost/headless-helper/rescue");
-    expect(await res.json()).toMatchObject({ data: { action: "Reattach", armedMs: 1000, deadlineMs: 301_000 } });
+    expect(await res.json()).toMatchObject({ data: { armed: { action: "Reattach", armedMs: 1000, deadlineMs: 301_000 }, notice: null } });
     // Polled every few seconds: a file read, never a process.
     expect(win.calls).toEqual([]);
   });
@@ -296,10 +296,25 @@ describe("headless helper routes: the safety net", () => {
     auth(true);
     win.files.set(rescuePath(), JSON.stringify({ action: "Reattach", deadlineMs: "soon" }));
     const res = await remoteDesktopRoutes.request("http://localhost/headless-helper/rescue");
-    expect(await res.json()).toMatchObject({ data: null });
+    expect(await res.json()).toMatchObject({ data: { armed: null } });
   });
 
-  it("\"I can still reach this PC\" runs the Confirm task and passes its answer on", async () => {
+  it("says when the net last ran and turned the virtual display on, until any later run replaces it", async () => {
+    auth(true);
+    const at = new Date(win.now()).toISOString();
+    win.files.set(helperPaths().lastRun, JSON.stringify({
+      action: "Rescue", ok: true, at,
+      message: "Safety net ran: Reattach was not confirmed in time. Turned the virtual display on for the session at this PC.",
+    }));
+    let res = await remoteDesktopRoutes.request("http://localhost/headless-helper/rescue");
+    expect(await res.json()).toMatchObject({ data: { notice: { at, outcome: "display-on" } } });
+    win.files.set(helperPaths().lastRun, JSON.stringify({ action: "DisplayOff", ok: true, at, message: "The virtual display is off." }));
+    res = await remoteDesktopRoutes.request("http://localhost/headless-helper/rescue");
+    expect(await res.json()).toMatchObject({ data: { notice: null } });
+    expect(win.calls).toEqual([]);
+  });
+
+  it("the viewer's automatic confirm runs the Confirm task and passes its answer on", async () => {
     auth(true);
     markInstalled();
     answer(true, "Confirmed. The safety net for Reattach is off.");
