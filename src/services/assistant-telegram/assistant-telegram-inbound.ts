@@ -24,7 +24,8 @@ import { fetchPhoto, fetchPhotos } from "./assistant-telegram-photos.ts";
 import { MAX_REPLY_IMAGE_BYTES, REPLY_IMAGE_SIZE_TEXT } from "../assistant-cards/card-reply-images.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
-import type { BridgeAction, ManagerCardPress, SettingsPress, TaskPress } from "./assistant-telegram-actions.ts";
+import type { BridgeAction, DeskPress, ManagerCardPress, SettingsPress, TaskPress } from "./assistant-telegram-actions.ts";
+import type { DeskReply } from "./assistant-telegram-cards-desk-reply.ts";
 import type { CardReplyMessage } from "./assistant-telegram-card-replies.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import type { TypedAnswerMessage } from "./assistant-telegram-typed-answers.ts";
@@ -89,6 +90,19 @@ export interface InboundDeps {
   pressSettings?: (chatId: string, press: SettingsPress, group: string) => Promise<string>;
   /** `/tasks [project]`. */
   showTasks?: (chatId: string, args: string, reply: (html: string) => void) => void;
+  /**
+   * The pinned card desk: its own buttons (`press`, the toast to show), where a reply to it goes (the
+   * card it showed when the reply was written, or a line saying why not; null when the reply is not
+   * to a desk), `/cards` (what to reply, or null), and a press on any button of the desk's message
+   * (`pressedOn`, true for the desk), after which it is drawn again (`redraw`).
+   */
+  desk?: {
+    press(chatId: string, press: DeskPress, group: string): string;
+    replyTarget(chatId: string, messageId: number, sentAt: number): DeskReply | null;
+    resend(chatId: string): string | null;
+    pressedOn(chatId: string, messageId: number | undefined): boolean;
+    redraw(chatId: string): void;
+  };
   /**
    * Words for the chat working on a task: a reply to a task card, or the next message after
    * "Message about this task". `wants` decides, `take` sends and answers in the chat.
@@ -222,6 +236,18 @@ export class AssistantTelegramInbound {
     this.deps.delivered(update.update_id);
   }
 
+  private throughDesk(chatId: string, message: TelegramMessage): { message: TelegramMessage } | { refuse: string } {
+    const replied = message.reply_to_message;
+    if (!replied || !this.deps.desk) return { message };
+    let to: DeskReply | null = null;
+    try { to = this.deps.desk.replyTarget(chatId, replied.message_id, message.date * 1000); } catch { /* not the desk */ }
+    if (!to) return { message };
+    if ("refuse" in to) return to;
+    // A quote highlighted on the desk may be another card's line: it does not travel with the reply.
+    const { quote: _quote, ...rest } = message as TelegramMessage & { quote?: unknown };
+    return { message: { ...rest, reply_to_message: { ...replied, message_id: to.to } } as TelegramMessage };
+  }
+
   /** True when the update was gathered (its delivery is reported on flush). */
   private async message(chatId: string, message: TelegramMessage, updateId: number): Promise<boolean> {
     const text = message.text ?? message.caption ?? "";
@@ -245,6 +271,14 @@ export class AssistantTelegramInbound {
     }
     // Allowed again (reconnected): a later refusal is worth saying once more.
     this.forgetRefusals(chatId);
+    // A reply to the pinned card desk is a reply to the card it showed, for everything below —
+    // or, when that card is not certain, not sent anywhere, with a line saying so.
+    const viaDesk = this.throughDesk(chatId, message);
+    if ("refuse" in viaDesk) {
+      this.reply(chatId, escapeTelegramHtml(viaDesk.refuse));
+      return false;
+    }
+    message = viaDesk.message;
 
     // The next photo of an album replying to a card joins it; anything else sends that album first.
     const album = this.lanes.get(chatId)?.album;
@@ -269,6 +303,7 @@ export class AssistantTelegramInbound {
         quietCode: (on) => this.deps.codes.mint(chatId, `quiet:${chatId}:${updateId}`, { kind: "quiet", on }),
         relayCard: (card) => this.deps.relayCard(chatId, card),
         ...(this.deps.showTasks ? { tasks: (args: string) => this.deps.showTasks!(chatId, args, (html) => this.reply(chatId, html)) } : {}),
+        ...(this.deps.desk ? { cards: () => this.deps.desk!.resend(chatId) } : {}),
       });
       return false;
     }
@@ -631,7 +666,24 @@ export class AssistantTelegramInbound {
     this.reply(chatId, backlogQuestion(date, text), markup);
   }
 
+  /**
+   * A press on the pinned card desk's message is a press on the card it shows (its buttons are the
+   * card's own codes); the desk is drawn again afterwards, since a card's handler may have edited
+   * the pressed message's buttons as if it were the card's own.
+   */
   private async press(chatId: string, cq: TelegramCallbackQuery): Promise<void> {
+    const found = this.deps.codes.peek(cq.data, chatId);
+    const ownButton = found.ok && found.action.kind === "desk";
+    let onDesk = false;
+    try { onDesk = this.deps.desk?.pressedOn(chatId, cq.message?.message_id) ?? false; } catch { /* not the desk */ }
+    try {
+      await this.pressAction(chatId, cq);
+    } finally {
+      if (onDesk && !ownButton) this.deps.desk?.redraw(chatId);
+    }
+  }
+
+  private async pressAction(chatId: string, cq: TelegramCallbackQuery): Promise<void> {
     const access = checkAccess(cq.message?.chat, cq.from);
     if (!access.ok) {
       await this.deps.client.answerCallbackQuery(cq.id, "Not allowed.");
@@ -660,6 +712,11 @@ export class AssistantTelegramInbound {
     }
     if (action.kind === "settings") {
       const toast = this.deps.pressSettings ? await this.deps.pressSettings(chatId, action, found.group) : "This button is no longer valid.";
+      await this.deps.client.answerCallbackQuery(cq.id, toast);
+      return;
+    }
+    if (action.kind === "desk") {
+      const toast = this.deps.desk ? this.deps.desk.press(chatId, action, found.group) : "This button is no longer valid.";
       await this.deps.client.answerCallbackQuery(cq.id, toast);
       return;
     }

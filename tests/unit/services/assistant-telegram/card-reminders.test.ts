@@ -6,7 +6,7 @@
 import { describe, expect, it } from "bun:test";
 import { connectChat, freshChat, queueFor, useFakeTelegram } from "./bridge-test-kit.ts";
 import {
-  CardReminders, GATHER_MS, REMINDER_HTML, REMINDER_LIST_MAX, reminderListHtml, type CardReminderSettings, type ReminderRequest,
+  CardReminders, deskReminderHtml, GATHER_MS, REMINDER_HTML, REMINDER_LIST_MAX, reminderListHtml, type CardReminderSettings, type ReminderRequest,
 } from "../../../../src/services/assistant-telegram/assistant-telegram-card-reminders.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "../../../../src/services/assistant-telegram/assistant-telegram-send-queue.ts";
 import { TelegramBotClient } from "../../../../src/services/telegram/telegram-bot-client.ts";
@@ -331,5 +331,37 @@ describe("a Telegram that delivers but does not answer", () => {
       process.env[TELEGRAM_API_BASE_ENV] = before;
       void gateway.stop(true);
     }
+  });
+});
+
+describe("with the pinned card desk", () => {
+  it("is one short line with a sound, replying to the desk, for one card or several", async () => {
+    const queue = queueFor(impatientClient());
+    const c = manualClock();
+    let desk: number | null = null;
+    const reminders = new CardReminders({ queue, clock: c.clock, quietEnd: () => null, delayMs: 5 * MIN, deskMessage: () => desk });
+    const { chat, ids } = await silentCards(3, queue);
+    desk = ids[0]!;
+    reminders.schedule(card(chat, ids[1]!, 1));
+    c.advance(6 * MIN);
+    await queue.whenIdle();
+    const one = fake.sent(Number(chat)).at(-1)!;
+    expect(one.reply_to).toBe(desk);
+    expect(one.silent).toBe(false);
+    expect(one.text).toBe("⏰ Still waiting for you: Nxsys · Decision 1 — it is on the pinned list.");
+
+    reminders.schedule(card(chat, ids[2]!, 2));
+    reminders.schedule(card(chat, ids[0]! + 50, 3));
+    c.advance(6 * MIN);
+    await queue.whenIdle();
+    const two = fake.sent(Number(chat)).at(-1)!;
+    expect(two.reply_to).toBe(desk);
+    expect(two.text).toBe("⏰ Still waiting for you: 2 cards — they are on the pinned list.");
+  });
+
+  it("escapes and redacts the card it names", () => {
+    const html = deskReminderHtml([{ chatId: "1", messageId: 1, label: "x", stillWaiting: () => true, project: "a<b", title: "c & d" }]);
+    expect(html).toContain("a&lt;b · c &amp; d");
+    expect(stripTelegramHtml(html)).toContain("a<b · c & d");
   });
 });

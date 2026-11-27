@@ -9,6 +9,7 @@ import { configService } from "./config.service.ts";
 import { getDb } from "./db.service.ts";
 import { parseWebBrowserSettings } from "../shared/web-browser-settings.ts";
 import { createLogger } from "./logger.ts";
+import type { PPMBotConfig } from "../types/config.ts";
 import { getAssistantSettings, writeAssistantPermissionMode, writeAssistantSettingsTools } from "./assistant/assistant-settings.service.ts";
 import { readVoiceSettings, updateVoiceSettings, voiceMessagesEnabled } from "./voice-message/voice-settings.ts";
 import { rememberedApprovals } from "./remembered-approvals/remembered-approvals.service.ts";
@@ -95,6 +96,10 @@ function answerFromSetting(setting: FeatureIntroSetting): FeatureIntroAnswer | n
       const enabled = parseWebBrowserSettings(configService.get("web_browser")).enabled;
       return enabled === true ? "on" : enabled === false ? "off" : null;
     }
+    case "telegram_card_desk": {
+      const on = (configService.get("clawbot") as Partial<PPMBotConfig> | undefined)?.card_desk;
+      return on === true ? "on" : on === false ? "off" : null;
+    }
   }
 }
 
@@ -123,6 +128,13 @@ function writeSettingAnswer(setting: FeatureIntroSetting, answer: FeatureIntroAn
       return;
     case "web_browser":
       configService.set("web_browser", { ...parseWebBrowserSettings(configService.get("web_browser")), enabled: answer === "on" });
+      return;
+    case "telegram_card_desk":
+      configService.set("clawbot", { ...((configService.get("clawbot") as Partial<PPMBotConfig> | undefined) ?? {}), card_desk: answer === "on" } as PPMBotConfig);
+      // A running bridge puts the desk up (or takes it down) now rather than at its next change.
+      void import("./assistant-telegram/assistant-telegram.service.ts")
+        .then(({ assistantTelegramBridge }) => assistantTelegramBridge.refreshCardDesk())
+        .catch((e) => log.warn(`card desk not refreshed: ${(e as Error).message}`));
       return;
   }
 }

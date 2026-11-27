@@ -29,6 +29,9 @@ import { CardReminderRows } from "./telegram-card-reminder-settings";
 import { useSettingsChanged } from "@/hooks/use-settings-changed";
 import { QUIET_CHANGED_EVENT, QUIET_SWITCH_LABEL, QUIET_SWITCH_NOTE } from "../../../shared/assistant-telegram-quiet";
 
+const CARD_DESK_LABEL = "Pinned list of cards waiting for you";
+const CARD_DESK_NOTE = "One pinned message lists every card still waiting and shows one whole, with its buttons, so you can answer them in turn. New cards still arrive as their own messages; /cards brings the list to the bottom.";
+
 /** The bridge options the server keeps under `clawbot`. */
 export interface AssistantTelegramOptions {
   enabled: boolean;
@@ -39,6 +42,8 @@ export interface AssistantTelegramOptions {
   /** The one reminder for a card sent without a sound that nobody answered. */
   card_reminders: boolean;
   card_reminder_minutes: number;
+  /** One pinned, self-updating list of the cards waiting; absent until chosen (off). */
+  card_desk?: boolean;
 }
 
 /** The server's bounds for message grouping. */
@@ -129,7 +134,7 @@ export function AssistantTelegramSettings({ embedded = false }: { embedded?: boo
   };
 
   /** Saves one or more bridge options; the server answers with all of them as stored. */
-  const saveOptions = async (patch: Partial<Pick<AssistantTelegramOptions, "show_tool_calls" | "debounce_ms" | "quiet_while_in_ppm" | "card_reminders" | "card_reminder_minutes">>) => {
+  const saveOptions = async (patch: Partial<Pick<AssistantTelegramOptions, "show_tool_calls" | "debounce_ms" | "quiet_while_in_ppm" | "card_reminders" | "card_reminder_minutes" | "card_desk">>) => {
     setSavingOptions(true);
     try {
       const saved = await api.put<AssistantTelegramOptions>("/api/settings/clawbot", patch);
@@ -224,6 +229,13 @@ export function AssistantTelegramSettings({ embedded = false }: { embedded?: boo
                   checked={options.quiet_while_in_ppm !== false}
                   disabled={savingOptions}
                   onChange={(on) => void saveOptions({ quiet_while_in_ppm: on })}
+                />
+                <SwitchRow
+                  label={CARD_DESK_LABEL}
+                  note={CARD_DESK_NOTE}
+                  checked={options.card_desk === true}
+                  disabled={savingOptions}
+                  onChange={(on) => void saveOptions({ card_desk: on })}
                 />
                 <CardReminderRows options={options} saving={savingOptions} onSave={(patch) => void saveOptions(patch)} />
                 <SwitchRow

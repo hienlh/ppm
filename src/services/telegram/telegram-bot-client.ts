@@ -282,6 +282,20 @@ export class TelegramBotClient {
     return res.ok ? { ok: true, result: true } : res;
   }
 
+  /**
+   * Pin one of the chat's messages. In a private chat Telegram never notifies about a pin, but it
+   * does leave a "pinned" service line the bot is not told about and so cannot delete: pin once.
+   */
+  pinChatMessage(chatId: number | string, messageId: number): Promise<TelegramCallResult<boolean>> {
+    return this.call<boolean>("pinChatMessage", { chat_id: chatId, message_id: messageId, disable_notification: true });
+  }
+
+  /** Take one message off the chat's pinned list; one already unpinned or gone counts as done. */
+  async unpinChatMessage(chatId: number | string, messageId: number): Promise<TelegramCallResult<true>> {
+    const res = await this.call<unknown>("unpinChatMessage", { chat_id: chatId, message_id: messageId }, { goneIsOk: true });
+    return res.ok ? { ok: true, result: true } : res;
+  }
+
   /** Stop the spinner on the pressed button; `text` shows as a short toast. */
   answerCallbackQuery(callbackQueryId: string, text?: string): Promise<TelegramCallResult<boolean>> {
     return this.call<boolean>("answerCallbackQuery", {
@@ -390,7 +404,7 @@ export class TelegramBotClient {
     if (!res.ok && options.notModifiedIsOk && res.errorCode === 400 && /message is not modified/i.test(res.description)) {
       return { ok: true, result: true as T };
     }
-    if (!res.ok && options.goneIsOk && res.errorCode === 400 && /message to delete not found/i.test(res.description)) {
+    if (!res.ok && options.goneIsOk && res.errorCode === 400 && /message to (?:delete|unpin) not found/i.test(res.description)) {
       return { ok: true, result: true as T };
     }
     if (!res.ok && !options.quiet && res.errorCode !== null) {

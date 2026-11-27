@@ -231,6 +231,22 @@ describe("the Assistant's Telegram settings", () => {
     expect(sent("DELETE", "/api/settings/clawbot/telegram/connect")).toHaveLength(1);
   });
 
+  it("turns the pinned card list on, off until chosen", async () => {
+    serve(
+      on("GET", "/api/settings/clawbot/telegram", ok(READY)),
+      on("GET", "/api/settings/clawbot", ok(OPTIONS)),
+      on("PUT", "/api/settings/clawbot", (req) => ok({ ...OPTIONS, ...(req.body as object) })),
+    );
+    view = await mount(<AssistantTelegramSettings />);
+    await settle();
+    const desk = [...document.body.querySelectorAll('button[role="switch"]')][2]!;
+    expect(document.body.textContent).toContain("Pinned list of cards waiting for you");
+    expect(desk.getAttribute("aria-checked")).toBe("false");
+    await click(desk);
+    await settle();
+    expect(sent("PUT", "/api/settings/clawbot").map((r) => r.body)).toEqual([{ card_desk: true }]);
+  });
+
   it("turns card reminders off and saves their delay, refusing minutes out of range", async () => {
     serve(
       on("GET", "/api/settings/clawbot/telegram", ok(READY)),
@@ -249,7 +265,7 @@ describe("the Assistant's Telegram settings", () => {
     await click(button("Save"));
     await settle();
 
-    const reminders = [...document.body.querySelectorAll('button[role="switch"]')][2]!;
+    const reminders = [...document.body.querySelectorAll('button[role="switch"]')][3]!;
     await click(reminders);
     await settle();
 
@@ -267,7 +283,7 @@ describe("the Assistant's Telegram settings", () => {
     await settle();
 
     // Switches in order: the bridge, quiet while at PPM, card reminders, tool names.
-    const toolNames = [...document.body.querySelectorAll('button[role="switch"]')][3]!;
+    const toolNames = [...document.body.querySelectorAll('button[role="switch"]')][4]!;
     await click(toolNames);
     await settle();
 

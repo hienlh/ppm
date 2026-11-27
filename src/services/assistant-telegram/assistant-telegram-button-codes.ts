@@ -73,6 +73,16 @@ export class ButtonCodes<T> {
     }
   }
 
+  /**
+   * Gives a group's codes a fresh day, as if minted now: the pinned card desk shows a card's own
+   * buttons for as long as the card waits, which can be longer than a day.
+   */
+  renewGroup(group: string): void {
+    const expiresAt = this.now() + CODE_TTL_MS;
+    for (const held of this.codes.values()) if (held.group === group) held.expiresAt = expiresAt;
+    this.touchGroup(group);
+  }
+
   dropGroup(group: string): void {
     for (const [code, held] of this.codes) if (held.group === group) this.codes.delete(code);
   }

@@ -40,11 +40,11 @@ export interface FeatureIntro {
  * `voice_messages`: `voice_message.enabled`. `voice_self_learning`: `voice_message.self_learning`,
  * asked only once voice messages are on (it means nothing without them).
  * `assistant_settings_tools`: `assistant.settings_tools`. `remembered_approvals`: `remembered_approvals.enabled`.
- * `web_browser`: `web_browser.enabled`.
+ * `web_browser`: `web_browser.enabled`. `telegram_card_desk`: `clawbot.card_desk`.
  */
 export type FeatureIntroSetting =
   | "assistant_permission_mode" | "voice_messages" | "voice_self_learning" | "assistant_settings_tools" | "remembered_approvals"
-  | "web_browser";
+  | "web_browser" | "telegram_card_desk";
 
 export const FEATURE_INTROS: readonly FeatureIntro[] = [
   {
@@ -139,6 +139,17 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
       + "Each of those can be switched off in Settings → Web Browser.",
     tools: [],
     setting: "web_browser",
+    since: "2026-11",
+  },
+  {
+    id: "telegram-card-desk-2026-11",
+    title: "One pinned list of the cards waiting for you on Telegram",
+    body: "On Telegram, every card still waiting for you goes in one pinned message that keeps itself up to date: "
+      + "it lists them all and shows one whole, with its buttons, so you can answer them one after another instead of "
+      + "scrolling for them. New cards still arrive as their own messages, with a sound; /cards brings the list to the "
+      + "bottom. Switch it in Settings → PPM Assistant → Sessions & Telegram.",
+    tools: [],
+    setting: "telegram_card_desk",
     since: "2026-11",
   },
 ];

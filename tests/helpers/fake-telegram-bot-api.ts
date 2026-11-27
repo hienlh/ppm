@@ -65,6 +65,8 @@ export interface FakeTelegram {
   commands: Array<{ command: string; description: string }>;
   /** `answerCallbackQuery` calls, in order. */
   answers: Array<{ callback_query_id: string; text?: string }>;
+  /** The messages the bot pinned in this chat, oldest pin first (`pinChatMessage`, `unpinChatMessage`). */
+  pins(chatId: number): number[];
   /** Messages the bot deleted, as they were when deleted. They are gone from `sent`. */
   deleted: FakeSentMessage[];
   /** `extra` is merged into the message: `date` (seconds) for a backlog message, `forward_origin`. */
@@ -175,6 +177,7 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
   const commands: FakeTelegram["commands"] = [];
   const answers: FakeTelegram["answers"] = [];
   const deleted: FakeSentMessage[] = [];
+  const pinned = new Map<number, number[]>();
   const failures = new Map<string, FakeFailure[]>();
   const delays = new Map<string, number[]>();
   const messages = new Map<number, FakeSentMessage[]>();
@@ -384,6 +387,20 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
         deleted.push(message);
         return ok(true);
       }
+      case "pinChatMessage": {
+        const message = find(body.chat_id, body.message_id);
+        if (!message) return refuse(400, "Bad Request: message to pin not found");
+        const chatId = Number(body.chat_id);
+        pinned.set(chatId, [...(pinned.get(chatId) ?? []).filter((id) => id !== message.message_id), message.message_id]);
+        return ok(true);
+      }
+      case "unpinChatMessage": {
+        const chatId = Number(body.chat_id);
+        const list = pinned.get(chatId) ?? [];
+        if (!list.includes(Number(body.message_id))) return refuse(400, "Bad Request: message to unpin not found");
+        pinned.set(chatId, list.filter((id) => id !== Number(body.message_id)));
+        return ok(true);
+      }
       case "answerCallbackQuery": {
         const id = String(body.callback_query_id ?? "");
         if (!openQueries.delete(id)) return refuse(400, "Bad Request: query is too old and response timeout expired or query ID is invalid");
@@ -466,6 +483,7 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
     commands,
     answers,
     deleted,
+    pins: (chatId) => [...(pinned.get(chatId) ?? [])],
     pushText(chatId, userId, text, chatType = "private", extra = {}) {
       const message = {
         message_id: messageId(chatId),

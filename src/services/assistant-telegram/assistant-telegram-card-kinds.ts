@@ -55,6 +55,9 @@ const LOOK: Record<AssistantCard["kind"], { icon: string; label: string }> = {
   budget: { icon: "⏸", label: "Assistant paused messaging" },
 };
 
+/** The icon a card of this kind leads with, as its line on the pinned card desk shows it too. */
+export const cardIcon = (kind: AssistantCard["kind"]): string => LOOK[kind]?.icon ?? "🔔";
+
 /** Redacted, hidden characters shown, escaped; `hidden` counts what redaction took out. */
 function clean(text: string, counter: { hidden: number }): string {
   const r = redactSecretsForTelegram(escapeHiddenCharacters(text));

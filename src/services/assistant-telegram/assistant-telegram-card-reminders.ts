@@ -13,6 +13,8 @@
  *   waits; a card answered or withdrawn meanwhile is left out, and nothing is sent if none is left.
  * - **The switch** (`clawbot.card_reminders`, on unless false) is read when a card is sent and
  *   again when its reminder is due, so turning it off drops what is pending.
+ * - **With the pinned card desk on**, the reminder is one short line with a sound, sent as a reply
+ *   to the desk, which already lists every card waiting: a tap on its quote opens the list.
  * - **Never sent twice by a slow Telegram.** The reminder is sent with `ifMaybeSent: "drop"`: if
  *   Telegram does not answer, it is not sent again, because it may have arrived. One reminder was
  *   once delivered five times while Telegram was timing out.
@@ -77,6 +79,8 @@ export interface CardRemindersDeps {
   delayMs?: number;
   /** The settings; tests stand in for the config. */
   settings?: () => CardReminderSettings;
+  /** The chat's pinned card desk, when it has one: the reminder then replies to it. */
+  deskMessage?: (chatId: string) => number | null;
 }
 
 export interface ReminderRequest {
@@ -196,6 +200,14 @@ export class CardReminders {
   }
 
   private send(chatId: string, cards: ReminderRequest[]): void {
+    let desk: number | null = null;
+    try { desk = this.deps.deskMessage?.(chatId) ?? null; } catch { /* no desk: the reminder as before */ }
+    if (desk !== null) {
+      this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: deskReminderHtml(cards), replyTo: desk }, {
+        label: `reminder for ${cards.length} card(s)`, ifMaybeSent: "drop",
+      }));
+      return;
+    }
     const single = cards.length === 1;
     this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, single
       ? { html: REMINDER_HTML, replyTo: cards[0]!.messageId }
@@ -207,6 +219,12 @@ export class CardReminders {
   }
 }
 
+/** The reminder under the pinned card desk: one line, naming the card when there is one. */
+export function deskReminderHtml(cards: ReminderRequest[]): string {
+  if (cards.length === 1) return `⏰ <b>Still waiting for you</b>: ${reminderTitle(cards[0]!)} — it is on the pinned list.`;
+  return `⏰ <b>Still waiting for you: ${cards.length} cards</b> — they are on the pinned list.`;
+}
+
 /** One message for several cards still waiting: a line each, linked into PPM where Telegram can open it. */
 export function reminderListHtml(cards: ReminderRequest[]): string {
   const lines = cards.slice(0, REMINDER_LIST_MAX).map((c) => `• ${reminderLine(c)}`);
@@ -215,10 +233,16 @@ export function reminderListHtml(cards: ReminderRequest[]): string {
   return [`⏰ <b>Still waiting for you: ${cards.length} cards</b>`, "Nobody has answered these yet:", ...lines].join("\n");
 }
 
+const cleanLine = (s: string) => truncateText(redactForTelegram(s.replace(/\s+/g, " ").trim()), TITLE_MAX);
+
+/** "project · title", escaped. */
+function reminderTitle(card: ReminderRequest): string {
+  const title = cleanLine(card.title ?? "") || "A card";
+  const project = card.project ? cleanLine(card.project) : "";
+  return escapeTelegramHtml(project ? `${project} · ${title}` : title);
+}
+
 function reminderLine(card: ReminderRequest): string {
-  const clean = (s: string) => truncateText(redactForTelegram(s.replace(/\s+/g, " ").trim()), TITLE_MAX);
-  const title = clean(card.title ?? "") || "A card";
-  const project = card.project ? clean(card.project) : "";
-  const text = escapeTelegramHtml(project ? `${project} · ${title}` : title);
+  const text = reminderTitle(card);
   return card.url && isPublicHttpsUrl(card.url) ? `<a href="${escapeTelegramHtml(card.url)}">${text}</a>` : text;
 }

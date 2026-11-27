@@ -79,6 +79,18 @@ export interface SettingsPress {
   changeId: number;
 }
 
+/**
+ * A button of the pinned card desk (`assistant-telegram-cards-desk.ts`) that moves between cards:
+ * `show` brings the card `key` names to the desk, `prev`/`next` step through them, `jump` sends a
+ * line under the card's own message so a tap on its quote scrolls there. A card's answer buttons on
+ * the desk are the card's own codes, never a `desk` action.
+ */
+export interface DeskPress {
+  kind: "desk";
+  op: "show" | "prev" | "next" | "jump";
+  key?: string;
+}
+
 export type BridgeAction =
   /** `/sessions`: talk to this session from now on. */
   | { kind: "switch"; sessionId: string }
@@ -93,4 +105,5 @@ export type BridgeAction =
   | CardPress
   | ManagerCardPress
   | TaskPress
-  | SettingsPress;
+  | SettingsPress
+  | DeskPress;

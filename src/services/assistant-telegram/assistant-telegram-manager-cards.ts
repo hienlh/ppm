@@ -7,7 +7,8 @@
  * A manager chat's approval or question goes out as the relay's own card (the same Allow rule,
  * answering the manager chat directly), and that card ends itself when the request does.
  */
-import { getCardRow, type TelegramCardRef } from "../assistant-cards/assistant-cards-db.ts";
+import { getCardRow, listOpenCardRows, type TelegramCardRef } from "../assistant-cards/assistant-cards-db.ts";
+import { assistantCards } from "../assistant-cards/assistant-cards.service.ts";
 import { primeTelegramPathLinks } from "../telegram/telegram-path-links.ts";
 import { chatControl, type LiveApprovalCard } from "../chat-control/chat-control.ts";
 import { getSessionProvider, getSessionTitle } from "../db.service.ts";
@@ -30,6 +31,9 @@ import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { outcomeOf, sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { CardReminders, TelegramSilence } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
+import { WAITING_CARD_KINDS } from "../../shared/assistant-cards.ts";
+import type { AssistantTelegramCardsDesk } from "./assistant-telegram-cards-desk.ts";
+import { cardIcon } from "./assistant-telegram-card-kinds.ts";
 import { repliesBeingAnswered } from "../assistant-cards/replies-being-answered.ts";
 import { isAnswerCard, type AnsweredReply } from "../assistant-cards/card-reply-followup-tracker.ts";
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
@@ -59,12 +63,21 @@ export interface ManagerCardsDeps {
   answering?: (sessionId: string | null) => AnsweredReply[];
   /** The clock the reply's time was taken on (the Assistant's). */
   now?: () => number;
+  /** The pinned card desk: every card here that waits on the user is listed there too. */
+  desk?: AssistantTelegramCardsDesk;
 }
 
 /** Under which message a card goes in one chat, and whether it rings whatever else holds. */
 interface Thread { replyTo: number; loud: boolean }
 
 const groupOf = (cardId: string, chatId: string): string => `mcard:${cardId}:${chatId}`;
+/** A card's place on the pinned card desk. */
+export const mcardDeskKey = (cardId: string): string => `mcard:${cardId}`;
+
+/** A card that waits on the user (not a "done" or "failed" report, a digest or a rules note). */
+function waitsOnUser(card: AssistantCard): boolean {
+  return card.status === "open" && WAITING_CARD_KINDS.includes(card.kind);
+}
 const MAX_THREADED = 500;
 
 /**
@@ -238,28 +251,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       ? cardPhotosTask(chatId, card, { silent: () => card.kind !== "urgent" && this.silent() })
       : null;
     if (photos) this.deps.queue.enqueue(chatId, photos);
-    const keys = formatted.buttons.map((b) => ({
-      op: b.op,
-      key: {
-        text: b.text,
-        // The code stands for the action; the choice's id stays here, on the server.
-        callback_data: this.deps.codes.mint(chatId, group, {
-          kind: "mcard", cardId: card.id, op: b.op,
-          ...(b.op === "ok" && card.payload.draft ? { draftSha256: card.payload.draft.sha256 } : {}),
-          ...(b.op === "choose" && b.optionId ? { optionId: b.optionId } : {}),
-          ...((b.op === "approve" || b.op === "revert") && card.payload.rulesHash ? { rulesHash: card.payload.rulesHash, projectName: card.projectName ?? "" } : {}),
-        }),
-      } satisfies InlineKeyboardButton,
-    }));
-    // One choice per row, so a long label is read whole; any other buttons share a row.
-    const choiceRows = keys.filter((k) => k.op === "choose").map((k) => [k.key]);
-    const row: InlineKeyboardButton[] = keys.filter((k) => k.op !== "choose").map((k) => k.key);
-    const link = url ? placeLink(url) : {};
-    let html = formatted.html;
-    const tasks = extras ? taskCardRows(extras, card.id, chatId, formatted.html, this.deps.codes) : { rows: [], inline: [] };
-    if (tasks.inline.length) html += `\n\n${tasks.inline.join("\n")}`;
-    if (link.inline) html += `\n\n${link.inline}`;
-    const rows = [...choiceRows, ...(row.length ? [row] : []), ...tasks.rows, ...(link.button ? [[link.button]] : [])];
+    const { html, rows, link } = this.message(chatId, card, formatted, url, extras);
     this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, {
       html,
       ...(rows.length ? { markup: { inline_keyboard: rows } } : {}),
@@ -272,6 +264,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       silent: () => card.kind !== "urgent" && !thread?.loud && this.silent(),
       onSent: (sent, info) => {
         record(sent.message_id);
+        if (waitsOnUser(card)) this.putOnDesk(chatId, card, sent.message_id, { html, rows, group });
         // A decision sent silently gets one reminder if it is still open later.
         if (info.silent && card.kind === "needs_decision") {
           this.deps.reminders?.schedule({
@@ -337,11 +330,76 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       label: `${kind} notice`,
       silent: () => !loud && this.silent(),
       // The reminder is not the card: its message is not one to rewrite when the card ends.
-      onSent: (sent) => { if (kind !== "overdue") addCardTelegramRef(card.id, { chatId, messageId: sent.message_id }); },
+      onSent: (sent) => {
+        if (kind === "overdue") return;
+        addCardTelegramRef(card.id, { chatId, messageId: sent.message_id });
+        if (waitsOnUser(card)) this.putOnDesk(chatId, card, sent.message_id, { html, rows: link.button ? [[link.button]] : [], group: null });
+      },
     }));
   }
 
+  /** A card's text and buttons for one chat, its codes minted in the card's group there. */
+  private message(chatId: string, card: AssistantCard, formatted: ReturnType<typeof formatManagerCard>, url: string | null, extras: TaskCardExtras | null) {
+    const group = groupOf(card.id, chatId);
+    const keys = formatted.buttons.map((b) => ({
+      op: b.op,
+      key: {
+        text: b.text,
+        // The code stands for the action; the choice's id stays here, on the server.
+        callback_data: this.deps.codes.mint(chatId, group, {
+          kind: "mcard", cardId: card.id, op: b.op,
+          ...(b.op === "ok" && card.payload.draft ? { draftSha256: card.payload.draft.sha256 } : {}),
+          ...(b.op === "choose" && b.optionId ? { optionId: b.optionId } : {}),
+          ...((b.op === "approve" || b.op === "revert") && card.payload.rulesHash ? { rulesHash: card.payload.rulesHash, projectName: card.projectName ?? "" } : {}),
+        }),
+      } satisfies InlineKeyboardButton,
+    }));
+    // One choice per row, so a long label is read whole; any other buttons share a row.
+    const choiceRows = keys.filter((k) => k.op === "choose").map((k) => [k.key]);
+    const row: InlineKeyboardButton[] = keys.filter((k) => k.op !== "choose").map((k) => k.key);
+    const link = url ? placeLink(url) : {};
+    let html = formatted.html;
+    const tasks = extras ? taskCardRows(extras, card.id, chatId, formatted.html, this.deps.codes) : { rows: [], inline: [] };
+    if (tasks.inline.length) html += `\n\n${tasks.inline.join("\n")}`;
+    if (link.inline) html += `\n\n${link.inline}`;
+    const rows = [...choiceRows, ...(row.length ? [row] : []), ...tasks.rows, ...(link.button ? [[link.button]] : [])];
+    return { html, rows, link, group };
+  }
+
+  /**
+   * After a restart: the open cards this chat was shown, back on the desk with fresh buttons (the
+   * codes on their own messages died with the old process). Approvals and questions are not: their
+   * request ended with the chat it waited in.
+   */
+  async restoreDesk(chatId: string): Promise<void> {
+    const desk = this.deps.desk;
+    if (!desk) return;
+    for (const row of listOpenCardRows()) {
+      const ref = row.telegramRefs.find((r) => r.chatId === chatId && !r.followUp);
+      if (!ref || desk.has(chatId, mcardDeskKey(row.id))) continue;
+      const card = assistantCards.toCard(row);
+      if (!waitsOnUser(card) || card.kind === "approval" || card.kind === "question") continue;
+      const url = await this.linkFor(card).catch(() => null);
+      const extras = await taskCardExtras(card, this.deps.chatLink).catch(() => null);
+      const shown = this.message(chatId, card, formatManagerCard(cardForTelegram(card), this.detail(card)), url, extras);
+      this.putOnDesk(chatId, card, ref.messageId, shown);
+    }
+  }
+
+  /** Lists the card on the desk with what its message shows, its own buttons included. */
+  private putOnDesk(chatId: string, card: AssistantCard, messageId: number, shown: { html: string; rows: InlineKeyboardButton[][]; group: string | null }): void {
+    this.deps.desk?.put(chatId, {
+      key: mcardDeskKey(card.id), icon: cardIcon(card.kind), urgent: card.kind === "urgent",
+      // The title is the manager's own text: a vault value in it is replaced here too.
+      project: card.projectName ?? null, title: turnSecretScrubber.scrub(card.title), since: card.createdAt, messageId,
+      stillWaiting: () => this.isOpen(card.id),
+      view: () => ({ html: shown.html, rows: shown.rows }),
+      groups: shown.group ? [shown.group] : [],
+    });
+  }
+
   changed(card: AssistantCard): void {
+    this.deps.desk?.removeEverywhere(mcardDeskKey(card.id));
     // The relay's own cards end themselves when their request does; a notice is rewritten below.
     if ((card.kind === "approval" || card.kind === "question") && !isLinkOnlyCard(card)) return;
     // A follow-up message is the manager's answer to a reply, not a copy of the card: left as it is.

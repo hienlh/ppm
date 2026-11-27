@@ -34,7 +34,7 @@ import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import { escapeTelegramHtml } from "../notification-format.ts";
 import { redactForTelegram } from "../telegram/telegram-html-format.ts";
 import type { PPMBotConfig } from "../../types/config.ts";
-import { canSendTo } from "./assistant-telegram-access.ts";
+import { canSendTo, reachableChats } from "./assistant-telegram-access.ts";
 import { assistantSessionTitle, BindingError, bindChat, onBindingChanged, unbindChat } from "./assistant-telegram-binding.ts";
 import { BOT_COMMANDS } from "./assistant-telegram-commands.ts";
 import { ButtonCodes } from "./assistant-telegram-button-codes.ts";
@@ -69,6 +69,9 @@ import { AssistantTelegramTaskFollowups } from "./assistant-telegram-task-follow
 import { attachTaskFollowupSink, detachTaskFollowupSink } from "../assistant-cards/task-words-followup.ts";
 import { pressTaskCardUndo } from "./assistant-telegram-task-card-extras.ts";
 import { defaultTelegramVoiceDeps, type TelegramVoiceDeps } from "./assistant-telegram-voice-deps.ts";
+import { AssistantTelegramCardsDesk, type CardsDeskDeps } from "./assistant-telegram-cards-desk.ts";
+import { configCardDeskStore } from "./assistant-telegram-cards-desk-store.ts";
+import { chatLifecycle } from "../chat-control/chat-lifecycle.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -108,6 +111,8 @@ export interface BridgeDeps {
   silence?: TelegramSilence;
   /** The one reminder with a sound for a card sent silently and left unanswered. */
   reminders?: CardReminders;
+  /** The pinned card desk, where every card shown here is listed while it waits. */
+  desk?: AssistantTelegramCardsDesk;
 }
 
 export interface BridgeStartOptions {
@@ -135,10 +140,12 @@ export interface BridgeStartOptions {
     & Partial<Pick<TaskMessageDeps, "forward">>;
   /** Voice messages: Whisper, the clean-up and the feature switch; tests stand in for all three. */
   voice?: TelegramVoiceDeps;
+  /** The pinned card desk: its switch, where its message ids are kept and its clock (tests). */
+  desk?: Partial<Pick<CardsDeskDeps, "enabled" | "store" | "clock">>;
 }
 
 function bridgeConfig(): Pick<PPMBotConfig, "enabled" | "show_tool_calls" | "debounce_ms">
-  & { quiet_while_in_ppm: boolean; card_reminders: boolean; card_reminder_minutes: number } {
+  & { quiet_while_in_ppm: boolean; card_reminders: boolean; card_reminder_minutes: number; card_desk?: boolean } {
   const c = configService.get("clawbot") as Partial<PPMBotConfig> | undefined;
   const reminders = cardReminderSettings();
   return {
@@ -148,6 +155,8 @@ function bridgeConfig(): Pick<PPMBotConfig, "enabled" | "show_tool_calls" | "deb
     quiet_while_in_ppm: quietWhileInPpm(),
     card_reminders: reminders.enabled,
     card_reminder_minutes: reminders.minutes,
+    // Only once chosen: an unset switch is a question still to be asked, not an answer of "off".
+    ...(typeof c?.card_desk === "boolean" ? { card_desk: c.card_desk } : {}),
   };
 }
 
@@ -163,6 +172,7 @@ interface Running {
   cards: BridgeCards;
   codes: ButtonCodes<BridgeAction>;
   reminders: CardReminders;
+  desk: AssistantTelegramCardsDesk;
   tasks: AssistantTelegramTasks;
   taskCreated: AssistantTelegramTaskCreated;
   settingsChanges: AssistantTelegramSettingsChanges;
@@ -193,12 +203,16 @@ export class AssistantTelegramBridge {
     const codes = new ButtonCodes<BridgeAction>({ now });
     const links = { sessionLink: opts.sessionLink ?? assistantSessionLink, chatLink: opts.chatLink ?? chatLink };
     const silence = opts.silence ?? new TelegramSilence();
-    const reminders = new CardReminders({ queue, ...opts.reminders });
-    const cards = (opts.cards ?? ((deps) => new AssistantTelegramCards(deps)))({ queue, state, codes, now, ...links, silence, reminders });
+    let restoreDesk: (chatId: string) => Promise<void> = async () => {};
+    const desk = new AssistantTelegramCardsDesk({
+      queue, codes, store: configCardDeskStore(client.botId), restore: (chatId) => restoreDesk(chatId), ...opts.desk,
+    });
+    const reminders = new CardReminders({ queue, deskMessage: (chatId) => desk.messageOf(chatId), ...opts.reminders });
+    const cards = (opts.cards ?? ((deps) => new AssistantTelegramCards(deps)))({ queue, state, codes, now, ...links, silence, reminders, desk });
     const relay = new AssistantTelegramRelay({
       queue, chatLink: links.chatLink, relayCard: (chatId, card) => cards.relayed(chatId, card), silence,
     });
-    const dbNotices = new AssistantTelegramDbNotices({ queue, chatLink: links.chatLink, silence, reminders });
+    const dbNotices = new AssistantTelegramDbNotices({ queue, chatLink: links.chatLink, silence, reminders, desk });
     const mirror = new AssistantTelegramMirror({
       queue, state, now, cards, silence,
       showToolCalls: () => bridgeConfig().show_tool_calls,
@@ -206,10 +220,11 @@ export class AssistantTelegramBridge {
       turnUntrusted: (sessionId) => assistantTurnProvenance.provenance(sessionId).untrusted,
     });
     const managerCards = new AssistantTelegramManagerCards({
-      queue, codes, ...links, silence, reminders,
+      queue, codes, ...links, silence, reminders, desk,
       relayCard: (chatId, card) => cards.relayed(chatId, card),
       isShowing: (chatId, requestId) => cards.isShowing(chatId, requestId),
     });
+    restoreDesk = (chatId) => managerCards.restoreDesk(chatId);
     const cardFollowups = new AssistantTelegramCardFollowups({
       queue, chatLink: links.chatLink, silence,
       // A new card that went under the user's reply is the whole answer there.
@@ -253,6 +268,13 @@ export class AssistantTelegramBridge {
       },
       pressSettings: (chatId, press, group) => settingsChanges.press(chatId, press, group),
       showTasks: (chatId, args, reply) => tasks.showDeck(chatId, args, reply),
+      desk: {
+        press: (chatId, press, group) => desk.press(chatId, press, group),
+        replyTarget: (chatId, messageId, sentAt) => desk.replyTarget(chatId, messageId, sentAt),
+        resend: (chatId) => desk.resend(chatId),
+        pressedOn: (chatId, messageId) => desk.pressedOn(chatId, messageId),
+        redraw: (chatId) => desk.redraw(chatId),
+      },
       taskWords: { wants: (chatId, replyTo) => taskMessages.wants(chatId, replyTo), take: (chatId, m, aim) => taskMessages.take(chatId, m, aim) },
       replyToCard: (chatId, m) => cardReplies.reply(chatId, m),
       isCardMessage: (chatId, messageId) => cardReplies.isCardMessage(chatId, messageId),
@@ -273,6 +295,8 @@ export class AssistantTelegramBridge {
       // hours hold it): its push would say the same thing twice. Nothing else is held back.
       addNotificationSuppressor((sessionId, kind) => kind === "approval" && managerCardReachesPhone(sessionId, managerCards)),
       () => cardOutbound.detach(managerCards),
+      // A database change's notice has no end of its own here: its card's end is the chat's.
+      chatLifecycle.on("approval_resolved", (p) => desk.removeEverywhere(`db:${p.requestId}`)),
       () => taskCreated.detach(),
       () => settingsChanges.detach(),
       () => tasks.stop(),
@@ -285,13 +309,15 @@ export class AssistantTelegramBridge {
     attachTaskFollowupSink(taskFollowups);
     taskCreated.attach();
     settingsChanges.attach();
-    this.run = { poller, queue, state, inbound, mirror, relay, dbNotices, cards, codes, reminders, tasks, taskCreated, settingsChanges, taskMessages, offs };
+    this.run = { poller, queue, state, inbound, mirror, relay, dbNotices, cards, codes, reminders, desk, tasks, taskCreated, settingsChanges, taskMessages, offs };
 
     recoverInterrupted(queue, state);
     mirror.attach();
     relay.attach();
     dbNotices.attach();
     assistantBridgeReading(token);
+    void desk.start(reachableChats().map((c) => c.chatId).filter(canSendTo))
+      .catch((e) => log.warn(`card desk not started: ${(e as Error).message}`));
     void client.setMyCommands(BOT_COMMANDS);
     log.info(`Reading Telegram bot ${client.botId}`);
     poller.start(opts.pollTimeoutS ?? POLL_TIMEOUT_S);
@@ -306,6 +332,7 @@ export class AssistantTelegramBridge {
     run.dbNotices.detach();
     run.mirror.detach();
     run.reminders.clear();
+    run.desk.stop();
     run.inbound.stop();
     await run.poller.stop();
     run.queue.stop();
@@ -321,6 +348,7 @@ export class AssistantTelegramBridge {
     run.queue.forget(chatId, "chat disconnected");
     run.mirror.forgetChat(chatId);
     run.cards.forgetChat(chatId);
+    run.desk.forgetChat(chatId);
     run.tasks.forgetChat(chatId);
     run.taskCreated.forgetChat(chatId);
     run.settingsChanges.forgetChat(chatId);
@@ -328,6 +356,11 @@ export class AssistantTelegramBridge {
     run.codes.dropChat(chatId);
     run.inbound.forgetChat(chatId);
     run.state.forgetChat(chatId);
+  }
+
+  /** The pinned card desk's switch moved (Settings, or the feature's question): applied now. */
+  refreshCardDesk(): void {
+    void this.run?.desk.refresh();
   }
 
   /** Test hook: resolves once what has arrived was handled and what was queued was sent. */
