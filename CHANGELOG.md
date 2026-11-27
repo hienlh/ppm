@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.44] - 2026-11-27
+
+### Fixed
+
+- **An OK on a card PPM raised itself reaches the manager chat with what the card said**: on "handed-off tasks need a look", it sends the findings to the manager even when the wake budget would refuse.
+- **Answering a card counts as writing to the manager chat**, so a project paused by its wake budget starts again without typing in the chat.
+
 ## [0.26.43] - 2026-11-27
 
 ### Fixed
