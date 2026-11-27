@@ -211,7 +211,7 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 | **Collaborative editing** | Social | Real-time multi-user file editing with CRDT (yjs/automerge). |
 | **Custom domain** | Cloud | Map a custom domain to the PPM Cloud tunnel URL, so PPM answers at `code.yourdomain.com`. Named-tunnel-via-`cloudflared login` design is drafted; blocked on the user owning a zone. |
 
-*(Shipped from this backlog: notification hub → cloud push + Telegram; git advanced → stash/rebase/conflicts; cross-platform binaries → `bun build --compile` + `ppm.sh/install`.)*
+*(Shipped from this backlog: notification hub → Web Push + Telegram + ntfy; git advanced → stash/rebase/conflicts; cross-platform binaries → `bun build --compile` + `ppm.sh/install`.)*
 
 ---
 

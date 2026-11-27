@@ -2178,6 +2178,11 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
       cloudUrl: device.cloud_url,
       deviceId: device.device_id,
       secretKey: device.secret_key,
+      // A `ppm cloud link` from any process rotates the key; read the file again when Cloud refuses ours.
+      reloadCredentials: () => {
+        const current = getCloudDevice();
+        return current ? { deviceId: current.device_id, secretKey: current.secret_key } : null;
+      },
       heartbeatFn: () => {
         const status = readStatus();
         // Re-read device file each heartbeat to pick up name changes

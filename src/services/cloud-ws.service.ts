@@ -42,17 +42,7 @@ interface CommandResultMsg extends WsMessage {
   data?: Record<string, unknown>;
 }
 
-interface NotificationMsg extends WsMessage {
-  type: "notification";
-  title: string;
-  body: string;
-  project: string;
-  sessionId: string;
-  sessionTitle?: string;
-  notificationType: "done" | "approval_request" | "question";
-}
-
-type OutboundMsg = HeartbeatMsg | StateChangeMsg | CommandAckMsg | CommandResultMsg | NotificationMsg;
+type OutboundMsg = HeartbeatMsg | StateChangeMsg | CommandAckMsg | CommandResultMsg;
 
 interface CommandMsg extends WsMessage {
   type: "command";
@@ -67,6 +57,8 @@ type CommandHandler = (cmd: CommandMsg) => void;
 const BACKOFF_STEPS = [1000, 2000, 4000, 8000, 15000, 30000, 60000];
 const MAX_QUEUE_SIZE = 50;
 const HEARTBEAT_INTERVAL_MS = 60_000; // 60s via WS
+/** Cloud's close code for a device id + key it does not accept (`device-ws-handler.ts`). */
+const AUTH_FAILED_CODE = 4003;
 
 // ─── State ──────────────────────────────────────────
 let ws: WebSocket | null = null;
@@ -83,6 +75,16 @@ let shouldConnect = false;
 // Credentials for first-message auth
 let deviceId = "";
 let secretKey = "";
+let reloadCredentials: CredentialsSource | null = null;
+// Cloud refused a key that cloud-device.json still holds: warn once, not on every retry.
+let staleKeyReported = false;
+
+export interface DeviceCredentials {
+  deviceId: string;
+  secretKey: string;
+}
+/** Reads the credentials afresh (from cloud-device.json); null when the device is unlinked. */
+export type CredentialsSource = () => DeviceCredentials | null;
 
 // For heartbeat payload
 let getHeartbeatData: (() => HeartbeatMsg) | null = null;
@@ -101,11 +103,19 @@ export function connect(opts: {
   deviceId: string;
   secretKey: string;
   heartbeatFn: () => HeartbeatMsg;
+  /**
+   * Called when Cloud refuses the key (close 4003). Re-registering a machine gives it a new
+   * key, written to cloud-device.json by whichever process linked it, while this one would
+   * otherwise keep retrying the old key until it expires on Cloud's side.
+   */
+  reloadCredentials?: CredentialsSource;
 }): void {
   // No secret_key in URL — auth via first message after connect
   wsUrl = `${opts.cloudUrl.replace(/^http/, "ws")}/ws/device`;
   deviceId = opts.deviceId;
   secretKey = opts.secretKey;
+  reloadCredentials = opts.reloadCredentials ?? null;
+  staleKeyReported = false;
   getHeartbeatData = opts.heartbeatFn;
   shouldConnect = true;
   reconnectAttempt = 0;
@@ -144,23 +154,6 @@ export function isConnected(): boolean {
   // external monitors from killing a valid WS during the 500ms auth delay.
   if (connected) return true;
   return ws !== null && ws.readyState <= WebSocket.OPEN;
-}
-
-/** Send a push notification via Cloud WS (Cloud dispatches Web Push to subscribed browsers) */
-export function sendNotification(payload: {
-  title: string;
-  body: string;
-  project: string;
-  sessionId: string;
-  sessionTitle?: string;
-  notificationType: "done" | "approval_request" | "question";
-}): void {
-  const msg: NotificationMsg = {
-    type: "notification",
-    ...payload,
-    timestamp: new Date().toISOString(),
-  };
-  send(msg);
 }
 
 // ─── Internal ───────────────────────────────────────
@@ -211,6 +204,7 @@ function doConnect(): void {
       if (ws !== sock) return; // replaced during delay
       connected = true;
       reconnectAttempt = 0; // Auth succeeded — reset backoff
+      staleKeyReported = false;
       if (outageReported) {
         log("INFO", `Cloud WS connected (after ${attemptsWhileOffline} attempts, ${Math.round((Date.now() - offlineSince) / 1000)}s offline)`);
       } else {
@@ -259,6 +253,7 @@ function doConnect(): void {
       log("INFO", "Cloud WS closed with 4010 (replaced/throttled), not reconnecting");
       return;
     }
+    if (event.code === AUTH_FAILED_CODE) reloadAfterAuthFailure();
     if (shouldConnect) scheduleReconnect("onclose");
   };
 
@@ -266,6 +261,28 @@ function doConnect(): void {
   sock.onerror = (event) => {
     log("DEBUG", `Cloud WS error: ${(event as ErrorEvent).message || event.type}`);
   };
+}
+
+/**
+ * Cloud refused the key this connection holds. Pick up what cloud-device.json holds now,
+ * so a key rotated by a later `ppm cloud link` is used from the next attempt on.
+ */
+function reloadAfterAuthFailure(): void {
+  let fresh: DeviceCredentials | null = null;
+  try { fresh = reloadCredentials?.() ?? null; } catch (e) {
+    log("WARN", `Cloud WS: cannot re-read the device credentials: ${e instanceof Error ? e.message : e}`);
+  }
+  if (fresh && (fresh.deviceId !== deviceId || fresh.secretKey !== secretKey)) {
+    deviceId = fresh.deviceId;
+    secretKey = fresh.secretKey;
+    staleKeyReported = false;
+    // Never the key: the id is what Cloud's records are keyed by.
+    log("INFO", `Cloud WS: device key refused, retrying with the one now in cloud-device.json (device ${deviceId})`);
+    return;
+  }
+  if (staleKeyReported) return;
+  staleKeyReported = true;
+  log("WARN", `Cloud WS: Cloud refused the device key (device ${deviceId}); run 'ppm cloud link' to register this machine again`);
 }
 
 function scheduleReconnect(source = "unknown"): void {

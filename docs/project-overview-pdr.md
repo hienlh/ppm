@@ -55,7 +55,7 @@ For the user-facing feature list, see the [README](../README.md). For per-releas
 - Token-based auth, path-traversal protection, PPM-directory shield, single-use download tokens
 - Supervisor with auto-restart, auto-upgrade and OS autostart registration
 - Cloudflare tunnel for public access, plus per-port forwarding tunnels
-- Optional PPM Cloud device registry; Telegram bot; Jira watchers; cloud push notifications
+- Optional PPM Cloud device registry; Telegram bot; Jira watchers; notifications by Web Push, Telegram and ntfy
 - Themes including VSCode theme import; command palette; PWA
 
 ### Not yet built (see [roadmap](project-roadmap.md))
@@ -112,10 +112,10 @@ For the user-facing feature list, see the [README](../README.md). For per-releas
 - **Trade-off:** Requires modern JS support; justified by target audience
 - **Impact:** <1s dev refresh, optimized bundles
 
-### Notifications: cloud push, not local Web Push
-- **Why:** Local Web Push needs a stable public origin and per-browser subscription bookkeeping; a machine behind a rotating quick-tunnel has neither
-- **Trade-off:** Push requires the optional PPM Cloud link; Telegram covers the un-linked case
-- **Impact:** One dispatch path in `notification.service.ts` fans out to both channels, but they are gated differently: cloud push always fires, while Telegram fires **only when no browser client is connected** — so an active user is not double-notified
+### Notifications: sent from the machine, never through PPM Cloud
+- **Why:** Project and chat names stay on the machine. A path through PPM Cloud was drafted but never carried a notification (the server process has no Cloud connection, and Cloud never handled the message), and was removed in 11/2026
+- **Trade-off:** Web Push needs a secure context and, on iOS, a Home Screen install; Telegram and ntfy cover the rest
+- **Impact:** One dispatch path in `notification.service.ts` fans out to Web Push, Telegram and ntfy after the per-event delay, dropping a chat event the user saw in the meantime
 
 ## Non-Functional Requirements
 
