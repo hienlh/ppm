@@ -486,7 +486,12 @@ by pointing at `session_status`, `read_session_turns`, `send_to_session`, `ppm_t
 manager chat, its wake budget is spent, or it stayed busy for 15 tries, one Assistant card for the
 project says the same instead ("N handed-off tasks need a look", `payload.detected` and
 `payload.tasks`, with an Open chat per task on Telegram); its phone copy waits out quiet hours like
-any card. Checks stop, and the stored check goes, once the task has a result, is closed or deleted,
+any card. The user's **OK** on that card means "tell the manager now": the card's findings, as it
+showed them, go to the manager as a wake the user asked for (`checker-card-ok.ts` →
+`wakeManager(…, { overBudgetOnce: true })`), which lifts the project's pause and, refused by the
+hourly or daily cap, still goes this once, uncounted. A bare "OK" naming a card the manager had never
+seen told it nothing (ppm/103: five such OKs on 27/11). A typed reply on it is forwarded as usual,
+with the card's block (see The user's own words). Checks stop, and the stored check goes, once the task has a result, is closed or deleted,
 or is no longer handed off. A snoozed task is not checked at all; the checks resume once it is back
 from its snooze (whose return is a news line for the manager like any change). The task shows the last finding on its working-session chip ("stalled 40
 min", "finished, no report").
@@ -1934,6 +1939,21 @@ for the Assistant's next turn (no turn is started for it) and records the device
 the Telegram chat, in the session trace. A card with no manager (digest, rules, budget) takes no
 reply in PPM; a Telegram reply to one goes to the Assistant as an ordinary message.
 
+A card **PPM raised itself** (`payload.detected`: the handed-off work checker's, a manager turn that
+stopped) was never filed by the chat the words go to, so the card's id alone tells that chat
+nothing. Words forwarded on one carry a second block right after the user-words block,
+`<ppm-card-context-v1>` (`src/shared/chat-card-context.ts`): the card's kind, title, body and listed
+tasks with the chat on each, JSON-quoted and introduced as data. The user-words block itself is
+unchanged and still names the card by id only. The card's block decodes only beside a user-words
+block naming the same card, is rebuilt from its JSON on decode like the others, and only
+`forward-verbatim.ts` (through `forwardedCardContext`) writes one. Forwarding also restarts the
+project's PPM Tasks wake count and lifts its pause (`userWroteToManager` in
+`ppm-tasks-wake-budget.ts`): answering a manager's cards is how the user mostly writes to it, and
+those words arrive as origin `session`, which the wake budget's `user_message` listener ignores.
+Before this, a project whose manager the user only answered through cards stayed paused once it
+reached the pair limit (ppm on 27/11: the twentieth wake since the user last typed in the chat on
+18/11 went at 07:02, and every finding after it became a card).
+
 **Telegram replies** are matched after the access and backlog checks, with the chat's gathered
 messages flushed first and the reply never merged into them. A forwarded message, or one sent
 through an inline bot, is someone else's words and never answers a card.
@@ -2352,8 +2372,9 @@ withstand is a model talked into a command that looks like a read:
   the provider's shell loads is not PPM's to set). Codex's own trusted read-only set (Known
   limitations) is unchanged: it runs those without asking PPM.
 
-Two message blocks are written by the server only — `<ppm-assistant-provenance-v1>` (how the
-Assistant's turn started) and `<ppm-user-words-v1>` (the user's own words, by card id). Every other
+Three message blocks are written by the server only — `<ppm-assistant-provenance-v1>` (how the
+Assistant's turn started), `<ppm-user-words-v1>` (the user's own words, by card id) and
+`<ppm-card-context-v1>` (the card those words answer, when PPM raised it). Every other
 door breaks their markers: a `send_to_session` body, every `report_to_assistant` field, Telegram text
 (the user's forwarded text included), notebook text and the rules file.
 

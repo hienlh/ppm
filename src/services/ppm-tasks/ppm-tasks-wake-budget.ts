@@ -5,8 +5,9 @@
  * these: a wake the user asked for is sent because the user is there, and a check finding is
  * handled while the phone card waits. Each project counts under its own sender
  * (`ppm-tasks:<project key>`), so one busy project never pauses another's wakes. The state survives a
- * restart in its own config row; the user writing in a project's manager chat, or asking for a
- * wake themselves, restarts that project's count and lifts its pause.
+ * restart in its own config row; the user writing in a project's manager chat (typing there, or
+ * answering one of its cards), or asking for a wake themselves, restarts that project's count and
+ * lifts its pause.
  */
 import { configService } from "../config.service.ts";
 import { getConfigValue, getDb, resolveMigratedSession, setConfigValue } from "../db.service.ts";
@@ -52,10 +53,21 @@ function managedProject(sessionId: string): string | null {
   return rows.find((r) => resolveMigratedSession(r.session_id) === id)?.project_key ?? null;
 }
 
+/**
+ * The user wrote to `sessionId`: when it is a project's manager chat, that project's wake count
+ * starts again and its pause lifts. Typing in the chat reaches here through `user_message`; the
+ * user's words forwarded from a card or about a task (`forward-verbatim.ts`) arrive as origin
+ * `session` and call this directly — they are the user writing too, and answering cards is how
+ * the user mostly talks to a manager, so without them a project's pause outlived every answer.
+ */
+export function userWroteToManager(sessionId: string): void {
+  try {
+    const project = managedProject(sessionId);
+    if (project) userPresent(project, sessionId);
+  } catch { /* no database in this process: nothing to lift */ }
+}
+
 chatLifecycle.on("user_message", (m) => {
   if (m.traceOrigin || (m.origin !== "ws" && m.origin !== "telegram")) return;
-  try {
-    const project = managedProject(m.sessionId);
-    if (project) userPresent(project, m.sessionId);
-  } catch { /* no database in this process: nothing to lift */ }
+  userWroteToManager(m.sessionId);
 });
