@@ -98,3 +98,22 @@ describe("the bot's commands", () => {
     expect(BOT_COMMANDS.map((c) => c.command)).toContain("status");
   });
 });
+
+describe("/cards", () => {
+  it("is offered, listed in /help, and answers only when the desk has something to say", async () => {
+    expect(BOT_COMMANDS.map((c) => c.command)).toContain("cards");
+    expect(HELP_TEXT).toContain("/cards");
+    const t = context();
+    const said: Array<string | null> = ["✅ Nothing is waiting for you.", null];
+    await runCommand({ name: "cards", args: "" }, { ...t.ctx, cards: () => said.shift()! });
+    await runCommand({ name: "cards", args: "" }, { ...t.ctx, cards: () => said.shift()! });
+    // The second answered with the desk itself: nothing more to reply.
+    expect(t.replies.map((r) => r.html)).toEqual(["✅ Nothing is waiting for you."]);
+  });
+
+  it("says so where the card list is not available", async () => {
+    const t = context();
+    await runCommand({ name: "cards", args: "" }, t.ctx);
+    expect(t.replies[0]!.html).toBe("The card list is not available here.");
+  });
+});

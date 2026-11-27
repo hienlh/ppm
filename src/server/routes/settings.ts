@@ -653,16 +653,19 @@ settingsRoutes.put("/session-trace", async (c) => {
 // ── PPM Assistant on Telegram (kept under PPMBot's `clawbot` key and routes) ──
 
 /** The settings the bridge reads, whatever else an old PPMBot row still holds. */
-const CLAWBOT_KEYS = ["enabled", "show_tool_calls", "debounce_ms", "quiet_while_in_ppm", "card_reminders", "card_reminder_minutes"] as const;
+const CLAWBOT_KEYS = ["enabled", "show_tool_calls", "debounce_ms", "quiet_while_in_ppm", "card_reminders", "card_reminder_minutes", "card_desk"] as const;
 
-/** GET /settings/clawbot — `{ enabled, show_tool_calls, debounce_ms, quiet_while_in_ppm, card_reminders, card_reminder_minutes }` */
+/**
+ * GET /settings/clawbot — `{ enabled, show_tool_calls, debounce_ms, quiet_while_in_ppm, card_reminders, card_reminder_minutes, card_desk? }`;
+ * `card_desk` is absent until the user chose (its feature's question is still open).
+ */
 settingsRoutes.get("/clawbot", async (c) => {
   const { assistantTelegramConfig } = await import("../../services/assistant-telegram/assistant-telegram.service.ts");
   return c.json(ok(assistantTelegramConfig()));
 });
 
 /**
- * PUT /settings/clawbot — any of the six settings. PPMBot's other fields (provider, permission
+ * PUT /settings/clawbot — any of the seven settings. PPMBot's other fields (provider, permission
  * mode, thinking, system prompt) are ignored rather than refused, so an older page still saves.
  * Switching `enabled` starts or stops the bridge.
  */
@@ -674,7 +677,7 @@ settingsRoutes.put("/clawbot", async (c) => {
     return c.json(err("Body must be JSON"), 400);
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) return c.json(err("Body must be an object"), 400);
-  for (const key of ["enabled", "show_tool_calls", "quiet_while_in_ppm", "card_reminders"] as const) {
+  for (const key of ["enabled", "show_tool_calls", "quiet_while_in_ppm", "card_reminders", "card_desk"] as const) {
     if (body[key] !== undefined && typeof body[key] !== "boolean") return c.json(err(`${key} must be true or false`), 400);
   }
   const debounce = body.debounce_ms;
@@ -696,6 +699,10 @@ settingsRoutes.put("/clawbot", async (c) => {
     if (typeof body.quiet_while_in_ppm === "boolean") {
       const { setQuietWhileInPpm } = await import("../../services/assistant-telegram/assistant-telegram-silence.ts");
       setQuietWhileInPpm(body.quiet_while_in_ppm);
+    }
+    if (typeof body.card_desk === "boolean") {
+      const { assistantTelegramBridge } = await import("../../services/assistant-telegram/assistant-telegram.service.ts");
+      assistantTelegramBridge.refreshCardDesk();
     }
 
     const { syncAssistantTelegram } = await import("../../services/assistant-hub/assistant-hub-startup.ts");

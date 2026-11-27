@@ -33,8 +33,16 @@ import { placeLink } from "./assistant-telegram-links.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import { createQuietHold, type QuietHold, type QuietHoldDeps } from "./assistant-telegram-quiet-hold.ts";
 import type { CardReminders, TelegramSilence } from "./assistant-telegram-silence.ts";
+import type { AssistantTelegramCardsDesk } from "./assistant-telegram-cards-desk.ts";
 
 const log = createLogger("assistant-telegram");
+
+/** A notice that is also listed on the pinned card desk while it waits. */
+interface DeskItem {
+  key: string;
+  title: (chat: DescribedChat) => string;
+  stillWaiting: () => boolean;
+}
 
 /** How much of the SQL a notice repeats; the whole script is on the card in PPM. */
 export const DB_NOTICE_SQL_MAX = 600;
@@ -73,6 +81,8 @@ export interface DbNoticesDeps {
   silence?: TelegramSilence;
   /** The one reminder with a sound for an approval notice sent silently and left unanswered. */
   reminders?: CardReminders;
+  /** The pinned card desk: an approval's notice is listed there while the change waits. */
+  desk?: AssistantTelegramCardsDesk;
 }
 
 type Shown = DbAttentionEvents["approval_shown"];
@@ -229,13 +239,17 @@ export class AssistantTelegramDbNotices {
 
   /** The approval's notice waits on a decision: sent silently, it gets one reminder while the change still waits. */
   private sendApproval(p: Shown): void {
+    const desk: DeskItem = {
+      key: `db:${p.requestId}`, stillWaiting: () => this.quiet.stillWaiting(p.sessionId, p.requestId),
+      title: (chat) => `Database change from “${chat.title}”`,
+    };
     this.send(p.sessionId, "db approval", (chat) => approvalNoticeHtml(chat, p.input, p.expiresAt, this.quiet.clock.now()), (chatId, messageId, about) => {
       this.deps.reminders?.schedule({
         chatId, messageId, label: "db approval",
         stillWaiting: () => this.quiet.stillWaiting(p.sessionId, p.requestId),
         project: about.chat.project, title: `Database change from “${about.chat.title}”`, url: about.url,
       });
-    });
+    }, undefined, desk);
   }
 
   private onReminder(p: DbAttentionEvents["approval_reminder"]): void {
@@ -259,18 +273,19 @@ export class AssistantTelegramDbNotices {
 
   private send(
     sessionId: string, label: string, render: (chat: DescribedChat) => string, onSilentSend?: SilentSend,
-    extraLinks?: () => Promise<{ label: string; url: string }[]>,
+    extraLinks?: () => Promise<{ label: string; url: string }[]>, desk?: DeskItem,
   ): void {
     let chats: string[];
     try { chats = this.connectedChats().filter(canSendTo); } catch { chats = []; }
     if (!chats.length) return;
-    void this.deliver(chats, sessionId, label, render, onSilentSend, extraLinks).catch((e) => log.warn(`${label} notice for ${sessionId} not sent: ${(e as Error).message}`));
+    void this.deliver(chats, sessionId, label, render, onSilentSend, extraLinks, desk).catch((e) => log.warn(`${label} notice for ${sessionId} not sent: ${(e as Error).message}`));
   }
 
   private async deliver(
     chats: string[], asked: string, label: string, render: (chat: DescribedChat) => string,
     onSilentSend?: SilentSend,
     extraLinks?: () => Promise<{ label: string; url: string }[]>,
+    desk?: DeskItem,
   ): Promise<void> {
     // Held through quiet hours, or sent just as Codex renamed the chat: name and link the chat as it is now.
     let sessionId = asked;
@@ -293,7 +308,17 @@ export class AssistantTelegramDbNotices {
       }, {
         label,
         silent: () => this.deps.silence?.inPpm() ?? false,
-        ...(onSilentSend ? { onSent: (sent, info) => { if (info.silent) onSilentSend(chatId, sent.message_id, { chat, url }); } } : {}),
+        onSent: (sent, info) => {
+          if (onSilentSend && info.silent) onSilentSend(chatId, sent.message_id, { chat, url });
+          // A notice with no Allow: on the desk it says the same and links to the chat.
+          if (desk) {
+            this.deps.desk?.put(chatId, {
+              key: desk.key, icon: "🗄", project: chat.project, title: desk.title(chat), since: this.quiet.clock.now(),
+              messageId: sent.message_id, stillWaiting: desk.stillWaiting,
+              view: () => ({ html, rows: buttons.map((b) => [b]) }), groups: [],
+            });
+          }
+        },
       }));
     }
   }

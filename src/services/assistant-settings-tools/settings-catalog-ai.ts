@@ -150,6 +150,10 @@ const STATIC_AI_SETTINGS: readonly SettingEntry[] = [
     read: () => validReminderMinutes(clawbot().card_reminder_minutes) ?? CARD_REMINDER_MINUTES.default, write: putClawbot("card_reminder_minutes"),
   },
   {
+    key: "assistant.telegram.card_desk", category: "assistant", label: "PPM Assistant → Telegram → Pinned list of cards waiting for you", tier: "direct",
+    value: BOOL, read: () => clawbot().card_desk === true, write: putClawbot("card_desk"),
+  },
+  {
     key: "design.instructions", category: "design", label: "Design → Instructions for design chats", tier: "card", cardReason: "It is text every design chat trusts as the user's own",
     value: { type: "text", maxLength: 16_000, multiline: true },
     read: async () => (await import("../design/design-settings.service.ts")).getDesignInstructions(),

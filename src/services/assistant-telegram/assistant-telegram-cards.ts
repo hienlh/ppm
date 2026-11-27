@@ -25,6 +25,7 @@ import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
 import { REMEMBER_SUGGEST_AFTER } from "../../shared/remembered-approvals.ts";
 import type { CardPress } from "./assistant-telegram-actions.ts";
 import type { BridgeCards, BridgeDeps } from "./assistant-telegram.service.ts";
+import { decidingInput } from "../chat-control/approval-deciding-input.ts";
 import { formatApprovalCard, formatQuestionCard, needsPpm, otherButtonLabel, resolutionLine } from "./assistant-telegram-card-format.ts";
 import {
   ArmedAnswers, TYPED_ANSWER_WINDOW_MS, answerSentHtml, promptEndedHtml, typedPromptHead, typedPromptHtml,
@@ -90,6 +91,10 @@ interface CardPresentation {
   onSent?: (messageId: number) => void;
   /** Never silent: the user asked for it on the phone. */
   askedOnPhone?: boolean;
+  /** The project the card's chat is in, for its line on the pinned card desk; none for the Assistant's own. */
+  project?: string;
+  /** The card's chat by name, which leads its line on the desk; none for the Assistant's own. */
+  chatTitle?: string;
 }
 
 /** A chat or project name inside a card's headline: plain (the headline is escaped), redacted, short. */
@@ -196,6 +201,7 @@ export class AssistantTelegramCards implements BridgeCards {
         questionHeadline: `Chat ${where} asks`,
       }),
       link: () => this.deps.chatLink(p.targetProject, p.targetProvider, p.targetSessionId),
+      project: p.targetProject, chatTitle: p.targetTitle,
       ...(p.titleOnly !== undefined ? { titleOnly: p.titleOnly } : {}),
       ...(p.onSent ? { onSent: p.onSent } : {}),
       ...(p.askedOnPhone ? { askedOnPhone: true } : {}),
@@ -326,11 +332,17 @@ ${rememberLine(remember)}`;
         if (card.done) this.finish(card);
         else {
           this.deps.state.add(chatId, "cards", sent.message_id);
+          this.deps.desk?.put(chatId, {
+            key: deskKey(card.requestId), icon: card.isQuestion ? "❓" : "🔐", project: how.project ?? null,
+            title: deskTitle(p.card, how.titleOnly, how.chatTitle), since: this.deps.now(), messageId: sent.message_id,
+            stillWaiting: () => !card.done && this.cards.get(key) === card,
+            view: () => card.view(), groups: [group],
+          });
           // Pressed on before Telegram said the message was there: it still shows the first step.
           if (card.wizard && (card.wizard.step > 0 || card.selection.size > 0)) this.redraw(card);
         }
       },
-      onDropped: () => { this.cards.delete(key); this.deps.codes.dropGroup(group); },
+      onDropped: () => { this.cards.delete(key); this.deps.codes.dropGroup(group); this.deps.desk?.remove(chatId, deskKey(card.requestId)); },
     }));
   }
 
@@ -557,6 +569,8 @@ ${rememberLine(remember)}`;
   private redraw(card: ShownCard): void {
     const messageId = card.messageId;
     if (messageId === null) return;
+    // The desk shows the same step, with the same buttons.
+    this.deps.desk?.changed(card.chatId);
     let attempts = 0;
     this.deps.queue.enqueue(card.chatId, {
       key: `step:${card.group}`, final: true, label: "question step",
@@ -589,6 +603,7 @@ ${rememberLine(remember)}`;
   private finish(card: ShownCard): void {
     const messageId = card.messageId;
     this.armed.endCard(keyOf(card), "ended");
+    this.deps.desk?.remove(card.chatId, deskKey(card.requestId));
     if (messageId === null) return;
     this.cards.delete(keyOf(card));
     const html = card.endLine ? `${card.html}\n\n${card.endLine}` : card.html;
@@ -603,6 +618,27 @@ ${rememberLine(remember)}`;
       },
     });
   }
+}
+
+/** The card's place on the pinned card desk. */
+export const deskKey = (requestId: string): string => `card:${requestId}`;
+
+/**
+ * The card's line on the desk: the title it was limited to; else the chat it waits in, by name,
+ * then its first question or what an approval asks for (the title its own message leads with) —
+ * "Release 0.26.40: Bash" says which card it is where "Bash" alone does not.
+ */
+function deskTitle(card: LiveApprovalCard, titleOnly: string | undefined, chatTitle: string | undefined): string {
+  if (titleOnly !== undefined) return titleOnly;
+  let what: string;
+  if (card.isQuestion) {
+    const q = card.questions?.[0];
+    what = (q?.header || q?.question || "A question").trim();
+  } else {
+    try { what = decidingInput(card).title; } catch { what = "An approval"; }
+  }
+  const chat = chatTitle?.replace(/\s+/g, " ").trim();
+  return chat ? `${chat}: ${what}` : what;
 }
 
 /** Where a card is kept: one per chat and request. */

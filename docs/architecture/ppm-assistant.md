@@ -1773,6 +1773,42 @@ phone or by the bell in the Assistant window; each change goes out as
 out with a sound as it did before. Reminders live in memory: a restart drops them, as it drops the
 cards' buttons. `PPM_TELEGRAM_QUIET_MS` shortens the window for a demo or an e2e.
 
+**The pinned card desk** (`clawbot.card_desk`, off until the user answers the
+`telegram-card-desk-2026-11` question; Settings → PPM Assistant → Sessions & Telegram, or
+`settings_set assistant.telegram.card_desk`). Each Telegram chat gets one message, pinned once and
+then only edited, that lists every card still waiting there (urgent first, then oldest first, at
+most 10 lines) and shows one of them whole with its own buttons; numbers (‹ n / N › past eight)
+move between cards, and "↩ Go to the card's message" sends a line quoting the card.
+`assistant-telegram-cards-desk.ts` keeps it, `-desk-draw.ts` draws it, `-desk-store.ts` keeps its
+message id in the `assistant_telegram_card_desk` config row. Three things are load-bearing:
+
+- **The card part is the card's own view.** Every module that puts a waiting card on the phone
+  (`AssistantTelegramCards`, the manager cards, the `db_execute` notices) `put`s it with its HTML and
+  its buttons once Telegram has the message, and `remove`s it when it ends; an entry is also asked
+  `stillWaiting()` at every draw. The buttons are the card's own codes, so a press on the desk is a
+  press on the card, Allow included only where the card offered it. When the card and the list do
+  not fit in 4096 characters the list shrinks to a count, and a card that still does not fit is shown
+  without its buttons.
+- **A reply to the desk answers the card the phone showed when it was written, or nothing.** The
+  desk moves by itself (a card answered in PPM, a new urgent one), so the card it is about to show
+  is not the one the user read. `shown` is set only once Telegram confirmed an edit, and
+  `deskReplyFor` (`-desk-reply.ts`) routes a reply (`throughDesk` in the inbound router, by the
+  message's date) only when that card was up before it was written and either the user moved the
+  desk there by pressing on it or it had been up a minute (`DESK_REPLY_SETTLE_MS`); otherwise, and
+  for a card too long to show or a desk `/cards` moved, the reply is not sent and one line says so.
+  A press on the desk is spent by the next move, so a later move the desk makes by itself never
+  counts as the user's.
+- **Edits never ring**, so new cards still arrive as their own messages; with the desk on, a card's
+  reminder is one line with a sound replying to the desk. The desk is always sent silently.
+- **Codes and restarts.** Every five minutes (`DESK_TICK_MS`) the listed cards' code groups are
+  renewed (`ButtonCodes.renewGroup`) and ages redrawn; a draw identical to the last is skipped. After
+  a restart the stored message is edited, and the manager's open cards come back on it with fresh
+  codes (`restoreDesk`); approvals do not, their request ended with the chat. A desk the user deleted
+  is sent again and pinned again. A send that may have arrived is not repeated: its codes are dropped
+  and the next change sends a fresh desk. `/cards` unpins the old desk, edits it to "moved down" and
+  pins a new one at the bottom (a pin leaves a "pinned" line the bot cannot delete, so it pins only
+  then). Switched off, a pinned desk is unpinned and says so.
+
 ### Cards and the Allow rule
 
 A session's card appears on Telegram as the same card: whichever answer comes first, in PPM or on
@@ -2054,7 +2090,7 @@ PPM asks every manager chat whose digest switch is on (`PATCH /api/assistant/man
 ### Commands, links and settings
 
 Commands are `BOT_COMMANDS` in `assistant-telegram-commands.ts` (`/new`, `/sessions`, `/status`,
-`/tasks [project]`, `/stop`, `/quiet [on|off]`, `/help`, plus `/start`). `/quiet` alone shows the
+`/tasks [project]`, `/cards`, `/stop`, `/quiet [on|off]`, `/help`, plus `/start`). `/quiet` alone shows the
 quiet switch with a button that flips it. `/status` is `chats_attention` in a message
 (`assistant-telegram-status.ts`), followed by the cards it lists with working buttons. There is no
 `/restart`: a restart is a change, and the Assistant can run `ppm restart` in a shell, which asks.

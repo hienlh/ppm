@@ -48,6 +48,12 @@ export interface PPMBotConfig {
   card_reminders?: boolean;
   /** Minutes before that reminder, 1 to 240; 5 when unset. */
   card_reminder_minutes?: number;
+  /**
+   * One pinned message per chat listing every card still waiting, where each can be answered in
+   * turn. Off unless true: asked once as a new feature (`telegram-card-desk-2026-11`)
+   * (`assistant-telegram-cards-desk.ts`).
+   */
+  card_desk?: boolean;
 }
 
 export type ThemeMode = "light" | "dark" | "system";
