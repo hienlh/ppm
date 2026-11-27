@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from "bun:test";
 import { Hono } from "hono";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { databaseRoutes } from "../../../src/server/routes/database.ts";
+import { configService } from "../../../src/services/config.service.ts";
+import { _resetPpmPasswordAttempts } from "../../../src/services/ppm-password.ts";
 
 function createApp() {
   return new Hono().route("/db", databaseRoutes);
@@ -383,7 +385,7 @@ describe("DELETE /db/connections/:id", () => {
   });
 });
 
-describe("GET /db/connections/export", () => {
+describe("POST /db/connections/export", () => {
   it("exports connections with config", async () => {
     const app = createApp();
 
@@ -399,7 +401,17 @@ describe("GET /db/connections/export", () => {
     });
 
     // Export
-    const res = await app.request("/db/connections/export");
+    const auth = configService.get("auth");
+    configService.set("auth", { ...auth, enabled: true, token: "ppm-pass" });
+    _resetPpmPasswordAttempts();
+    let res: Response;
+    try {
+      res = await app.request("/db/connections/export", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ppmPassword: "ppm-pass" }),
+      });
+    } finally {
+      configService.set("auth", auth);
+    }
     expect(res.status).toBe(200);
     const json = await res.json() as any;
     expect(json.ok).toBe(true);

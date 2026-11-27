@@ -212,6 +212,8 @@ export function CodexAccountsSection() {
         onOpenChange={(v) => { if (!v) setDialog(null); }}
         password={c.backupPassword}
         onPasswordChange={c.setBackupPassword}
+        ppmPassword={c.ppmPassword}
+        onPpmPasswordChange={(v) => { c.setPpmPassword(v); c.setErr(null); }}
         busy={c.exporting || c.importing}
         onExport={() => void c.doExport()}
         onImport={(f) => void c.doImport(f)}

@@ -2,11 +2,13 @@ import { useState, useCallback } from "react";
 import { KeyRound, Check, Eye, EyeOff } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api } from "@/lib/api-client";
-import { setAuthToken } from "@/lib/api-client";
+import { api, getAuthToken, setAuthToken } from "@/lib/api-client";
 
 export function ChangePasswordSection() {
   const [open, setOpen] = useState(false);
+  // The current password, typed again: being signed in only proves someone reached an open PPM.
+  const currentRequired = !!getAuthToken();
+  const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -15,7 +17,7 @@ export function ChangePasswordSection() {
   const [error, setError] = useState<string | null>(null);
 
   const mismatch = confirm.length > 0 && password !== confirm;
-  const canSubmit = password.trim().length >= 4 && password === confirm && !saving;
+  const canSubmit = password.trim().length >= 4 && password === confirm && !saving && (!currentRequired || current.length > 0);
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) return;
@@ -25,10 +27,12 @@ export function ChangePasswordSection() {
       const { token } = await api.put<{ token: string }>("/api/settings/auth/password", {
         password: password.trim(),
         confirm: confirm.trim(),
+        current,
       });
       // Update localStorage so current session stays authenticated
       setAuthToken(token);
       setSaved(true);
+      setCurrent("");
       setPassword("");
       setConfirm("");
       setTimeout(() => {
@@ -40,7 +44,7 @@ export function ChangePasswordSection() {
     } finally {
       setSaving(false);
     }
-  }, [canSubmit, password, confirm]);
+  }, [canSubmit, password, confirm, current]);
 
   if (!open) {
     return (
@@ -63,14 +67,27 @@ export function ChangePasswordSection() {
     <section className="space-y-2">
       <h3 className="text-xs font-medium text-muted-foreground">Change Password</h3>
       <div className="space-y-2">
+        {currentRequired && (
+          <Input
+            type="password"
+            placeholder="Current password"
+            aria-label="Current password"
+            autoComplete="current-password"
+            value={current}
+            onChange={(e) => { setCurrent(e.target.value); setError(null); }}
+            className="h-8 text-xs"
+            autoFocus
+          />
+        )}
         <div className="relative">
           <Input
             type={showPw ? "text" : "password"}
             placeholder="New password"
+            autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="h-8 text-xs pr-8"
-            autoFocus
+            autoFocus={!currentRequired}
           />
           <button
             type="button"
@@ -102,6 +119,7 @@ export function ChangePasswordSection() {
             className="h-8 text-xs flex-1 cursor-pointer"
             onClick={() => {
               setOpen(false);
+              setCurrent("");
               setPassword("");
               setConfirm("");
               setError(null);

@@ -14,6 +14,8 @@ import { decryptConfig, getConnectionById, openTestDb, setDb } from "../../../sr
 import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
 import { initAdapters } from "../../../src/services/database/init-adapters.ts";
 import { databaseRoutes } from "../../../src/server/routes/database.ts";
+import { configService } from "../../../src/services/config.service.ts";
+import { _resetPpmPasswordAttempts } from "../../../src/services/ppm-password.ts";
 import { DB_LOGIN_REQUIRED } from "../../../src/shared/db-connection-config.ts";
 
 const SECRET = "hunter2-s3cret";
@@ -223,7 +225,16 @@ describe("Available to the AI chat", () => {
     expect((await call("GET", "/db/connections")).json.data.find((c: { id: number }) => c.id === off))
       .toMatchObject({ ai_access: 0 });
 
-    const exported = (await call("GET", "/db/connections/export")).json.data.connections;
+    // The export asks for PPM's password; set one here rather than inherit whatever an earlier file left.
+    const auth = configService.get("auth");
+    configService.set("auth", { ...auth, enabled: true, token: "ppm-pass" });
+    _resetPpmPasswordAttempts();
+    let exported;
+    try {
+      exported = (await call("POST", "/db/connections/export", { ppmPassword: "ppm-pass" })).json.data.connections;
+    } finally {
+      configService.set("auth", auth);
+    }
     expect(exported[0]).toMatchObject({ name: "private", ai_access: 0 });
     const imported = (await call("POST", "/db/connections/import", { connections: exported })).json.data.connections;
     expect(aiAccess(imported[0].id)).toBe(0);

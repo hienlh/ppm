@@ -34,6 +34,8 @@ function announcerFor(env: unknown): Announce {
 export const announceDbConnectionChanges: MiddlewareHandler = async (c, next) => {
   await next();
   if (c.req.method === "GET" || c.req.method === "HEAD" || c.req.method === "OPTIONS") return;
+  // A POST that only reads: the export carries PPM's password in its body, so it is not a GET.
+  if (c.req.path.endsWith("/connections/export")) return;
   if (c.res.status < 200 || c.res.status >= 300) return;
   announcerFor(c.env)();
 };
