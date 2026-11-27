@@ -5,7 +5,7 @@
  */
 import { statSync } from "node:fs";
 import { b64u, ed25519PublicFromPrivate, fingerprintOf, fromB64u, generateEd25519, KEY_BYTES, safeEqual } from "./peer-crypto.ts";
-import { createSecretFile, fileExists, PeerKeyFileError, peerSecretPath, readSecretFile } from "./peer-secret-file.ts";
+import { createSecretFile, fileExists, PeerKeyFileError, peerSecretPath, peerStateExists, readSecretFile } from "./peer-secret-file.ts";
 
 export interface PeerIdentity {
   publicKey: Buffer;
@@ -45,10 +45,14 @@ function parseIdentity(path: string, data: Buffer): PeerIdentity | null {
   return { publicKey, privateKey, fingerprint: fingerprintOf(publicKey) };
 }
 
-/** This PPM's identity, created on first use. Throws `PeerKeyFileError` if the file is damaged. */
+/**
+ * This PPM's identity, created on first use. Throws `PeerKeyFileError` if the file is damaged, or
+ * missing while connections or invites made with it still exist.
+ */
 export function loadPeerIdentity(): PeerIdentity {
   const path = peerIdentityPath();
   if (!fileExists(path)) {
+    if (peerStateExists()) throw new PeerKeyFileError(path, "the identity file is missing, but connections made with it still exist");
     const pair = generateEd25519();
     createSecretFile(path, JSON.stringify({
       v: 1, publicKey: b64u(pair.publicKey), privateKey: b64u(pair.privateKey), createdAt: Date.now(),

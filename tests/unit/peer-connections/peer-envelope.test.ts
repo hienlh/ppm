@@ -47,11 +47,21 @@ describe("peer envelope", () => {
     expect(verifyPeerEnvelope(env, { identityPublic: id.publicKey, fingerprint: fingerprintOf(other.publicKey) }, now)).toEqual({ ok: false, reason: "wrong_sender" });
   });
 
-  it("drops an envelope more than seven days from the receiver's clock, either way", () => {
-    const env = seal("hi");
+  it("drops a control envelope more than seven days from the receiver's clock, either way", () => {
+    const env = sealPeerEnvelope({ connTag, fromFingerprint: peer.fingerprint, seq: 0, kind: "ack", body: { seq: 1 }, sendKey: key, identityPrivate: id.privateKey, sentAt: now });
     expect(verifyPeerEnvelope(env, peer, now + PEER_MAX_CLOCK_SKEW_MS + 1)).toEqual({ ok: false, reason: "clock_skew" });
     expect(verifyPeerEnvelope(env, peer, now - PEER_MAX_CLOCK_SKEW_MS - 1)).toEqual({ ok: false, reason: "clock_skew" });
     expect(verifyPeerEnvelope(env, peer, now + PEER_MAX_CLOCK_SKEW_MS).ok).toBe(true);
+  });
+
+  it("still takes an ordered envelope sealed long ago: its sequence number guards it", () => {
+    expect(verifyPeerEnvelope(seal("sealed before the laptop went away"), peer, now + 30 * 24 * 60 * 60 * 1000)).toEqual({ ok: true });
+  });
+
+  it("measures an already-parsed envelope against the wire cap too", () => {
+    const good = JSON.parse(serializePeerEnvelope(seal("hi")));
+    expect(() => parsePeerEnvelope({ ...good, ct: "A".repeat(PEER_MAX_ENVELOPE_BYTES) })).toThrow(/size/);
+    expect(parsePeerEnvelope(good).seq).toBe(1);
   });
 
   it("does not decrypt under the other direction's key", () => {

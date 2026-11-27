@@ -12,7 +12,7 @@
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import { aesGcmOpen, aesGcmSeal, b64u, fromB64u, KEY_BYTES } from "./peer-crypto.ts";
-import { createSecretFile, fileExists, PeerKeyFileError, peerSecretPath, readSecretFile } from "./peer-secret-file.ts";
+import { createSecretFile, fileExists, PeerKeyFileError, peerSecretPath, peerStateExists, readSecretFile } from "./peer-secret-file.ts";
 
 const PREFIX = "pk1";
 
@@ -24,13 +24,13 @@ export function peerKeyStorePath(): string {
 }
 
 /**
- * The storage key. Created only when `create` is set (a write); reading values that were sealed
- * under a key that has since disappeared throws instead, since a fresh key could never open them.
+ * The storage key. Created only when `create` is set (a write) and nothing sealed exists yet;
+ * otherwise a missing key throws, since a fresh key could never open what was sealed before.
  */
 function loadKey(create: boolean): Buffer {
   const path = peerKeyStorePath();
   if (!fileExists(path)) {
-    if (!create) throw new PeerKeyFileError(path, "the storage key file is missing");
+    if (!create || peerStateExists()) throw new PeerKeyFileError(path, "the storage key file is missing");
     createSecretFile(path, randomBytes(KEY_BYTES));
   }
   const st = statSync(path);

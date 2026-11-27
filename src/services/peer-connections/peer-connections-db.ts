@@ -8,11 +8,11 @@
  * | Columns                                                         | Used by                         |
  * |-----------------------------------------------------------------|---------------------------------|
  * | id, label, peer_claimed_name, peer_fingerprint, peer_identity_pub, my_role, root_key_enc, conn_tag | all (pairing writes them) |
- * | status, my_confirmed_at, peer_confirmed_at, invite_accepted_by  | pairing and confirmation        |
+ * | status, my_confirmed_at, peer_confirmed_at, invite_accepted_by, closed_reason | pairing, confirmation, close |
  * | session_id, provider_id, project_key                            | connection chat                 |
  * | preset … instructions, auto_exchanges                           | settings, limits, outgoing card |
  * | send_seq, recv_seq                                              | outbox / inbox (this layer)     |
- * | relay_mailbox_id, peer_mailbox_id, peer_send_cap_enc, my_send_cap_hash | relay transport          |
+ * | relay_mailbox_id, peer_relay_url, peer_mailbox_id, peer_send_cap_enc, my_send_cap_hash | relay transport |
  * | tailscale_host, inbound_token_hash, outbound_token_enc          | Tailscale transport             |
  *
  * `session_id` is always looked up through `resolveMigratedSession`.
@@ -29,14 +29,14 @@ export interface PeerConnectionRow {
   id: string; label: string; peer_claimed_name: string; peer_fingerprint: string; peer_identity_pub: string;
   my_role: PeerRole; status: PeerConnectionStatus; my_confirmed_at: number | null; peer_confirmed_at: number | null;
   invite_accepted_by: PeerActor | null; root_key_enc: string; conn_tag: string; transport: PeerTransportKind;
-  relay_mailbox_id: string | null; peer_mailbox_id: string | null; peer_send_cap_enc: string | null; my_send_cap_hash: string | null;
+  relay_mailbox_id: string | null; peer_relay_url: string | null; peer_mailbox_id: string | null; peer_send_cap_enc: string | null; my_send_cap_hash: string | null;
   tailscale_host: string | null; inbound_token_hash: string | null; outbound_token_enc: string | null;
   session_id: string | null; provider_id: string; project_key: string | null;
   preset: PeerConnectionSettings["preset"]; scope: PeerConnectionSettings["scope"]; permission: PeerConnectionSettings["permission"];
   outgoing: PeerConnectionSettings["outgoing"]; allow_child_sessions: number; daily_msg_limit: number; daily_token_limit: number;
   max_auto_exchanges: number; auto_exchanges: number; quiet_start: number | null; quiet_end: number | null;
   model: string | null; account_id: string | null; instructions: string;
-  send_seq: number; recv_seq: number; created_at: number; updated_at: number; closed_at: number | null;
+  send_seq: number; recv_seq: number; created_at: number; updated_at: number; closed_at: number | null; closed_reason: string | null;
 }
 
 export interface NewPeerConnection {
@@ -124,11 +124,15 @@ const ALLOWED: Record<PeerConnectionStatus, readonly PeerConnectionStatus[]> = {
  * when another writer moved it first or the move is not allowed. `pending_confirm → active` goes
  * through `recordPeerConfirmation`, which also requires both confirmations.
  */
-export function transitionPeerConnection(id: string, from: PeerConnectionStatus, to: PeerConnectionStatus, now = Date.now()): boolean {
+export function transitionPeerConnection(
+  id: string, from: PeerConnectionStatus, to: PeerConnectionStatus, opts: { reason?: string; now?: number } = {},
+): boolean {
   if (!ALLOWED[from].includes(to) || (from === "pending_confirm" && to === "active")) return false;
-  const res = getDb().query(
-    "UPDATE peer_connections SET status = ?, updated_at = ?, closed_at = CASE WHEN ? = 'closed' THEN ? ELSE closed_at END WHERE id = ? AND status = ?",
-  ).run(to, now, to, now, id, from);
+  const now = opts.now ?? Date.now();
+  const closing = to === "closed" ? 1 : 0;
+  const res = getDb().query(`UPDATE peer_connections SET status = ?, updated_at = ?,
+      closed_at = CASE WHEN ? THEN ? ELSE closed_at END, closed_reason = CASE WHEN ? THEN ? ELSE closed_reason END
+    WHERE id = ? AND status = ?`).run(to, now, closing, now, closing, opts.reason?.slice(0, 500) ?? null, id, from);
   return res.changes === 1;
 }
 

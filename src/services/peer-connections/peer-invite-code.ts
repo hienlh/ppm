@@ -5,7 +5,7 @@
  * one `accept`, and the real send capability is exchanged later, encrypted, once both people have
  * confirmed the digits.
  */
-import { b64u, ed25519Sign, ed25519Verify, fromB64u, KEY_BYTES } from "./peer-crypto.ts";
+import { b64u, ed25519Sign, ed25519Verify, fromB64u, hashSecret, KEY_BYTES } from "./peer-crypto.ts";
 import { INVITE_ID_BYTES } from "./peer-pairing-keys.ts";
 
 export const INVITE_PREFIX = "ppm-peer:v1:";
@@ -65,8 +65,15 @@ const inviteSigned = (i: PeerInvite): Buffer => Buffer.from("ppm-peer invite v1\
   canonicalHint(i.hint), i.label, i.expiresAt,
 ]), "utf8");
 
-const acceptSigned = (a: PeerAccept): Buffer => Buffer.from("ppm-peer accept v1\n" + JSON.stringify([
-  b64u(a.inviteId), b64u(a.acceptorEphemeral), b64u(a.acceptorIdentity), a.pairSecret, a.claimedName, a.sentAt,
+/**
+ * The accept signs the hash of the whole invite code it answers, so it is bound to that invite's
+ * keys and commitment and cannot be presented as the answer to any other invite. The inviter
+ * already stores that hash (`peer_invites.code_hash`).
+ */
+export const inviteCodeHash = (code: string): string => hashSecret(code.trim());
+
+const acceptSigned = (a: PeerAccept, codeHash: string): Buffer => Buffer.from("ppm-peer accept v1\n" + JSON.stringify([
+  codeHash, b64u(a.inviteId), b64u(a.acceptorEphemeral), b64u(a.acceptorIdentity), a.pairSecret, a.claimedName, a.sentAt,
 ]), "utf8");
 
 export function encodeInvite(invite: PeerInvite, identityPrivate: Uint8Array): string {
@@ -116,17 +123,21 @@ export function decodeInvite(code: string, now = Date.now()): PeerInvite {
   return invite;
 }
 
-export function encodeAccept(accept: PeerAccept, identityPrivate: Uint8Array): string {
+export function encodeAccept(accept: PeerAccept, inviteCode: string, identityPrivate: Uint8Array): string {
   const a = { ...accept, claimedName: cleanText(accept.claimedName, NAME_MAX) };
-  const sig = ed25519Sign(identityPrivate, acceptSigned(a));
+  const sig = ed25519Sign(identityPrivate, acceptSigned(a, inviteCodeHash(inviteCode)));
   return JSON.stringify({
     v: 1, kind: "accept", invite: b64u(a.inviteId), ae: b64u(a.acceptorEphemeral), ai: b64u(a.acceptorIdentity),
     ps: a.pairSecret, name: a.claimedName, sent_at: a.sentAt, sig: b64u(sig),
   });
 }
 
-/** Parse an `accept` and check its signature; the pair secret is checked by the caller against its hash. */
-export function decodeAccept(text: string): PeerAccept {
+/**
+ * Parse an `accept` and check its signature against the invite it names (`codeHashFor` returns
+ * that invite's stored code hash, or null when this side issued no such invite). The pair secret
+ * is checked by the caller against its own hash.
+ */
+export function decodeAccept(text: string, codeHashFor: (inviteId: string) => string | null): PeerAccept {
   if (text.length > INVITE_MAX_CHARS) throw new Error("accept too long");
   const raw = JSON.parse(text) as Record<string, unknown>;
   if (!raw || raw.v !== 1 || raw.kind !== "accept") throw new Error("not an accept");
@@ -139,7 +150,9 @@ export function decodeAccept(text: string): PeerAccept {
     claimedName: cleanText(raw.name, NAME_MAX),
     sentAt: raw.sent_at,
   };
-  if (!ed25519Verify(accept.acceptorIdentity, acceptSigned(accept), fromB64u(String(raw.sig), 64))) {
+  const codeHash = codeHashFor(b64u(accept.inviteId));
+  if (!codeHash) throw new Error("no such invite");
+  if (!ed25519Verify(accept.acceptorIdentity, acceptSigned(accept, codeHash), fromB64u(String(raw.sig), 64))) {
     throw new Error("accept signature does not match");
   }
   return accept;

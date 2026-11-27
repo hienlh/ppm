@@ -6,6 +6,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
+import { getDb } from "../../../src/services/db.service.ts";
 import { isPpmDirPath } from "../../../src/services/fs-credential-path-guard.ts";
 import { assistantPrivateRoots } from "../../../src/services/assistant/assistant-private-paths.ts";
 import { loadPeerIdentity, peerIdentityPath, resetPeerIdentityCache } from "../../../src/services/peer-connections/peer-identity.ts";
@@ -66,6 +67,25 @@ describe("peer storage key", () => {
     expect(() => openStored(sealed, "l")).toThrow(PeerKeyFileError);
     expect(() => sealStored("w", "l")).toThrow(PeerKeyFileError);
     expect(readFileSync(peerKeyStorePath()).length).toBe(31);
+  }));
+});
+
+describe("once something depends on the files", () => {
+  it("never makes a new identity or storage key in place of a missing one", () => side.run(() => {
+    loadPeerIdentity();
+    sealStored("v", "l");
+    getDb().query(`INSERT INTO peer_invites (id, code_hash, eph_priv_enc, nonce_enc, commitment, pair_secret_hash, transport, preset,
+      expires_at, created_by, created_at) VALUES ('i1', 'h', 'x', 'x', 'c', 'p', 'relay', 'mine', 1, 'user', 1)`).run();
+    try {
+      rmSync(peerIdentityPath());
+      rmSync(peerKeyStorePath());
+      resetPeerIdentityCache();
+      resetPeerKeyStoreCache();
+      expect(() => loadPeerIdentity()).toThrow(PeerKeyFileError);
+      expect(() => sealStored("w", "l")).toThrow(PeerKeyFileError);
+    } finally {
+      getDb().query("DELETE FROM peer_invites").run();
+    }
   }));
 });
 

@@ -2,8 +2,8 @@
  * Sealing and opening envelopes. Sealing encrypts the JSON body with the sender's direction key
  * (the header as associated data) and signs header + ciphertext with the sender's identity.
  *
- * Opening is split so the receiver checks in a fixed order — signature and clock
- * (`verifyPeerEnvelope`), then the sequence (`peer-replay-guard.ts`), and only then decryption
+ * Opening is split so the receiver checks in a fixed order — signature, and the clock for control
+ * envelopes (`verifyPeerEnvelope`), then the sequence (`peer-replay-guard.ts`), and only then decryption
  * (`decryptPeerEnvelope`) — and nothing unauthenticated is ever decrypted or acted on.
  */
 import {
@@ -80,15 +80,32 @@ export function verifyPeerEnvelope(
     return { ok: false, reason: "bad_signature" };
   }
   if (!ed25519Verify(peer.identityPublic, signedBytes(headerOf(env), env.ct), sig)) return { ok: false, reason: "bad_signature" };
-  if (Math.abs(now - env.sent_at) > PEER_MAX_CLOCK_SKEW_MS) return { ok: false, reason: "clock_skew" };
+  // Ordered envelopes are protected by their sequence number; see PEER_MAX_CLOCK_SKEW_MS.
+  if (!isOrderedKind(env.kind) && Math.abs(now - env.sent_at) > PEER_MAX_CLOCK_SKEW_MS) return { ok: false, reason: "clock_skew" };
   return { ok: true };
 }
 
 /**
+ * The envelope decrypted, but its body is not one this PPM understands (a newer format, most
+ * likely). Distinct from a decryption failure: the sender sealed it properly, so the receiver
+ * drops it and says so rather than leaving the sender to resend it forever.
+ */
+export class PeerBodyUnreadableError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "PeerBodyUnreadableError";
+  }
+}
+
+/**
  * Decrypt and validate the body. Call only after `verifyPeerEnvelope` and the sequence check.
- * Throws when the key is wrong or the body does not fit its kind.
+ * Throws when the key is wrong, or `PeerBodyUnreadableError` when the body does not fit its kind.
  */
 export function decryptPeerEnvelope<K extends PeerEnvelopeKind>(env: PeerEnvelope & { kind: K }, receiveKey: Uint8Array): PeerBodies[K] {
   const plaintext = aesGcmOpen(receiveKey, fromB64u(env.nonce, 12), fromB64u(env.ct), aadOf(headerOf(env)));
-  return validatePeerBody(env.kind, JSON.parse(plaintext.toString("utf8")));
+  try {
+    return validatePeerBody(env.kind, JSON.parse(plaintext.toString("utf8")));
+  } catch (e) {
+    throw new PeerBodyUnreadableError(e instanceof Error ? e.message : "unreadable body");
+  }
 }

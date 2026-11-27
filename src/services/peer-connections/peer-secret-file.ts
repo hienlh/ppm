@@ -3,13 +3,15 @@
  * after it (`ppm.db` → `<name>.ppm.<ext>`, `ppm.dev.db` → `<name>.ppm.dev.<ext>`), so a dev server
  * and the live one never share an identity.
  *
- * Unlike the design share secret, a damaged file is never replaced: a new identity or storage key
- * would silently break every existing connection, so the error is surfaced instead.
+ * Unlike the design share secret, a damaged file is never replaced, and a missing one is created
+ * only while no peer state exists yet: a new identity or storage key would silently break every
+ * existing connection (sealed rows would no longer open, peers would refuse every signature), so
+ * the error is surfaced instead.
  */
 import { basename, resolve } from "node:path";
-import { closeSync, mkdirSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
+import { closeSync, linkSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { getPpmDir } from "../ppm-dir.ts";
-import { getDbPath } from "../db.service.ts";
+import { getDb, getDbPath } from "../db.service.ts";
 
 export class PeerKeyFileError extends Error {
   constructor(readonly path: string, reason: string) {
@@ -41,25 +43,44 @@ export function fileExists(path: string): boolean {
   }
 }
 
+/** True once anything was stored that depends on the identity and the storage key. */
+export function peerStateExists(): boolean {
+  try {
+    const row = getDb().query(`SELECT EXISTS (SELECT 1 FROM peer_connections) OR EXISTS (SELECT 1 FROM peer_invites)
+      OR EXISTS (SELECT 1 FROM peer_relay_mailboxes) AS found`).get() as { found: number } | null;
+    return row?.found === 1;
+  } catch (e) {
+    // Tables not there yet: nothing depends on the files. Anything else (a busy database) must not
+    // be read as "no state", or a new key would be made over existing connections.
+    if (e instanceof Error && /no such table/i.test(e.message)) return false;
+    throw e;
+  }
+}
+
 /**
- * Write `content` to a new file, 0600. Claimed with `wx`, so two processes starting at once
- * cannot both write: false means another one got there first and its content stands.
+ * Write `content` to a new file, 0600. Written in full to a private temporary file and then
+ * linked into place, so a crash never leaves a half-written file under the real name, and two
+ * processes starting at once cannot both win: false means another one got there first and its
+ * content stands.
  */
 export function createSecretFile(path: string, content: Uint8Array | string): boolean {
   mkdirSync(getPpmDir(), { recursive: true });
-  let fd: number;
-  try {
-    fd = openSync(path, "wx", 0o600);
-  } catch (e) {
-    if ((e as { code?: string }).code === "EEXIST") return false;
-    throw e;
-  }
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const fd = openSync(tmp, "wx", 0o600);
   try {
     writeSync(fd, typeof content === "string" ? Buffer.from(content, "utf8") : content);
   } finally {
     closeSync(fd);
   }
-  return true;
+  try {
+    linkSync(tmp, path);
+    return true;
+  } catch (e) {
+    if ((e as { code?: string }).code === "EEXIST") return false;
+    throw e;
+  } finally {
+    unlinkSync(tmp);
+  }
 }
 
 /**

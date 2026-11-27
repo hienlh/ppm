@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { generateEd25519, generateX25519, randomToken } from "../../../src/services/peer-connections/peer-crypto.ts";
 import { commitmentOf, newCommitNonce } from "../../../src/services/peer-connections/peer-pairing-keys.ts";
 import {
-  decodeAccept, decodeInvite, encodeAccept, encodeInvite, INVITE_PREFIX, type PeerInvite,
+  decodeAccept, decodeInvite, encodeAccept, encodeInvite, INVITE_PREFIX, inviteCodeHash, type PeerInvite,
 } from "../../../src/services/peer-connections/peer-invite-code.ts";
 
 const inviter = generateEd25519();
@@ -52,12 +52,18 @@ describe("accept", () => {
   it("round-trips and is bound to the acceptor's identity", () => {
     const acceptor = generateEd25519();
     const a = { inviteId: randomBytes(16), acceptorEphemeral: generateX25519().publicKey, acceptorIdentity: acceptor.publicKey, pairSecret: randomToken(), claimedName: "Máy\tcông ty", sentAt: now };
-    const text = encodeAccept(a, acceptor.privateKey);
-    const back = decodeAccept(text);
+    const code = encodeInvite(invite({ inviteId: a.inviteId }), inviter.privateKey);
+    const text = encodeAccept(a, code, acceptor.privateKey);
+    const lookup = (id: string) => (id === Buffer.from(a.inviteId).toString("base64url") ? inviteCodeHash(code) : null);
+    const back = decodeAccept(text, lookup);
     expect(back.claimedName).toBe("Máy công ty");
     expect(back.pairSecret).toBe(a.pairSecret);
     const forged = JSON.parse(text);
     forged.ae = Buffer.from(generateX25519().publicKey).toString("base64url");
-    expect(() => decodeAccept(JSON.stringify(forged))).toThrow(/signature/);
+    expect(() => decodeAccept(JSON.stringify(forged), lookup)).toThrow(/signature/);
+    // Signed for another invite with the same id (a swapped code): refused.
+    const otherCode = encodeInvite(invite({ inviteId: a.inviteId }), inviter.privateKey);
+    expect(() => decodeAccept(text, () => inviteCodeHash(otherCode))).toThrow(/signature/);
+    expect(() => decodeAccept(text, () => null)).toThrow(/no such invite/);
   });
 });

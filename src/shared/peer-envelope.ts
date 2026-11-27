@@ -18,7 +18,11 @@ export const PEER_MAX_ENVELOPE_BYTES = 64 * 1024;
 /** The JSON body before encryption. Base64 grows it by a third, so 44 KB leaves room for the
  *  header and the signature under the 64 KB wire cap. */
 export const PEER_MAX_PLAINTEXT_BYTES = 44 * 1024;
-/** An envelope whose `sent_at` is further than this from the receiver's clock is dropped. */
+/**
+ * A control envelope whose `sent_at` is further than this from the receiver's clock is dropped.
+ * Ordered envelopes are not: their sequence number already stops a replay, and a message sealed
+ * before the other side went offline for a week must still arrive rather than wedge the queue.
+ */
 export const PEER_MAX_CLOCK_SKEW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Kinds that take the next sequence number and are delivered in order, exactly once. */
@@ -64,10 +68,21 @@ export interface PeerBodies {
    */
   grant: { transport: "relay"; send_cap: string; mailbox_id: string } | { transport: "tailscale"; inbound_token: string };
   close: { reason?: string };
-  /** Cumulative: every ordered envelope up to `seq` has been stored. */
-  ack: { seq: number };
-  /** The receiver holds everything below `expected_seq` and nothing at or past it. */
-  nack: { expected_seq: number };
+  /**
+   * Cumulative: every ordered envelope up to `seq` has been stored, the one at `seq` being the
+   * envelope with signature `sig` (absent when nothing has been stored yet). The sender applies
+   * it only when its own envelope at `seq` has that signature, so an old ack replayed after the
+   * sender's database went back cannot mark a different message delivered. `refused`: the
+   * envelope at `seq` arrived but its body could not be read here (a newer format), and was dropped.
+   */
+  ack: { seq: number; sig?: string; refused?: boolean };
+  /**
+   * The receiver holds everything below `expected_seq`. Without `conflict_seq` it is a gap: the
+   * sender resends. With it, the sender's envelope at `conflict_seq` is not the one the receiver
+   * holds there (signature `conflict_sig`, absent if no copy is kept): the sender's numbering
+   * went back, and only then does it renumber forward.
+   */
+  nack: { expected_seq: number; conflict_seq?: number; conflict_sig?: string };
   /** The sender no longer holds anything below `next_seq`; the receiver moves past the gap. */
   resync: { next_seq: number };
   status_req: { wait_id?: string };
@@ -99,10 +114,10 @@ const isB64 = (v: unknown, len?: number): v is string =>
  */
 export function parsePeerEnvelope(input: string | unknown): PeerEnvelope {
   let raw: unknown = input;
-  if (typeof input === "string") {
-    if (utf8Length(input) > PEER_MAX_ENVELOPE_BYTES) throw new Error("envelope over the size limit");
-    raw = JSON.parse(input);
-  }
+  // An object a transport already parsed (a JSON request body) is measured as it would travel.
+  const text = typeof input === "string" ? input : JSON.stringify(input ?? null);
+  if (utf8Length(text) > PEER_MAX_ENVELOPE_BYTES) throw new Error("envelope over the size limit");
+  if (typeof input === "string") raw = JSON.parse(input);
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("envelope is not an object");
   const e = raw as Record<string, unknown>;
   if (e.v !== PEER_ENVELOPE_VERSION) throw new Error("unsupported envelope version");
@@ -183,9 +198,13 @@ export function validatePeerBody<K extends PeerEnvelopeKind>(kind: K, body: unkn
       break;
     case "ack":
       if (typeof b.seq !== "number" || !Number.isSafeInteger(b.seq) || b.seq < 0) fail("seq");
+      if (b.sig !== undefined && !isB64(b.sig, SIG_CHARS)) fail("sig");
+      if (b.refused !== undefined && typeof b.refused !== "boolean") fail("refused");
       break;
     case "nack":
       if (!posInt(b.expected_seq)) fail("expected_seq");
+      if (b.conflict_seq !== undefined && !posInt(b.conflict_seq)) fail("conflict_seq");
+      if (b.conflict_sig !== undefined && (b.conflict_seq === undefined || !isB64(b.conflict_sig, SIG_CHARS))) fail("conflict_sig");
       break;
     case "resync":
       if (!posInt(b.next_seq)) fail("next_seq");

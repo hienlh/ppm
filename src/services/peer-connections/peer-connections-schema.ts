@@ -39,7 +39,8 @@ const STATEMENTS: readonly string[] = [
     root_key_enc TEXT NOT NULL,
     conn_tag TEXT NOT NULL UNIQUE,
     transport TEXT NOT NULL CHECK (transport IN ('relay','tailscale')),
-    relay_mailbox_id TEXT REFERENCES peer_relay_mailboxes(id),
+    relay_mailbox_id TEXT REFERENCES peer_relay_mailboxes(id) ON DELETE SET NULL,
+    peer_relay_url TEXT,
     peer_mailbox_id TEXT,
     peer_send_cap_enc TEXT,
     my_send_cap_hash TEXT,
@@ -68,6 +69,7 @@ const STATEMENTS: readonly string[] = [
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     closed_at INTEGER,
+    closed_reason TEXT,
     CHECK (scope = 'project' OR preset = 'mine')
   )`,
   `CREATE INDEX IF NOT EXISTS idx_peer_connections_status ON peer_connections(status)`,

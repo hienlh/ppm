@@ -5,6 +5,7 @@
 import { getDb } from "../db.service.ts";
 import type { PeerActor, PeerPreset, PeerTransportKind } from "../../shared/peer-connections.ts";
 import { b64u, hashSecret, secretMatchesHash } from "./peer-crypto.ts";
+import { inviteCodeHash } from "./peer-invite-code.ts";
 import { openStored, sealStored } from "./peer-key-store.ts";
 
 export interface NewPeerInvite {
@@ -37,7 +38,7 @@ export function insertPeerInvite(inv: NewPeerInvite, now = Date.now()): PeerInvi
   const id = b64u(inv.inviteId);
   getDb().query(`INSERT INTO peer_invites (id, code_hash, eph_priv_enc, nonce_enc, commitment, pair_secret_hash, pair_mailbox_id,
       label, transport, preset, expires_at, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    id, hashSecret(inv.code.trim()), sealStored(inv.ephemeralPrivate, label(id, "eph_priv_enc")), sealStored(inv.commitNonce, label(id, "nonce_enc")),
+    id, inviteCodeHash(inv.code), sealStored(inv.ephemeralPrivate, label(id, "eph_priv_enc")), sealStored(inv.commitNonce, label(id, "nonce_enc")),
     b64u(inv.commitment), hashSecret(inv.pairSecret), inv.pairMailboxId, inv.label, inv.transport, inv.preset, inv.expiresAt, inv.createdBy, now,
   );
   return getPeerInvite(id)!;
@@ -69,6 +70,11 @@ export function claimPeerInvite(id: string, pairSecret: string, now = Date.now()
       commitNonce: openStored(row.nonce_enc, label(id, "nonce_enc")),
     },
   };
+}
+
+/** The stored hash of an invite's code, which the `accept` answering it is signed over. */
+export function peerInviteCodeHash(id: string): string | null {
+  return (getDb().query("SELECT code_hash FROM peer_invites WHERE id = ?").get(id) as { code_hash: string } | null)?.code_hash ?? null;
 }
 
 export function linkPeerInviteConnection(id: string, connectionId: string): void {
