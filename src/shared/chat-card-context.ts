@@ -53,6 +53,13 @@ const isLine = (v: unknown, max: number): v is string =>
 /** Cuts text to `max` characters (code points), as the block carries it. */
 const cut = (text: string, max: number): string => Array.from(text).slice(0, max).join("");
 
+const ANY_LINE_BREAK = new RegExp(LINE_BREAKS.source, "g");
+/**
+ * One line with no control character: a task title copied from anywhere can carry a terminal escape
+ * or a stray U+0001, and one such character would otherwise fail validation and lose the whole card.
+ */
+const oneLine = (text: string, max: number): string => cut(text.replace(ANY_LINE_BREAK, " ").replace(/\s+/g, " ").trim(), max).trim();
+
 /**
  * A card as the block carries it, from the stored card: title folded to one line, everything cut to
  * the block's limits. Null when the card has no id or kind a block can name.
@@ -61,10 +68,11 @@ export function cardContextFrom(card: {
   id: string; kind: string; title: string; body: string;
   tasks?: ReadonlyArray<{ taskId: string; ref: string; sessionId: string; title?: string }>;
 }): CardContextReference | null {
-  const title = cut(card.title.replace(/\s+/g, " ").trim(), CARD_CONTEXT_TITLE_MAX) || "(no title)";
+  const title = oneLine(card.title, CARD_CONTEXT_TITLE_MAX) || "(no title)";
+  // A task the block cannot name is left out; the rest of the card still goes.
   const tasks = (card.tasks ?? []).slice(0, CARD_CONTEXT_TASKS_MAX).flatMap((t) => {
-    const ref = cut(t.ref.replace(/\s+/g, " ").trim(), REF_MAX);
-    const taskTitle = t.title ? cut(t.title.replace(/\s+/g, " ").trim(), CARD_CONTEXT_TITLE_MAX) : "";
+    const ref = oneLine(t.ref, REF_MAX);
+    const taskTitle = t.title ? oneLine(t.title, CARD_CONTEXT_TITLE_MAX) : "";
     return TASK_ID_RE.test(t.taskId) && ref && SESSION_ID_RE.test(t.sessionId)
       ? [{ taskId: t.taskId.toLowerCase(), ref, sessionId: t.sessionId, ...(taskTitle ? { title: taskTitle } : {}) }]
       : [];

@@ -59,7 +59,7 @@ const realDeps: CardReplyDeps = {
   zone: () => getAssistantSettings().timezone,
   forward: (card, text, how) => forwardUserWords(card, text, how, realForwardEnv),
   turnStarted: (clientMessageId) => cardDelivery.turnStarted(clientMessageId),
-  wakeForCheckerCard: (card, actor) => wakeManagerForCheckerCard(card, actor),
+  wakeForCheckerCard: (card, actor) => wakeManagerForCheckerCard(card, actor, realForwardEnv),
 };
 
 const SHA256_RE = /^[0-9a-f]{64}$/;

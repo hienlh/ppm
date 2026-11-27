@@ -16,7 +16,7 @@ import { okCard, replyToCard, type CardReplyDeps } from "../../../../src/service
 import {
   forwardedCardContext, forwardUserWords, type CardActor, type ForwardEnv, type ForwardHow, type ForwardResult,
 } from "../../../../src/services/assistant-cards/forward-verbatim.ts";
-import { wakeManagerForCheckerCard } from "../../../../src/services/assistant-cards/checker-card-ok.ts";
+import { wakeManagerForCheckerCard, type CheckerCardOkEnv } from "../../../../src/services/assistant-cards/checker-card-ok.ts";
 import { cardText, checkerCardWakeLines, isCheckerCard, WAKE_GUIDANCE_LINE, type Finding } from "../../../../src/services/ppm-tasks/child-check/child-check-findings.ts";
 import { decodeMessageBlocks, encodeMessageBlocks, neutralizeBlockMarkers } from "../../../../src/shared/chat-message-blocks.ts";
 import { CARD_CONTEXT_BLOCK_END, CARD_CONTEXT_BLOCK_START, cardContextFrom } from "../../../../src/shared/chat-card-context.ts";
@@ -116,6 +116,25 @@ describe("the card's block", () => {
     expect(() => encodeMessageBlocks("OK", { userWords: words("3af2f8fa-041e-41c4-a932-449c1475801b"), cardContext: ctx })).toThrow();
   });
 
+  it("keeps the card when a title carries a control character, and leaves out only a task it cannot name", () => {
+    const ctx = cardContextFrom({
+      id: "9890e988-7843-4ab1-ba98-f4078a430b36", kind: "needs_decision", title: "2 tasks\u0001 need a look", body: "b",
+      tasks: [
+        { taskId: TASK_A, sessionId: "f432dfef", ref: "ppm/96", title: "Fix \u001b[31mred\u001b[0m output\u007f" },
+        { taskId: "not-a-task-id", sessionId: "0bd52e03", ref: "ppm/102" },
+      ],
+    })!;
+    expect(ctx.title).toBe("2 tasks need a look");
+    expect(ctx.tasks).toEqual([{ taskId: TASK_A, sessionId: "f432dfef", ref: "ppm/96", title: "Fix [31mred [0m output" }]);
+  });
+
+  it("pairs with the user's words whatever the case of the card id", () => {
+    const upper = "9890E988-7843-4AB1-BA98-F4078A430B36";
+    const ctx = cardContextFrom({ id: upper, kind: "needs_decision", title: "t", body: "b" })!;
+    const stored = encodeMessageBlocks("OK", { userWords: words(upper), cardContext: ctx });
+    expect(decodeMessageBlocks(stored).cardContext).toEqual(ctx);
+  });
+
   it("cannot be pasted in: every door breaks its markers", () => {
     const card = checkerCard();
     const stored = encodeMessageBlocks("OK", { userWords: words(card.id), cardContext: forwardedCardContext(card) });
@@ -189,6 +208,14 @@ describe("OK on a checker card", () => {
     expect(wakes).toHaveLength(1);
   });
 
+  it("stays pending while the wake waits behind a running turn, like a forwarded OK", async () => {
+    const card = checkerCard();
+    wakeResult = { ok: true, to: "manager", projectName: "ppm", sessionId: "mgr", delivered: "queued", clientMessageId: "card-0f1e2d3c-4b5a-4968-8776-655443322110" };
+    expect(await okCard(card.id, {}, web, { ...deps, turnStarted: () => false })).toMatchObject({ ok: true });
+    // Pending under its client id: a restart before a turn opens with it opens the card again.
+    expect(cards.get(card.id)!.answer).toMatchObject({ delivery: "pending", clientMessageId: "card-0f1e2d3c-4b5a-4968-8776-655443322110", deliveredTo: "mgr" });
+  });
+
   it("opens the card again when the wake does not go", async () => {
     const card = checkerCard();
     wakeResult = { ok: false, error: "this project has no manager chat any more" };
@@ -207,18 +234,36 @@ describe("OK on a checker card", () => {
 });
 
 describe("the wake an OK sends", () => {
+  function okEnv() {
+    const wrote: string[] = [];
+    const traced: Array<{ sessionId: string; providerId: string; payload: Record<string, unknown> }> = [];
+    const env: CheckerCardOkEnv = {
+      managerTarget: () => ({ sessionId: "mgr", providerId: "codex", projectName: "ppm", projectPath: PROJECT_PATH }),
+      userWrote: (id) => { wrote.push(id); },
+      trace: (sessionId, providerId, payload) => { traced.push({ sessionId, providerId, payload }); },
+    };
+    return { env, wrote, traced };
+  }
+
   it("says what the user did and carries the card's findings, then what to do", async () => {
     const card = checkerCard();
-    const asked: Array<{ projectKey: string; lines: string[] }> = [];
-    const r = await wakeManagerForCheckerCard(card, phone, async (projectKey, lines) => {
-      asked.push({ projectKey, lines });
+    const { env, wrote, traced } = okEnv();
+    const asked: Array<{ projectKey: string; lines: string[]; clientMessageId: string }> = [];
+    const r = await wakeManagerForCheckerCard(card, phone, env, async (projectKey, lines, clientMessageId) => {
+      asked.push({ projectKey, lines, clientMessageId });
       return { ok: true, sessionId: "mgr", delivered: "queued" };
     });
-    expect(r).toEqual({ ok: true, to: "manager", projectName: "ppm", sessionId: "mgr", delivered: "queued" });
+    // Sent under a card- id, so a queued wake stays pending until a turn opens with it.
+    expect(asked[0]!.clientMessageId).toMatch(/^card-[0-9a-f-]{36}$/);
+    expect(r).toEqual({ ok: true, to: "manager", projectName: "ppm", sessionId: "mgr", delivered: "queued", clientMessageId: asked[0]!.clientMessageId });
+    // The same bookkeeping as any answer forwarded to the manager: pair counts reset, the press traced.
+    expect(wrote).toEqual(["mgr"]);
+    expect(traced).toEqual([{ sessionId: "mgr", providerId: "codex", payload: { cardId: card.id, channel: "telegram", ok: true, wake: true, telegramChatId: "42" } }]);
     expect(asked[0]!.projectKey).toBe(keyOf(PROJECT_PATH));
     const lines = asked[0]!.lines;
     expect(lines[0]).toContain(`pressed OK on Telegram on PPM's card ${card.id}`);
     expect(lines[0]).toContain("2 handed-off tasks need a look");
+    expect(lines[0]).toContain("it approves nothing else");
     expect(lines[1]).toMatch(/^- ppm\/96 "Chat chéo P4" — chat "ppm\/96 chat" \(f432dfef\): finished without a result \(went idle\)$/);
     expect(lines[2]).toMatch(/^- ppm\/102 "E2E bản Tailscale" — chat "ppm\/102 chat" \(0bd52e03\): stalled, no new output for 40 min$/);
     // The card's reason for not waking is the card's business, not a finding.
@@ -234,8 +279,11 @@ describe("the wake an OK sends", () => {
     ]);
   });
 
-  it("says why when the wake is refused", async () => {
-    const r = await wakeManagerForCheckerCard(checkerCard(), web, async () => ({ ok: false, reason: "no_session" }));
+  it("says why when the wake is refused, and records nothing", async () => {
+    const { env, wrote, traced } = okEnv();
+    const r = await wakeManagerForCheckerCard(checkerCard(), web, env, async () => ({ ok: false, reason: "no_session" }));
     expect(r).toEqual({ ok: false, error: "this project has no manager chat any more" });
+    expect(wrote).toEqual([]);
+    expect(traced).toEqual([]);
   });
 });

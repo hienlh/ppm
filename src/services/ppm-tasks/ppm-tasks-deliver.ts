@@ -45,11 +45,13 @@ function projectNameOf(projectKey: string): string {
 
 const providerOf = (sessionId: string): string => getSessionProvider(sessionId) ?? "claude";
 
-async function send(sessionId: string, projectName: string, providerId: string, text: string, origin: MessageServerOrigin = "ppm_ui"): Promise<DeliverOutcome> {
+async function send(
+  sessionId: string, projectName: string, providerId: string, text: string, origin: MessageServerOrigin = "ppm_ui", clientMessageId?: string,
+): Promise<DeliverOutcome> {
   const chat = env.chat();
   if (!chat) return { ok: false, reason: "no_chat", error: "No chat layer runs in this process" };
   try {
-    const result = await chat.sendUserMessage(sessionId, text, { origin, projectName, providerId });
+    const result = await chat.sendUserMessage(sessionId, text, { origin, projectName, providerId, ...(clientMessageId ? { clientMessageId } : {}) });
     if (!result.ok) return { ok: false, reason: result.error === CHAT_BUSY ? "busy" : "error", error: result.error };
     return { ok: true, sessionId: result.sessionId, delivered: result.delivered ?? "started" };
   } catch (e) {
@@ -149,6 +151,11 @@ export interface WakeOptions {
    * uncounted, once. Never with `unattended`.
    */
   overBudgetOnce?: boolean;
+  /**
+   * The id the wake's turn is announced under, so a sender that tracks it (an OK on a card, whose
+   * answer stays pending until a turn opens with it) can tell a queued wake that never ran.
+   */
+  clientMessageId?: string;
 }
 
 /** Projects with a wake on its way: a second one would read and send the same news again. */
@@ -190,7 +197,7 @@ async function wakeOnce(projectKey: string, actor: Actor, extraLines: string[], 
     : `PPM Tasks — ${neutralizePpmTags(actor.label)} asked PPM to tell you now about changes in ${where}:`;
   // A watch message is not defused by the chat door the way a ppm_ui one is: every line already went
   // through `oneLine`, and the header's only outside text (the project's name) through neutralizePpmTags.
-  const outcome = await send(manager, projectName, providerOf(manager), [header, ...lines].join("\n"), opts.unattended ? "watch" : "ppm_ui");
+  const outcome = await send(manager, projectName, providerOf(manager), [header, ...lines].join("\n"), opts.unattended ? "watch" : "ppm_ui", opts.clientMessageId);
   if (!outcome.ok) {
     reserved.release();
     return outcome;

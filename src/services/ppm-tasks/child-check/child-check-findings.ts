@@ -95,7 +95,8 @@ export function isCheckerCard(card: CheckerCard): boolean {
 export function checkerCardWakeLines(card: CheckerCard, channel: "ppm" | "telegram"): string[] {
   const where = channel === "telegram" ? "on Telegram" : "in PPM";
   const head = `- The user pressed OK ${where} on PPM's card ${card.id} ("${card.title.replace(/\s+/g, " ").trim()}"), `
-    + "raised because PPM could not wake you about this handed-off work then; PPM sends its findings now, as the card showed them:";
+    + "raised because PPM could not wake you about this handed-off work then. The OK only asks PPM to send you these "
+    + "findings now, as the card showed them; it approves nothing else:";
   const findings = card.body.split(/\n\s*\n/)[0]!.split("\n").map((l) => l.trim()).filter(Boolean);
   const tasks = card.payload.tasks ?? [];
   const lines = findings.length >= tasks.length && findings.length > 0

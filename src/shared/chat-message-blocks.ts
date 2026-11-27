@@ -101,7 +101,7 @@ export function decodeMessageBlocks(content: string): MessageBlocks {
   // leaves both as they were.
   const card = from.fromSession ? { content: prov.content, cardContext: null } : decodeCardContext(prov.content);
   const wordsAfterCard = card.cardContext ? decodeUserWords(card.content) : null;
-  const pairedCard = card.cardContext && wordsAfterCard?.userWords?.cardId === card.cardContext.cardId ? card.cardContext : null;
+  const pairedCard = card.cardContext && wordsAfterCard?.userWords?.cardId?.toLowerCase() === card.cardContext.cardId ? card.cardContext : null;
   const words = from.fromSession
     ? { content: prov.content, userWords: null }
     : pairedCard ? wordsAfterCard! : decodeUserWords(prov.content);
@@ -152,7 +152,7 @@ export function encodeMessageBlocks(
     throw new Error("Voice hints ride only on a message the user sent themself");
   }
   const safeBody = encodeScheduleRun(encodeVoiceHints(neutralizeBlockMarkers(body), blocks?.voiceHints), blocks?.scheduleRun, blocks?.scheduleRunPlacement);
-  if (blocks?.cardContext && blocks.userWords?.cardId !== blocks.cardContext.cardId) {
+  if (blocks?.cardContext && blocks.userWords?.cardId?.toLowerCase() !== blocks.cardContext.cardId.toLowerCase()) {
     throw new Error("A card's block rides only with the user's words on that card");
   }
   const withProv = blocks?.userWords

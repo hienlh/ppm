@@ -11,21 +11,24 @@ import { configService } from "../../../../src/services/config.service.ts";
 import { getDb } from "../../../../src/services/db.service.ts";
 import { chatLifecycle } from "../../../../src/services/chat-control/chat-lifecycle.ts";
 import { reserveManagerWake, userWroteToManager } from "../../../../src/services/ppm-tasks/ppm-tasks-wake-budget.ts";
+import { realForwardEnv } from "../../../../src/services/assistant-cards/forward-verbatim-env.ts";
 
-const KEY = "wake-budget-card-answers";
-const MANAGER = "mgr-wake-budget";
+// A project and manager of its own per test: the budget keeps its counts in memory, per project,
+// and the hourly cap would otherwise add up across tests.
+let n = 0;
+let KEY = "";
+let MANAGER = "";
 const savedAi = configService.get("ai");
 
 beforeEach(() => {
+  n++;
+  KEY = `wake-budget-card-answers-${n}`;
+  MANAGER = `mgr-wake-budget-${n}`;
   const ai = configService.get("ai");
   configService.set("ai", { ...ai, session_collab: { ...(ai.session_collab ?? {}), maxAutoMessagesPerPair: 1 } } as never);
-  getDb().query("DELETE FROM manager_chats WHERE project_key = ?").run(KEY);
   getDb().query(
-    "INSERT INTO manager_chats (project_key, project_path, session_id, provider_id, assigned_by, assigned_at) VALUES (?, '/p/wake', ?, 'claude', 'user', 1)",
-  ).run(KEY, MANAGER);
-  // The budget keeps its state in memory once read: start each test from the user having typed in
-  // the manager chat, the way that has always lifted a pause.
-  typed();
+    "INSERT INTO manager_chats (project_key, project_path, session_id, provider_id, assigned_by, assigned_at) VALUES (?, ?, ?, 'claude', 'user', 1)",
+  ).run(KEY, `/p/wake-${n}`, MANAGER);
 });
 
 const typed = (origin: "ws" | "session" = "ws") =>
@@ -43,6 +46,12 @@ describe("the wake budget's pause", () => {
   it("lifts when the user answers a card into the manager chat", () => {
     pauseProject();
     userWroteToManager(MANAGER);
+    expect(reserveManagerWake(MANAGER, KEY, false).ok).toBe(true);
+  });
+
+  it("lifts through the forward's own bookkeeping, the call every answer forwarded to a manager makes", () => {
+    pauseProject();
+    realForwardEnv.userWrote(MANAGER);
     expect(reserveManagerWake(MANAGER, KEY, false).ok).toBe(true);
   });
 

@@ -9,15 +9,24 @@
  *
  * Forwarding a bare "OK" instead, as for a card a manager filed, told the manager nothing: it had
  * never seen the card, and the words named it by id only.
+ *
+ * The rest is what forwarding the user's words does, minus the Assistant's note: the wake goes out
+ * under a `card-` client id, so an OK queued behind a running turn stays `pending` until a turn opens
+ * with it and is opened again if none does (`card-delivery.ts`); the user pressing OK resets the
+ * pair counts like any answer; and the session trace records who pressed it, where.
  */
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import { checkerCardWakeLines } from "../ppm-tasks/child-check/child-check-findings.ts";
 import { wakeManager, type DeliverOutcome } from "../ppm-tasks/ppm-tasks-deliver.ts";
-import type { CardActor, ForwardResult } from "./forward-verbatim.ts";
+import type { CardActor, ForwardEnv, ForwardResult } from "./forward-verbatim.ts";
 
-export type WakeForCard = (projectKey: string, lines: string[]) => Promise<DeliverOutcome>;
+export type WakeForCard = (projectKey: string, lines: string[], clientMessageId: string) => Promise<DeliverOutcome>;
 
-const liveWake: WakeForCard = (projectKey, lines) => wakeManager(projectKey, { kind: "user", label: "You" }, lines, { overBudgetOnce: true });
+/** What the OK needs besides the wake: the forward's own bookkeeping. */
+export type CheckerCardOkEnv = Pick<ForwardEnv, "managerTarget" | "userWrote" | "trace">;
+
+const liveWake: WakeForCard = (projectKey, lines, clientMessageId) =>
+  wakeManager(projectKey, { kind: "user", label: "You" }, lines, { overBudgetOnce: true, clientMessageId });
 
 const REFUSED: Record<Exclude<DeliverOutcome, { ok: true }>["reason"], string> = {
   no_session: "this project has no manager chat any more",
@@ -30,9 +39,21 @@ const REFUSED: Record<Exclude<DeliverOutcome, { ok: true }>["reason"], string> =
   error: "the send failed",
 };
 
-export async function wakeManagerForCheckerCard(card: AssistantCard, actor: CardActor, wake: WakeForCard = liveWake): Promise<ForwardResult> {
+export async function wakeManagerForCheckerCard(
+  card: AssistantCard, actor: CardActor, env: CheckerCardOkEnv, wake: WakeForCard = liveWake,
+): Promise<ForwardResult> {
   if (!card.projectKey) return { ok: false, error: "This card names no project" };
-  const outcome = await wake(card.projectKey, checkerCardWakeLines(card, actor.channel));
+  const clientMessageId = `card-${crypto.randomUUID()}`;
+  const outcome = await wake(card.projectKey, checkerCardWakeLines(card, actor.channel), clientMessageId);
   if (!outcome.ok) return { ok: false, error: outcome.error ? `${REFUSED[outcome.reason]} (${outcome.error})` : REFUSED[outcome.reason] };
-  return { ok: true, to: "manager", projectName: card.projectName ?? "", sessionId: outcome.sessionId, delivered: outcome.delivered };
+  env.userWrote(outcome.sessionId);
+  env.trace(outcome.sessionId, env.managerTarget(card)?.providerId ?? "claude", {
+    cardId: card.id, channel: actor.channel, ok: true, wake: true,
+    ...(actor.deviceId ? { deviceId: actor.deviceId } : {}),
+    ...(actor.fetchSite ? { fetchSite: actor.fetchSite } : {}),
+    ...(actor.telegramChatId ? { telegramChatId: actor.telegramChatId } : {}),
+  });
+  return {
+    ok: true, to: "manager", projectName: card.projectName ?? "", sessionId: outcome.sessionId, delivered: outcome.delivered, clientMessageId,
+  };
 }
