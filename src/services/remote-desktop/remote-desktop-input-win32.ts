@@ -13,6 +13,8 @@
 import { codeToVk, MODIFIER_VK_CODES } from "./remote-desktop-vk-map.ts";
 import { RemoteInputUnavailableError, type InputTargetRect, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
 import { windowsVirtualScreen } from "./remote-desktop-displays.ts";
+import { classifyInputBlock, describeInputBlock } from "./remote-desktop-input-block.ts";
+import { foregroundProcess, ownIntegrity } from "./remote-desktop-win32-integrity.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("remote-desktop");
@@ -160,20 +162,25 @@ function attachToInputDesktop(ffi: FfiModule, lib: User32Symbols): boolean {
   return !!ok;
 }
 
-/** Whether the last send was blocked. While the secure or lock desktop is up every event fails
- *  — about 60 a second from a moving pointer — so only a change of state is logged. */
-let inputBlocked = false;
+/** Why the last send was blocked, and by which process (null = it got through). While the secure
+ *  or lock desktop is up every event fails — about 60 a second from a moving pointer — so only a
+ *  change of state is logged. */
+let lastBlock: string | null = null;
 
 async function sendRaw(buf: Uint8Array, count: number): Promise<void> {
   const { ffi, lib } = await loadUser32();
   const attached = attachToInputDesktop(ffi, lib);
   const sent = lib.SendInput(count, ffi.ptr(buf), INPUT_STRUCT_SIZE);
-  const blocked = !attached || sent !== count;
-  if (blocked === inputBlocked) return;
-  inputBlocked = blocked;
-  if (!blocked) log.info("input reaches the input desktop again");
-  else if (!attached) log.warn("input blocked: cannot reach input desktop");
-  else log.warn(`input blocked: SendInput accepted ${sent}/${count} events`);
+  // SendInput reports success even when UIPI drops the events, so the window in front is checked
+  // too: an administrator window there swallows everything PPM sends.
+  const foreground = attached ? foregroundProcess() : null;
+  const reason = classifyInputBlock({ attached, sent, count, foreground, ownIntegrity: ownIntegrity() });
+  const key = reason ? `${reason}:${foreground?.pid ?? ""}` : null;
+  if (key === lastBlock) return;
+  const wasBlocked = lastBlock !== null;
+  lastBlock = key;
+  if (!reason) { if (wasBlocked) log.info("input reaches the input desktop again"); return; }
+  log.warn(describeInputBlock(reason, sent, count, foreground));
 }
 
 /** Map a captured monitor into SendInput's full virtual-desktop coordinate space. Both
