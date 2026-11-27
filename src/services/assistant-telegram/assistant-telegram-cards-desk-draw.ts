@@ -46,6 +46,11 @@ export interface DeskEntry {
   view(): { html: string; rows: InlineKeyboardButton[][] };
   /** The code groups behind `view().rows`, kept alive while the desk shows them. */
   groups: string[];
+  /**
+   * The choices the card offers (a question's options), so a reply to the desk that is exactly one
+   * of them can be matched to the one card it fits.
+   */
+  answers?: readonly string[];
 }
 
 export type DeskKeyMaker = (text: string, press: Omit<DeskPress, "kind">) => InlineKeyboardButton;

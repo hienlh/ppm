@@ -141,7 +141,7 @@ export interface BridgeStartOptions {
   /** Voice messages: Whisper, the clean-up and the feature switch; tests stand in for all three. */
   voice?: TelegramVoiceDeps;
   /** The pinned card desk: its switch, where its message ids are kept and its clock (tests). */
-  desk?: Partial<Pick<CardsDeskDeps, "enabled" | "store" | "clock">>;
+  desk?: Partial<Pick<CardsDeskDeps, "enabled" | "store" | "clock" | "timing">>;
 }
 
 function bridgeConfig(): Pick<PPMBotConfig, "enabled" | "show_tool_calls" | "debounce_ms">
@@ -270,7 +270,9 @@ export class AssistantTelegramBridge {
       showTasks: (chatId, args, reply) => tasks.showDeck(chatId, args, reply),
       desk: {
         press: (chatId, press, group) => desk.press(chatId, press, group),
-        replyTarget: (chatId, messageId, sentAt) => desk.replyTarget(chatId, messageId, sentAt),
+        replyFor: (chatId, messageId, input) => desk.replyFor(chatId, messageId, input),
+        cardMessage: (chatId, key) => desk.cardMessage(chatId, key),
+        noteUserActivity: (chatId) => desk.noteUserActivity(chatId),
         resend: (chatId) => desk.resend(chatId),
         pressedOn: (chatId, messageId) => desk.pressedOn(chatId, messageId),
         redraw: (chatId) => desk.redraw(chatId),

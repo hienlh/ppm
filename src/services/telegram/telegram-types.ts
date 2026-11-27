@@ -74,6 +74,10 @@ export interface TelegramMessage {
   video_note?: { duration?: number };
   sticker?: { emoji?: string };
   reply_to_message?: TelegramMessage;
+  /** The part of the replied-to message the user picked to quote, as their client showed it. */
+  quote?: { text: string; position?: number; is_manual?: boolean };
+  /** When the message was last edited (seconds). */
+  edit_date?: number;
   reply_markup?: InlineKeyboardMarkup;
   /** Sent through an inline bot: the text is that bot's, not the sender's own. */
   via_bot?: TelegramUser;

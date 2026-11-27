@@ -394,6 +394,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       project: card.projectName ?? null, title: turnSecretScrubber.scrub(card.title), since: card.createdAt, messageId,
       stillWaiting: () => this.isOpen(card.id),
       view: () => ({ html: shown.html, rows: shown.rows }),
+      answers: (card.payload.options ?? []).map((o) => o.label),
       groups: shown.group ? [shown.group] : [],
     });
   }

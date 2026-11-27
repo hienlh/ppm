@@ -84,11 +84,16 @@ export interface SettingsPress {
  * `show` brings the card `key` names to the desk, `prev`/`next` step through them, `jump` sends a
  * line under the card's own message so a tap on its quote scrolls there. A card's answer buttons on
  * the desk are the card's own codes, never a `desk` action.
+ *
+ * On the "Which card is this an answer to?" question (`assistant-telegram-desk-held-replies.ts`),
+ * `held` names the kept reply: `assign` sends it to the card `key` names, `to_assistant` sends it
+ * as an ordinary message, `discard` drops it.
  */
 export interface DeskPress {
   kind: "desk";
-  op: "show" | "prev" | "next" | "jump";
+  op: "show" | "prev" | "next" | "jump" | "assign" | "to_assistant" | "discard";
   key?: string;
+  held?: string;
 }
 
 export type BridgeAction =

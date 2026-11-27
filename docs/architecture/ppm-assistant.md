@@ -1789,15 +1789,22 @@ message id in the `assistant_telegram_card_desk` config row. Three things are lo
   press on the card, Allow included only where the card offered it. When the card and the list do
   not fit in 4096 characters the list shrinks to a count, and a card that still does not fit is shown
   without its buttons.
-- **A reply to the desk answers the card the phone showed when it was written, or nothing.** The
-  desk moves by itself (a card answered in PPM, a new urgent one), so the card it is about to show
-  is not the one the user read. `shown` is set only once Telegram confirmed an edit, and
-  `deskReplyFor` (`-desk-reply.ts`) routes a reply (`throughDesk` in the inbound router, by the
-  message's date) only when that card was up before it was written and either the user moved the
-  desk there by pressing on it or it had been up a minute (`DESK_REPLY_SETTLE_MS`); otherwise, and
-  for a card too long to show or a desk `/cards` moved, the reply is not sent and one line says so.
-  A press on the desk is spent by the next move, so a later move the desk makes by itself never
-  counts as the user's.
+- **A reply to the desk answers the card the user was reading, and is never dropped.** The desk
+  moves by itself (a card answered in PPM, a new one, a restart), so the card it shows when a reply
+  arrives is not always the one the user read. Every version Telegram confirmed is kept per desk
+  message (`DeskSnapshot`: the card shown, the lines listed, from when), and `resolveDeskReply`
+  (`-desk-reply.ts`) matches the reply (by its date, its `quote` and its words) against the versions
+  up in the 3 minutes before it was sent (`DESK_REPLY_LOOKBACK_MS`), from the user's last press on
+  the desk on. It goes straight to a card when a quote names one, one card was shown the whole
+  time, one card is left that the user saw (and no card they were shown was answered meanwhile),
+  or the words are a choice of exactly one card. Otherwise the words are kept and the user is asked
+  "Which card is this an answer to?" with a button per waiting card, "Send to the Assistant
+  instead" and "Don't send" (`assistant-telegram-desk-held-replies.ts`); a press sends the very
+  message on as a reply to that card's own message. A card the user never saw is only ever reached
+  by their own press. A reply to a desk `/cards` moved down is matched the same way.
+- **Edits are spaced out** (`DeskTiming`): a change waits 2 s for the next one, the desk holds still
+  45 s after the user writes in the chat, edits it makes by itself keep 15 s apart, and nothing
+  waits more than 2 min; what the user does on the desk is drawn at once.
 - **Edits never ring**, so new cards still arrive as their own messages; with the desk on, a card's
   reminder is one line with a sound replying to the desk. The desk is always sent silently.
 - **Codes and restarts.** Every five minutes (`DESK_TICK_MS`) the listed cards' code groups are
