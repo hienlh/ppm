@@ -13,6 +13,9 @@ import {
 } from "./assistant-provenance";
 import { decodeUserWords, encodeUserWords, type UserWordsReference } from "./user-words-block";
 import {
+  CARD_CONTEXT_BLOCK_END, CARD_CONTEXT_BLOCK_START, decodeCardContext, encodeCardContext, type CardContextReference,
+} from "./chat-card-context";
+import {
   decodeScheduleRun, encodeScheduleRun, SCHEDULE_RUN_BLOCK_END, SCHEDULE_RUN_BLOCK_END_AFTER, SCHEDULE_RUN_BLOCK_START,
   type ScheduleRunPlacement, type ScheduleRunReference,
 } from "./chat-schedule-run";
@@ -21,7 +24,8 @@ import { decodeVoiceHints, encodeVoiceHints, VOICE_HINTS_BLOCK_END, VOICE_HINTS_
 /**
  * The structured blocks PPM appends to a user message, in their fixed order: the text the person
  * (or another session's AI) wrote, then — on a PPM Assistant message only — a provenance block,
- * then a from-session block, then a task block (only the server writes one: `chat-task-ref.ts`),
+ * or — on the user's words forwarded from a card — the user-words block, followed by the card's
+ * own block when PPM raised that card (`chat-card-context.ts`), then a from-session block, then a task block (only the server writes one: `chat-task-ref.ts`),
  * then a turn-references block, then a reply block. The reply block
  * stays last, so a build that only knows `decodeReply` still finds it. A session schedule's run is
  * the one block in front of the text instead, so the model reads it before the prompt — unless the
@@ -48,6 +52,11 @@ export interface MessageBlocks {
   provenance: AssistantProvenance | null;
   /** Set when PPM forwarded the user's own words from a card; never with a from-session sender. */
   userWords: UserWordsReference | null;
+  /**
+   * The card those words answer, as the user saw it, when no chat filed it (PPM raised it); only
+   * ever with `userWords` naming the same card.
+   */
+  cardContext: CardContextReference | null;
   /** Set when a session schedule sent the message; only the server encodes one. */
   scheduleRun: ScheduleRunReference | null;
   /** Hints for reading a voice message sent as Whisper heard it; only the server encodes one. */
@@ -64,7 +73,7 @@ const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
 const SENTINELS: ReadonlyArray<readonly [string, string]> = [
   REPLY_BLOCK_START, REPLY_BLOCK_END, TURN_REFS_BLOCK_START, TURN_REFS_LEGACY_BLOCK_START, TURN_REFS_BLOCK_END,
   FROM_SESSION_BLOCK_START, FROM_SESSION_BLOCK_END, PROVENANCE_BLOCK_START, PROVENANCE_BLOCK_END,
-  USER_WORDS_BLOCK_START, USER_WORDS_BLOCK_END, TASK_REFS_BLOCK_START, TASK_REFS_BLOCK_END, SCHEDULE_RUN_BLOCK_START, SCHEDULE_RUN_BLOCK_END, SCHEDULE_RUN_BLOCK_END_AFTER,
+  USER_WORDS_BLOCK_START, USER_WORDS_BLOCK_END, CARD_CONTEXT_BLOCK_START, CARD_CONTEXT_BLOCK_END, TASK_REFS_BLOCK_START, TASK_REFS_BLOCK_END, SCHEDULE_RUN_BLOCK_START, SCHEDULE_RUN_BLOCK_END, SCHEDULE_RUN_BLOCK_END_AFTER,
   ...VOICE_HINTS_BLOCK_STARTS, VOICE_HINTS_BLOCK_END,
 ].map((s) => [s, s.replace("<", `<${ZERO_WIDTH_SPACE}`)] as const);
 
@@ -87,15 +96,22 @@ export function decodeMessageBlocks(content: string): MessageBlocks {
   const from = decodeFromSession(tasks.content);
   // A provenance block means something only on a message the PPM Assistant sent.
   const prov = from.fromSession?.kind === "assistant" ? decodeProvenance(from.content) : { content: from.content, provenance: null };
-  // The user's forwarded words are never another session's message.
-  const words = from.fromSession ? { content: prov.content, userWords: null } : decodeUserWords(prov.content);
+  // The user's forwarded words are never another session's message. The card's block rides right
+  // after theirs and counts only beside a user-words block naming the same card; anything else
+  // leaves both as they were.
+  const card = from.fromSession ? { content: prov.content, cardContext: null } : decodeCardContext(prov.content);
+  const wordsAfterCard = card.cardContext ? decodeUserWords(card.content) : null;
+  const pairedCard = card.cardContext && wordsAfterCard?.userWords?.cardId === card.cardContext.cardId ? card.cardContext : null;
+  const words = from.fromSession
+    ? { content: prov.content, userWords: null }
+    : pairedCard ? wordsAfterCard! : decodeUserWords(prov.content);
   // A schedule's run is never another session's message nor the user's forwarded words.
   const run = from.fromSession || words.userWords ? { content: words.content, scheduleRun: null } : decodeScheduleRun(words.content);
   // Voice hints ride only on a message the user sent themself: no other sender, no forward, no run.
   const hints = from.fromSession || words.userWords || run.scheduleRun ? { content: run.content, voiceHints: null } : decodeVoiceHints(run.content);
   return {
     content: hints.content, replyTo: reply.replyTo, turnRefs: refs.turnRefs, taskRefs: tasks.taskRefs, fromSession: from.fromSession,
-    provenance: prov.provenance, userWords: words.userWords, scheduleRun: run.scheduleRun, voiceHints: hints.voiceHints,
+    provenance: prov.provenance, userWords: words.userWords, cardContext: pairedCard, scheduleRun: run.scheduleRun, voiceHints: hints.voiceHints,
   };
 }
 
@@ -118,6 +134,8 @@ export function encodeMessageBlocks(
     provenance?: AssistantProvenance | null;
     /** The user's own words forwarded from a card; written by `forward-verbatim.ts` alone. */
     userWords?: UserWordsReference | null;
+    /** The card those words answer, when PPM raised it; only with `userWords` naming that card. */
+    cardContext?: CardContextReference | null;
     /** A session schedule's run; written by the chat socket for a `schedule` message alone. */
     scheduleRun?: ScheduleRunReference | null;
     /** Where the run's block goes (`scheduleRunPlacement`); in front unless said otherwise. */
@@ -134,7 +152,12 @@ export function encodeMessageBlocks(
     throw new Error("Voice hints ride only on a message the user sent themself");
   }
   const safeBody = encodeScheduleRun(encodeVoiceHints(neutralizeBlockMarkers(body), blocks?.voiceHints), blocks?.scheduleRun, blocks?.scheduleRunPlacement);
-  const withProv = blocks?.userWords ? encodeUserWords(safeBody, blocks.userWords) : encodeProvenance(safeBody, blocks?.provenance);
+  if (blocks?.cardContext && blocks.userWords?.cardId !== blocks.cardContext.cardId) {
+    throw new Error("A card's block rides only with the user's words on that card");
+  }
+  const withProv = blocks?.userWords
+    ? encodeCardContext(encodeUserWords(safeBody, blocks.userWords), blocks.cardContext)
+    : encodeProvenance(safeBody, blocks?.provenance);
   const withFrom = encodeFromSession(withProv, blocks?.fromSession);
   const withTasks = encodeTaskRefs(withFrom, blocks?.taskRefs);
   const withRefs = encodeTurnRefs(withTasks, blocks?.turnRefs, blocks?.ownProject);

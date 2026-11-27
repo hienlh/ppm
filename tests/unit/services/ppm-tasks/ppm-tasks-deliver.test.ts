@@ -111,6 +111,27 @@ describe("wakeManager", () => {
     expect(pendingManagerNews(f.projectKey).history).toHaveLength(1);
   });
 
+  it("sends the user's OK on a checker card past a refusing budget, once, and only when the user asked", async () => {
+    addManager();
+    budget.ok = false;
+    const seen: boolean[] = [];
+    setPpmTasksDeliverEnv({
+      chat: fakeChat,
+      reserveWake: (_m, _k, byUser) => { seen.push(byUser); return { ok: false, message: "budget used" }; },
+    });
+    const out = await wakeManager(f.projectKey, USER.actor, ["- demo/1 stalled"], { overBudgetOnce: true });
+    expect(out).toEqual({ ok: true, sessionId: "x", delivered: "started" });
+    expect(sent).toHaveLength(1);
+    // Asked as the user, so the budget lifted its pause before it said no.
+    expect(seen).toEqual([true]);
+    // Not the user (PPM's own checker): the budget's refusal stands.
+    expect(await wakeManager(f.projectKey, { kind: "ppm", label: "PPM" }, ["- demo/1 stalled"], { overBudgetOnce: true }))
+      .toEqual({ ok: false, reason: "budget", error: "budget used" });
+    // Without the flag, the user's own "Tell manager now" still meets the budget.
+    expect(await wakeManager(f.projectKey, USER.actor, ["- demo/1 stalled"])).toEqual({ ok: false, reason: "budget", error: "budget used" });
+    expect(sent).toHaveLength(1);
+  });
+
   it("sends one wake at a time per project", async () => {
     addManager();
     createTask({ projectKey: f.projectKey, title: "x" }, USER);

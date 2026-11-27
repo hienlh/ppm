@@ -101,4 +101,10 @@ describe("who may write one", () => {
     expect(using(/encodeMessageBlocks\([^;]{0,160}userWords:/)).toEqual(["src/server/ws/chat-user-words.ts"]);
     expect(using(/chat-user-words\.ts/)).toEqual(["src/services/assistant-cards/forward-verbatim-env.ts", "src/services/assistant-cards/forward-verbatim.ts"]);
   }, 60_000);
+
+  it("the card's block that rides with them has the same single writer", () => {
+    expect(using(/encodeCardContext\(/)).toEqual(["src/shared/chat-card-context.ts", "src/shared/chat-message-blocks.ts"]);
+    expect(using(/encodeMessageBlocks\([^;]{0,160}cardContext:/)).toEqual(["src/server/ws/chat-user-words.ts"]);
+    expect(using(/cardContextFrom\(/)).toEqual(["src/services/assistant-cards/forward-verbatim.ts", "src/shared/chat-card-context.ts"]);
+  }, 60_000);
 });

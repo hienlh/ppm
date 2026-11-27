@@ -142,6 +142,13 @@ export interface WakeOptions {
    * mid-turn or showing a card answers `busy` and is asked again later.
    */
   unattended?: boolean;
+  /**
+   * The user pressed OK on a card the handed-off work checker raised because it could not wake the
+   * manager: this one wake goes even when the budget would refuse it. It is still counted when the
+   * budget has room (and, asked by the user, lifts the project's pause first); refused, it is sent
+   * uncounted, once. Never with `unattended`.
+   */
+  overBudgetOnce?: boolean;
 }
 
 /** Projects with a wake on its way: a second one would read and send the same news again. */
@@ -172,7 +179,9 @@ async function wakeOnce(projectKey: string, actor: Actor, extraLines: string[], 
   let lines = [...extraLines, ...formatter(news, projectKey)].map(oneLine).filter(Boolean);
   if (lines.length === 0) return { ok: false, reason: "nothing" };
   if (lines.length > MAX_WAKE_LINES) lines = [...lines.slice(0, MAX_WAKE_LINES), `- …and ${lines.length - MAX_WAKE_LINES} more`];
-  const reserved = env.reserveWake(manager, projectKey, actor.kind === "user" && !opts.unattended);
+  const byUser = actor.kind === "user" && !opts.unattended;
+  const asked = env.reserveWake(manager, projectKey, byUser);
+  const reserved: WakeReservation = asked.ok || !(opts.overBudgetOnce && byUser) ? asked : { ok: true, release: () => {} };
   if (!reserved.ok) return { ok: false, reason: "budget", error: reserved.message };
   const projectName = projectNameOf(projectKey);
   const where = neutralizePpmTags(projectName);

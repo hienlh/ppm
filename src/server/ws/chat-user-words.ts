@@ -1,7 +1,7 @@
 /**
  * The server's door for the user's own words forwarded from a PPM Assistant card into the card's
  * manager chat: delivered like any message (the same entry, echo, consumer and replay), with the
- * user-words block PPM built after it, and no other block.
+ * user-words block PPM built after it, the card's block when PPM raised that card, and no other block.
  *
  * Server-internal: only `forward-verbatim.ts` reaches it, after it checked the card, the person's
  * action and the card's status. The text is neutralized here as at every other door (markers
@@ -9,6 +9,7 @@
  */
 import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
 import { defuseUserWordsHeader, type UserWordsReference } from "../../shared/user-words-block.ts";
+import type { CardContextReference } from "../../shared/chat-card-context.ts";
 import { encodeVoicePart, isStoredVoicePath } from "../../shared/voice-message.ts";
 import type { TaskReference } from "../../shared/chat-task-ref.ts";
 import { neutralizePpmTags } from "../../services/assistant-watch/watch-event-text.ts";
@@ -44,6 +45,11 @@ export interface DeliverUserWordsInput {
    */
   voice?: { path: string; durationSec: number };
   userWords: UserWordsReference;
+  /**
+   * The card the words answer, as the user saw it, when no chat filed it (PPM raised it): written as
+   * its own block right after the user-words block, so the manager knows what an OK was given on.
+   */
+  cardContext?: CardContextReference | null;
   /**
    * The task the words are about (a Telegram message sent to a task's chat), read from the task
    * store by the caller; written as its own block after the user-words block.
@@ -96,7 +102,7 @@ const inlineImageMarker = (path: string): string => `[Attached image (contents i
  * the text was neutralized, so the text can neither forge nor alter them), then the user's words,
  * then the user-words block — the only block that decodes.
  */
-export function userWordsContent(input: Pick<DeliverUserWordsInput, "text" | "images" | "voice" | "userWords" | "taskRefs" | "projectName">): string {
+export function userWordsContent(input: Pick<DeliverUserWordsInput, "text" | "images" | "voice" | "userWords" | "cardContext" | "taskRefs" | "projectName">): string {
   // Pasted text (an email, a log) may carry a loose PPM-looking tag or a copy of the user-words
   // header: both are defused, so the one block PPM builds below is the only one there.
   const words = defuseCommand(defuseAttachmentMarkers(defuseUserWordsHeader(neutralizePpmTags(input.text))));
@@ -104,7 +110,9 @@ export function userWordsContent(input: Pick<DeliverUserWordsInput, "text" | "im
   const said = input.voice ? encodeVoicePart({ path: input.voice.path, durationSec: input.voice.durationSec, transcript: words }) : words;
   const markers = (input.images ?? []).map((img) => inlineImageMarker(img.path));
   const body = markers.length ? `${markers.join("\n\n")}\n\n${said}` : said;
-  return encodeMessageBlocks(body, { userWords: input.userWords, taskRefs: input.taskRefs ?? null, ownProject: input.projectName || undefined });
+  return encodeMessageBlocks(body, {
+    userWords: input.userWords, cardContext: input.cardContext ?? null, taskRefs: input.taskRefs ?? null, ownProject: input.projectName || undefined,
+  });
 }
 
 /** For the log: the card the words answer, or the task they are about. */
