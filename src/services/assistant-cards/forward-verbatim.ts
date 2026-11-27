@@ -4,6 +4,11 @@
  * user-words block (`src/shared/user-words-block.ts`): the block names the card by id and carries
  * what PPM checked (the channel, the time, the draft's hash for an OK), never the card's title.
  *
+ * A card no chat filed — PPM raised it itself (`payload.detected`: the handed-off work checker, a
+ * manager turn that stopped) — is one the manager never saw, so the id alone tells it nothing. Such
+ * a card goes along as its own block after the user-words block (`src/shared/chat-card-context.ts`):
+ * its kind, title, body and listed tasks, as data.
+ *
  * Forwarding is the user writing: the pair counts between the manager and every other chat start
  * again, the main Assistant session hears about it on its next turn (no turn is started for it),
  * and the session trace records which device or Telegram chat sent it.
@@ -13,6 +18,7 @@
  */
 import { MANAGER_REPLY_CARD_KINDS, type AssistantCard } from "../../shared/assistant-cards.ts";
 import type { UserWordsReference } from "../../shared/user-words-block.ts";
+import { cardContextFrom, type CardContextReference } from "../../shared/chat-card-context.ts";
 import type { TaskReference } from "../../shared/chat-task-ref.ts";
 import type { TaskFollowupContext } from "./task-words-followup.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
@@ -111,6 +117,16 @@ const KIND_NAMES: Record<AssistantCard["kind"], string> = {
 export const kindName = (card: Pick<AssistantCard, "kind">): string => KIND_NAMES[card.kind];
 const where = (channel: CardActor["channel"]): string => (channel === "telegram" ? "on Telegram" : "in PPM");
 
+/**
+ * The card's own block for words forwarded on it, or null: only a card PPM raised itself, which no
+ * chat filed and the manager has never seen. A card a manager filed, or a chat's waiting request
+ * mirrored onto a card, is already known to the chat the words go to.
+ */
+export function forwardedCardContext(card: Pick<AssistantCard, "id" | "kind" | "title" | "body" | "payload">): CardContextReference | null {
+  if (!card.payload?.detected || card.payload.chat) return null;
+  return cardContextFrom({ id: card.id, kind: card.kind, title: card.title, body: card.body, tasks: card.payload.tasks });
+}
+
 /** Whether a reply to this card goes to a manager chat rather than to the Assistant. */
 export function repliesToManager(card: Pick<AssistantCard, "kind" | "sessionId">): boolean {
   return MANAGER_REPLY_CARD_KINDS.includes(card.kind) && !!card.sessionId;
@@ -135,6 +151,7 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
     ...(how.ok && how.draftSha256 ? { draftSha256: how.draftSha256, ...(how.draftTo ? { draftTo: how.draftTo } : {}) } : {}),
     ...(!how.ok && how.choice ? { choice: how.choice } : {}),
   };
+  const cardContext = forwardedCardContext(card);
   // Written only now, with every check passed and the chat found: a reply that goes nowhere leaves
   // no file behind, and one whose send fails below has its files removed again.
   let written: ReplyImage[] = [];
@@ -157,6 +174,7 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
     delivered = await env.deliverUserWords({
       targetSessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName,
       projectPath: target.projectPath, text, userWords, supersede: how.supersede, clientMessageId,
+      ...(cardContext ? { cardContext } : {}),
       ...(written.length ? { images: written } : {}),
       ...(how.voice ? { voice: how.voice } : {}),
     });

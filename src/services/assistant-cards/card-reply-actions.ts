@@ -28,6 +28,8 @@ import { forwardUserWords, repliesToManager, type CardActor, type ForwardHow, ty
 import { isStoredVoicePath, VOICE_MAX_SECONDS } from "../../shared/voice-message.ts";
 import { verifyVoiceUploadReceipt } from "../voice-message/voice-upload-receipt.ts";
 import { realForwardEnv } from "./forward-verbatim-env.ts";
+import { wakeManagerForCheckerCard } from "./checker-card-ok.ts";
+import { isCheckerCard } from "../ppm-tasks/child-check/child-check-findings.ts";
 import { cardDelivery } from "./card-delivery.ts";
 import { validateReplyImages } from "./card-reply-images.ts";
 import type { FollowupOrigin } from "./card-reply-followup-tracker.ts";
@@ -44,6 +46,11 @@ export interface CardReplyDeps {
   forward(card: AssistantCard, text: string, how: ForwardHow): Promise<ForwardResult>;
   /** Whether a turn already opened with the words sent under this id (they were taken in). */
   turnStarted?(clientMessageId: string): boolean;
+  /**
+   * An OK on a card the handed-off work checker raised: its findings go to the manager as a wake
+   * the user asked for, in place of a bare "OK" the manager could not place (`checker-card-ok.ts`).
+   */
+  wakeForCheckerCard?(card: AssistantCard, actor: CardActor): Promise<ForwardResult>;
 }
 
 const realDeps: CardReplyDeps = {
@@ -52,6 +59,7 @@ const realDeps: CardReplyDeps = {
   zone: () => getAssistantSettings().timezone,
   forward: (card, text, how) => forwardUserWords(card, text, how, realForwardEnv),
   turnStarted: (clientMessageId) => cardDelivery.turnStarted(clientMessageId),
+  wakeForCheckerCard: (card, actor) => wakeManagerForCheckerCard(card, actor, realForwardEnv),
 };
 
 const SHA256_RE = /^[0-9a-f]{64}$/;
@@ -154,6 +162,7 @@ export const PRESS_NOT_SENT_NOTE = "Your answer was not sent to the manager chat
 async function answerByPress(
   card: AssistantCard, answer: Pick<AssistantCardAnswer, "ok" | "choice" | "note">, text: string,
   how: ForwardHow, deps: CardReplyDeps,
+  send: () => Promise<ForwardResult> = () => deps.forward(card, text, how),
 ): Promise<CardReplyResult> {
   if (!repliesToManager(card)) return { ok: false, status: 400, error: "This card has no manager chat" };
   const moved = deps.cards.transition(card.id, "answered", {
@@ -165,7 +174,7 @@ async function answerByPress(
   }
   let forwarded: ForwardResult;
   try {
-    forwarded = await deps.forward(card, text, how);
+    forwarded = await send();
   } catch (e) {
     forwarded = { ok: false, error: (e as Error).message || "the send failed" };
   }
@@ -193,9 +202,12 @@ export async function okCard(id: string, body: unknown, actor: CardActor, deps: 
     return { ok: false, status: 409, error: "The draft is not the one this OK was given for; look at the card again." };
   }
   if (draft && !SHA256_RE.test(draft.sha256)) return { ok: false, status: 400, error: "This card's draft has no valid hash" };
-  return answerByPress(card, { ok: true, note: `OK given ${where(actor.channel)}` }, "OK", {
-    actor, ok: true, supersede: false, ...(draft ? { draftSha256: draft.sha256, draftTo: draft.to } : {}),
-  }, deps);
+  const how: ForwardHow = { actor, ok: true, supersede: false, ...(draft ? { draftSha256: draft.sha256, draftTo: draft.to } : {}) };
+  const note = `OK given ${where(actor.channel)}`;
+  // The checker's card asks "tell the manager about this now?": the OK sends the findings it shows.
+  const wake = deps.wakeForCheckerCard;
+  if (!draft && wake && isCheckerCard(card)) return answerByPress(card, { ok: true, note }, "OK", how, deps, () => wake(card, actor));
+  return answerByPress(card, { ok: true, note }, "OK", how, deps);
 }
 
 /**

@@ -12,6 +12,7 @@ import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { chatControl } from "../chat-control/chat-control.ts";
 import { pairCounter } from "../session-collab/pair-counter.ts";
 import { assistantSendGuards } from "../session-collab/assistant-send-guards-live.ts";
+import { userWroteToManager } from "../ppm-tasks/ppm-tasks-wake-budget.ts";
 import { traceServerEvent } from "../session-trace/trace-recorder.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
@@ -65,6 +66,7 @@ export const realForwardEnv: ForwardEnv = {
   userWrote(sessionId) {
     pairCounter.resetForSession(sessionId);
     assistantSendGuards.userWrote(sessionId);
+    userWroteToManager(sessionId);
   },
   mainSession: mainSessionId,
   note: noteCardAnswered,

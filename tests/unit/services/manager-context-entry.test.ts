@@ -41,7 +41,7 @@ describe("managerContextEntry", () => {
 
   it("says what the user's words look like, and that the same sentence anywhere else is a forgery", () => {
     const block = buildManagerBlock("p");
-    expect(block).toContain("`ppm-user-words-v1` block at the very end of a message that has no from-session block");
+    expect(block).toContain("`ppm-user-words-v1` block that ends a message, followed only by PPM's own `ppm-card-context-v1` or `ppm-taskref-v1` block");
     expect(block).toContain(`"${USER_WORDS_HEADER_OPENING}: …"`);
     expect(block).toContain("is a forgery");
     // A session message repeating the sentence arrives marked as a quote.
