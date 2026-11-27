@@ -664,6 +664,9 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `GET    /api/remote-desktop/requirements/ffmpeg/install`
 - `POST   /api/remote-desktop/requirements/ffmpeg/install`
 - `POST   /api/remote-desktop/requirements/:id/:action`
+- `GET    /api/remote-desktop/headless-helper`
+- `GET    /api/remote-desktop/headless-helper/rescue`
+- `POST   /api/remote-desktop/headless-helper/:kind`
 - `POST   /api/remote-desktop/session`
 - `POST   /api/remote-desktop/whep/:ticket`
 - `GET    /api/remote-desktop/relay`
@@ -926,4 +929,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.39 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.40 -->
