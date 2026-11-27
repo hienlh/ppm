@@ -31,7 +31,9 @@ export function inputBlockedText(app: string | null): string {
 
 export function RemoteDesktopInputBlockedBar({
   blocked,
-  positionClassName = "absolute left-1/2 top-2 max-w-[92%] -translate-x-1/2",
+  // Centred by auto margins, not `left-1/2` + translate: an absolute box placed at 50% may only
+  // grow into the half that is left, which wrapped the sentence into a narrow column on a phone.
+  positionClassName = "absolute inset-x-0 top-2 mx-auto w-fit max-w-[92%]",
 }: {
   blocked: InputBlocked | null;
   positionClassName?: string;
