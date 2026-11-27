@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.42] - 2026-11-27
+
+### Changed
+
+- **The Windows safety net confirms itself once the picture arrives**: the "I can still reach this PC" bar is gone, and you only see one line, with an OK button, if the net did turn a screen back on.
+
 ## [0.26.41] - 2026-11-27
 
 ### Fixed
