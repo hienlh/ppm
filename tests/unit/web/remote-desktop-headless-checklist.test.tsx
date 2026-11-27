@@ -109,6 +109,8 @@ describe("Windows' fallback screen in the checklist", () => {
     await settle();
     expect(view.container.querySelector('[data-testid="viewer"]')).toBeNull();
     expect(view.container.textContent).toContain("choose one");
+    // The row's own two buttons are the choice; no generic Continue beside them.
+    expect(view.container.querySelector('[data-testid="remote-desktop-readiness-continue"]')).toBeNull();
     await click(view.container.querySelector('[data-testid="remote-desktop-requirement-win-display-continue"]'));
     await settle();
     expect(view.container.querySelector('[data-testid="viewer"]')).not.toBeNull();

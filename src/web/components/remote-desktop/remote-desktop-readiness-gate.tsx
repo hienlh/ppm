@@ -72,6 +72,9 @@ function Checklist({ caps, failed, onCancel, onAccept, runHostAction }: {
 }) {
   const pending = caps?.requirements.filter((r) => !r.ok && r.gates !== "choice") ?? [];
   const viewOnly = !!caps?.videoReady && !caps.inputReady;
+  // A `choice` row carries its own "continue as is" button; a second generic Continue beside it
+  // would be the same answer under a vaguer name.
+  const openChoice = !!caps && hasOpenChoice(caps);
   // The dock terminal opens *under* this surface (the mobile sheet covers the whole viewport),
   // so hand the command over and get out of the way; the entry stays in the nav to come back to.
   const onTerminal = (command: string) => { runInTerminal(command); onCancel(); };
@@ -106,15 +109,17 @@ function Checklist({ caps, failed, onCancel, onAccept, runHostAction }: {
           <button type="button" onClick={onCancel} className={`${GATE_BUTTON} bg-white/10 hover:bg-white/20`}>
             Cancel
           </button>
-          <button
-            type="button"
-            disabled={!caps?.videoReady}
-            onClick={onAccept}
-            className={`${GATE_BUTTON} bg-primary font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40`}
-            data-testid="remote-desktop-readiness-continue"
-          >
-            {viewOnly ? "Continue (view only)" : "Continue"}
-          </button>
+          {!openChoice && (
+            <button
+              type="button"
+              disabled={!caps?.videoReady}
+              onClick={onAccept}
+              className={`${GATE_BUTTON} bg-primary font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40`}
+              data-testid="remote-desktop-readiness-continue"
+            >
+              {viewOnly ? "Continue (view only)" : "Continue"}
+            </button>
+          )}
         </div>
       </div>
     </div>
