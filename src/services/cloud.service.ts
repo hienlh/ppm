@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { hostname } from "node:os";
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, chmodSync, renameSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { VERSION } from "../version.ts";
 import { configService } from "./config.service.ts";
@@ -96,10 +96,22 @@ export function getCloudDevice(): CloudDevice | null {
   }
 }
 
-/** Save cloud device info (restricted permissions) */
+/**
+ * Save cloud device info (restricted permissions). Written beside the file and renamed over
+ * it, so the supervisor re-reading it after Cloud refused its key never sees half a file.
+ */
 export function saveCloudDevice(device: CloudDevice): void {
   ensurePpmDir();
-  writeFileSync(deviceFile(), JSON.stringify(device, null, 2));
+  const body = JSON.stringify(device, null, 2);
+  const tmp = `${deviceFile()}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, body, { mode: 0o600 });
+    renameSync(tmp, deviceFile());
+  } catch {
+    // Windows refuses the rename while another process has the file open: write in place.
+    try { unlinkSync(tmp); } catch {}
+    writeFileSync(deviceFile(), body);
+  }
   try { chmodSync(deviceFile(), 0o600); } catch {}
 }
 
@@ -351,6 +363,23 @@ export async function linkDevice(name?: string): Promise<CloudDevice> {
   // Never the secret_key: the id is what Cloud's own records are keyed by.
   log.info(`Cloud device linked: id=${device.device_id} name=${device.name} cloud=${hostOf(auth.cloud_url)}`);
   return device;
+}
+
+/**
+ * Rename this machine in PPM Cloud without registering it again: re-registering issues a
+ * new device key, which a rename has no reason to do. Returns null when not linked.
+ */
+export async function renameCloudDevice(name: string): Promise<CloudDevice | null> {
+  const device = getCloudDevice();
+  if (!device) return null;
+  const res = await cloudFetch(`/api/devices/${device.device_id}`, {
+    method: "PUT",
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Failed to rename device in PPM Cloud (HTTP ${res.status})`);
+  const renamed = { ...device, name };
+  saveCloudDevice(renamed);
+  return renamed;
 }
 
 /** A URL's host, for a log line: never its path or anything in it. */
