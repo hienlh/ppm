@@ -11,12 +11,13 @@ import { createLogger } from "./logger.ts";
 import { widenCheckConstraint } from "./db-widen-check-constraint.ts";
 import { backfillScheduleCreators } from "./schedule-creator-backfill.ts";
 import { applyPpmTasksSchema, applyPpmTasksSnoozeSchema } from "./ppm-tasks/ppm-tasks-schema.ts";
+import { applyPeerConnectionsSchema } from "./peer-connections/peer-connections-schema.ts";
 
 const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 82;
+export const CURRENT_SCHEMA_VERSION = 83;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1733,6 +1734,13 @@ export function runMigrations(database: Database): void {
       linkScheduleOwnersFromTrace(database);
     }
     database.exec(`PRAGMA user_version = 82;`);
+  }
+
+  if (current < 83) {
+    // Connections between two PPMs: pairing, the connection chat, and the relay and Tailscale
+    // transports. Only adds tables (`peer-connections/peer-connections-schema.ts`).
+    applyPeerConnectionsSchema(database);
+    database.exec(`PRAGMA user_version = 83;`);
   }
 }
 
