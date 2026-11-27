@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.26.41] - 2026-11-27
+
+### Fixed
+
+- **"Bring session back" works with the Windows helper already installed (v2)**: it no longer hides the button and asks for a setup; the newer version is only suggested.
+- **The Windows session row gives numbered steps for someone on a phone**: what to tap, what it costs, why it is safe from afar, and where to set up the helper if it is missing.
+- **A capture failure from a disconnected Windows session is explained in plain words**, and no longer suggests reconnecting over RDP, which disconnects it again.
+- **A tall Remote Desktop checklist scrolls back to its title** in a short window.
+
 ## [0.26.40] - 2026-11-27
 
 ### Added
