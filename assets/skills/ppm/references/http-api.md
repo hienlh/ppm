@@ -190,7 +190,7 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `GET    /api/db/ssh/agent`
 - `POST   /api/db/ai-approvals/:requestId`
 - `GET    /api/db/connections`
-- `GET    /api/db/connections/export`
+- `POST   /api/db/connections/export`
 - `POST   /api/db/connections/import`
 - `POST   /api/db/connections/folder`
 - `POST   /api/db/connections/:id/duplicate`
@@ -929,4 +929,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.42 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.43 -->
