@@ -76,16 +76,10 @@ settingsRoutes.put("/device-name", async (c) => {
     let cloud_synced = false;
     let cloud_error: string | undefined;
     try {
-      const { getCloudDevice, saveCloudDevice, linkDevice } = await import("../../services/cloud.service.ts");
-      const device = getCloudDevice();
-      if (device && trimmed) {
-        // Re-link with new name (cloud upserts by machine_id)
-        const updated = await linkDevice(trimmed);
-        // Also update local cloud-device.json name
-        if (updated) {
-          saveCloudDevice({ ...updated, name: trimmed });
-          cloud_synced = true;
-        }
+      const { getCloudDevice, renameCloudDevice } = await import("../../services/cloud.service.ts");
+      if (getCloudDevice() && trimmed) {
+        // A rename, not a re-link: re-registering would issue this machine a new device key.
+        cloud_synced = (await renameCloudDevice(trimmed)) !== null;
       }
     } catch (e) {
       cloud_error = (e as Error).message;

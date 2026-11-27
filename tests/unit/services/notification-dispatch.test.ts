@@ -1,4 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { configService } from "../../../src/services/config.service.ts";
 import { NotificationService, type NotificationPayload } from "../../../src/services/notification.service.ts";
 import { webPushService } from "../../../src/services/web-push/web-push.service.ts";
@@ -61,6 +63,13 @@ describe("NotificationService.broadcast", () => {
       ["/project/ppm?openChat=s3", ""],
     ]);
     expect(telegrammed.map((p) => p.providerId)).toEqual(["codex", "codex", undefined]);
+  });
+
+  it("sends nothing to PPM Cloud: its device connection carries no notifications", async () => {
+    // Cloud never stored them, and project and chat names have no business leaving the machine.
+    const dir = join(import.meta.dir, "../../../src/services");
+    expect(readFileSync(join(dir, "notification.service.ts"), "utf8")).not.toContain("cloud-ws");
+    expect(readFileSync(join(dir, "cloud-ws.service.ts"), "utf8")).not.toMatch(/notification/i);
   });
 
   it("sends to push, Telegram and ntfy right away when the delay is 0", async () => {

@@ -8,6 +8,7 @@
  * - Reconnect with backoff on disconnect
  * - Command handler invoked on inbound command
  * - disconnect() cleans up timers and connection
+ * - A refused key (4003) is re-read from the device file before the next attempt
  */
 import { describe as describeBase, test, expect, afterEach, beforeEach } from "bun:test";
 // Skipped in the sandboxed Docker run (PPM_SKIP_LIVE=1) — needs a live cloud WS server.
@@ -28,7 +29,7 @@ let receivedMessages: MockMessage[] = [];
 let serverCloseResolvers: (() => void)[] = [];
 let connectedSockets: Set<unknown> = new Set();
 
-function startMockServer(opts?: { rejectAuth?: boolean }) {
+function startMockServer(opts?: { rejectAuth?: boolean; acceptKey?: string }) {
   receivedMessages = [];
   connectedSockets = new Set();
   mockServer = Bun.serve({
@@ -50,7 +51,8 @@ function startMockServer(opts?: { rejectAuth?: boolean }) {
           receivedMessages.push(msg);
 
           // If auth message, optionally reject
-          if (msg.type === "auth" && opts?.rejectAuth) {
+          const refused = opts?.rejectAuth || (opts?.acceptKey !== undefined && msg.secretKey !== opts.acceptKey);
+          if (msg.type === "auth" && refused) {
             ws.close(4003, "auth_failed");
           }
         } catch {}
@@ -315,5 +317,69 @@ describe("Cloud WS Client", () => {
     // Should have sent a new auth message
     const authCountAfter = receivedMessages.filter(m => m.type === "auth").length;
     expect(authCountAfter).toBeGreaterThan(authCountBefore);
+  }, TEST_TIMEOUT);
+
+  test("re-reads the device credentials when Cloud refuses the key (4003), then stays connected", async () => {
+    // Cloud rotated this machine's key: only the new one is accepted, and the file holds it now.
+    stopMockServer();
+    startMockServer({ acceptKey: "rotated-key" });
+    let reloads = 0;
+    cloudWs.connect({
+      cloudUrl: `http://127.0.0.1:${TEST_WS_PORT}`,
+      deviceId: "test-device-007",
+      secretKey: "old-key",
+      reloadCredentials: () => {
+        reloads++;
+        return { deviceId: "test-device-007", secretKey: "rotated-key" };
+      },
+      heartbeatFn: () => ({
+        type: "heartbeat" as const,
+        tunnelUrl: null,
+        state: "running",
+        appVersion: "0.8.71",
+        serverPid: null,
+        uptime: 0,
+        timestamp: new Date().toISOString(),
+      }),
+    });
+
+    const heartbeatAfterRotation = await waitFor(() => receivedMessages.some((m) => m.type === "heartbeat"), 8000);
+    expect(heartbeatAfterRotation).toBe(true);
+    const keys = receivedMessages.filter((m) => m.type === "auth").map((m) => m.secretKey);
+    expect(keys).toEqual(["old-key", "rotated-key"]);
+    expect(reloads).toBe(1);
+    expect(connectedSockets.size).toBe(1);
+  }, TEST_TIMEOUT);
+
+  test("keeps retrying, without re-reading in a loop, when the file still holds the refused key", async () => {
+    stopMockServer();
+    startMockServer({ rejectAuth: true });
+    let reloads = 0;
+    cloudWs.connect({
+      cloudUrl: `http://127.0.0.1:${TEST_WS_PORT}`,
+      deviceId: "test-device-008",
+      secretKey: "revoked-key",
+      reloadCredentials: () => {
+        reloads++;
+        return { deviceId: "test-device-008", secretKey: "revoked-key" };
+      },
+      heartbeatFn: () => ({
+        type: "heartbeat" as const,
+        tunnelUrl: null,
+        state: "running",
+        appVersion: "0.8.71",
+        serverPid: null,
+        uptime: 0,
+        timestamp: new Date().toISOString(),
+      }),
+    });
+
+    // One re-read per refusal, each followed by the backoff — never a tight loop.
+    const retried = await waitFor(() => receivedMessages.filter((m) => m.type === "auth").length >= 2, 8000);
+    expect(retried).toBe(true);
+    expect(receivedMessages.filter((m) => m.type === "auth").every((m) => m.secretKey === "revoked-key")).toBe(true);
+    expect(reloads).toBeGreaterThanOrEqual(1);
+    expect(reloads).toBeLessThanOrEqual(receivedMessages.filter((m) => m.type === "auth").length);
+    expect(receivedMessages.some((m) => m.type === "heartbeat")).toBe(false);
   }, TEST_TIMEOUT);
 });

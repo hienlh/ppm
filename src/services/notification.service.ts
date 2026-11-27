@@ -146,24 +146,6 @@ export class NotificationService {
     // What each channel did, logged as one line once all have answered — never the title or the body.
     const outcome = { push: "", telegram: "off", ntfy: "off" };
 
-    // PPM Cloud. Its connection lives in the supervisor, not in this process, so today this
-    // only fills cloud-ws's bounded queue; kept so wiring Cloud up needs no change here.
-    tasks.push(
-      import("./cloud-ws.service.ts")
-        .then(({ sendNotification }) => {
-          sendNotification({
-            title: payload.title,
-            body: payload.body,
-            project: payload.project,
-            sessionId: payload.sessionId,
-            sessionTitle: payload.sessionTitle,
-            notificationType: type === "schedule" || type === "schedule_created" || type === "jira" || type === "design_review" || type === "extension" || type === "memory" ? "done"
-              : type === "collab_approval" ? "approval_request" : type,
-          });
-        })
-        .catch(() => {}),
-    );
-
     tasks.push(
       import("./web-push/web-push.service.ts")
         .then(({ webPushService }) => {

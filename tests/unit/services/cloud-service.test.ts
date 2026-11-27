@@ -11,6 +11,7 @@ import {
   saveCloudDevice,
   removeCloudDevice,
   sendHeartbeat,
+  renameCloudDevice,
   DEFAULT_CLOUD_URL,
   HEARTBEAT_INTERVAL_MS,
 } from "../../../src/services/cloud.service.ts";
@@ -558,5 +559,64 @@ describe("heartbeat failures in the log", () => {
       info.mockRestore();
       removeCloudDevice();
     }
+  });
+});
+
+describe("renameCloudDevice", () => {
+  test("renames through PUT /api/devices/:id and keeps the device key — never re-registers", async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const fake = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        calls.push({ method: req.method, path: new URL(req.url).pathname, body: await req.json().catch(() => null) });
+        return Response.json({ ok: true });
+      },
+    });
+    try {
+      const cloudUrl = `http://127.0.0.1:${fake.port}`;
+      saveCloudAuth({ access_token: "a", refresh_token: "r", email: "e@x", cloud_url: cloudUrl, saved_at: new Date().toISOString() });
+      saveCloudDevice({ device_id: "dev-1", secret_key: "key-1", name: "old", machine_id: "m-1", cloud_url: cloudUrl, linked_at: "t" });
+
+      const renamed = await renameCloudDevice("new name");
+      expect(calls).toEqual([{ method: "PUT", path: "/api/devices/dev-1", body: { name: "new name" } }]);
+      expect(renamed).toMatchObject({ name: "new name", secret_key: "key-1" });
+      expect(getCloudDevice()).toMatchObject({ device_id: "dev-1", name: "new name", secret_key: "key-1" });
+    } finally {
+      fake.stop(true);
+      removeCloudDevice();
+      removeCloudAuth();
+    }
+  });
+
+  test("throws on a refusal and leaves the file as it was", async () => {
+    const fake = Bun.serve({ port: 0, fetch: () => new Response("no", { status: 404 }) });
+    try {
+      const cloudUrl = `http://127.0.0.1:${fake.port}`;
+      saveCloudAuth({ access_token: "a", refresh_token: "", email: "e@x", cloud_url: cloudUrl, saved_at: new Date().toISOString() });
+      saveCloudDevice({ device_id: "dev-2", secret_key: "key-2", name: "old", machine_id: "m-2", cloud_url: cloudUrl, linked_at: "t" });
+      await expect(renameCloudDevice("x")).rejects.toThrow(/HTTP 404/);
+      expect(getCloudDevice()?.name).toBe("old");
+    } finally {
+      fake.stop(true);
+      removeCloudDevice();
+      removeCloudAuth();
+    }
+  });
+
+  test("returns null when the machine is not linked", async () => {
+    removeCloudDevice();
+    expect(await renameCloudDevice("x")).toBeNull();
+  });
+});
+
+describe("saveCloudDevice", () => {
+  test("replaces the file whole and leaves no temporary file behind", () => {
+    const { readdirSync } = require("node:fs") as typeof import("node:fs");
+    const dir = process.env.PPM_HOME!;
+    saveCloudDevice({ device_id: "d", secret_key: "k1", name: "n", machine_id: "m", cloud_url: "u", linked_at: "t" });
+    saveCloudDevice({ device_id: "d", secret_key: "k2", name: "n", machine_id: "m", cloud_url: "u", linked_at: "t" });
+    expect(getCloudDevice()?.secret_key).toBe("k2");
+    expect(readdirSync(dir).filter((f) => f.startsWith("cloud-device.json."))).toEqual([]);
+    removeCloudDevice();
   });
 });
