@@ -929,4 +929,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.41 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.42 -->
