@@ -14,6 +14,19 @@ import { getPpmDir } from "../../ppm-dir.ts";
 /** Bumped whenever the generated scripts change, so an older install reports "update needed". */
 export const HELPER_VERSION = 3;
 
+/**
+ * The oldest installed helper PPM still runs. Older than `HELPER_VERSION` only means an update is
+ * offered; older than this means it is refused until updated.
+ *
+ * v1 (the first real-host test, 26/11) had none of the safety rules: it turned the virtual display
+ * off while it was the console session's only screen, which locked that PC out. v2 has all of
+ * them — the DisplayOff refusal, the 5-minute safety net (`Confirm`/`Rescue`), the narrowed task
+ * permissions, the rate limits and the mutex — and v3 only added run timings to the log. The
+ * one v2 install that exists was made from the final v2 scripts (27/11 morning). Refusing it
+ * left a phone user at "set up the helper" on a PC where the helper was set up.
+ */
+export const MIN_USABLE_HELPER_VERSION = 2;
+
 /** Each action is its own task with a fixed command line: a task cannot be handed anything.
  *  `Confirm` and `Rescue` are the safety net behind `Reattach`/`DisplayOn` (`rescue-script.ts`). */
 export const HELPER_ACTIONS = ["Reattach", "DisplayOn", "DisplayOff", "Confirm", "Rescue"] as const;

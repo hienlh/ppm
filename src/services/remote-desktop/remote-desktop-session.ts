@@ -30,6 +30,7 @@ import {
 } from "./remote-desktop-quality.ts";
 import { createLogger } from "../logger.ts";
 import { explainCaptureFailure } from "./remote-desktop-capture-error.ts";
+import { readWindowsSession } from "./remote-desktop-win32-session.ts";
 import { virtualDisplayLease } from "./win32-helper/virtual-display-lease.ts";
 import { currentInputBlock, onInputBlockChange } from "./remote-desktop-input-block.ts";
 
@@ -242,7 +243,10 @@ export class RemoteDesktopSession {
         if (generation !== this.captureGeneration) return;
         if (!this.closed) {
           if (reason) {
-            try { this.ws.send(JSON.stringify({ type: "error", message: explainCaptureFailure(process.platform, reason) })); } catch { /* closing anyway */ }
+            // The session's own state first: ffmpeg words a disconnected session more than one way.
+            const windowsSession = process.platform === "win32" ? readWindowsSession() : null;
+            const message = explainCaptureFailure(process.platform, reason, windowsSession);
+            try { this.ws.send(JSON.stringify({ type: "error", message })); } catch { /* closing anyway */ }
           }
           this.close("capture-exit");
         }

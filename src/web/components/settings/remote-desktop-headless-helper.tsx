@@ -18,6 +18,8 @@ export interface HeadlessHelperStatus {
   usable: boolean;
   installed: boolean;
   outdated: boolean;
+  /** Too old to run at all (absent on hosts from before the field: then `outdated` meant it). */
+  tooOld?: boolean;
   otherUser: boolean;
   virtualDisplay: boolean;
   lastRun: { action: string; ok: boolean; message: string; at: string } | null;
@@ -31,11 +33,14 @@ export function describeHelper(status: HeadlessHelperStatus): string {
       : "Removing — approve the administrator prompt on the PC…";
   }
   if (status.otherUser) return "Installed for another Windows user. Reinstall to use it from this account.";
-  if (status.outdated) return "Installed by an older PPM. Reinstall to update it.";
+  if (status.tooOld ?? (status.outdated && !status.usable)) {
+    return "Installed by an older PPM without the safety net, so PPM will not use it. Reinstall to update it.";
+  }
   if (status.usable) {
-    return status.virtualDisplay
+    const update = status.outdated ? " A newer version is available: Reinstall to update it (optional)." : "";
+    return (status.virtualDisplay
       ? "Set up. From the Remote Desktop checklist PPM can bring your session back and turn on a virtual display."
-      : "Set up. PPM can bring your session back from the Remote Desktop checklist.";
+      : "Set up. PPM can bring your session back from the Remote Desktop checklist.") + update;
   }
   if (status.installed) return "Installed, but its tasks are missing. Reinstall to repair it.";
   return "Not set up.";

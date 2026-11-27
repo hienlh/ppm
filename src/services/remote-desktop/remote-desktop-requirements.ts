@@ -61,6 +61,12 @@ export interface RemoteDesktopRequirement {
   /** A consequence the user must know before pressing an action (e.g. the PC unlocks at its
    *  own screen). Drawn apart from `detail`; optional so older clients simply skip it. */
   warning?: string;
+  /** What to do, in order, for someone who may be far from the PC. Drawn as a numbered list
+   *  after `detail`; optional so older clients simply skip it. */
+  steps?: string[];
+  /** Why the action is safe to press from afar (what protects the PC if it goes wrong). Drawn
+   *  apart from `warning`, which is a cost; this is the net under it. */
+  safety?: string;
   actions: RequirementAction[];
 }
 

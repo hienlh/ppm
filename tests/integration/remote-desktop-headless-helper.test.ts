@@ -11,7 +11,7 @@ import { setHelperSystem } from "../../src/services/remote-desktop/win32-helper/
 import {
   lateHelperAnswer, PENDING_MESSAGE, resetHelperServiceForTests,
 } from "../../src/services/remote-desktop/win32-helper/helper-service.ts";
-import { HELPER_ACTIONS, helperPaths, HELPER_VERSION, taskName } from "../../src/services/remote-desktop/win32-helper/helper-paths.ts";
+import { HELPER_ACTIONS, helperPaths, HELPER_VERSION, MIN_USABLE_HELPER_VERSION, taskName } from "../../src/services/remote-desktop/win32-helper/helper-paths.ts";
 import { VDD_ZIP_SHA256, VDD_ZIP_URL } from "../../src/services/remote-desktop/win32-helper/vdd-catalog.ts";
 import { bootstrapOf, createFakeWindows, FAKE_SID, type FakeWindows } from "../helpers/fake-windows-helper-system.ts";
 
@@ -170,10 +170,26 @@ describe("headless helper: status", () => {
     expect(await status()).toMatchObject({ installed: true, otherUser: true, usable: false });
   });
 
-  it("asks for a reinstall after an update changes the scripts", async () => {
+  it("keeps using a v2 helper (it has every safety rule) and only offers the update", async () => {
+    // A real phone user met "set up the helper" on a PC whose v2 helper was set up: v3 only added
+    // run timings, so refusing v2 took the one-tap way back away for nothing.
     auth(true);
-    markInstalled(FAKE_SID, HELPER_VERSION - 1);
-    expect(await status()).toMatchObject({ outdated: true, usable: false });
+    markInstalled(FAKE_SID, MIN_USABLE_HELPER_VERSION);
+    expect(await status()).toMatchObject({ version: 2, outdated: true, tooOld: false, usable: true });
+  });
+
+  it("refuses a helper older than the safety rules until it is updated", async () => {
+    auth(true);
+    markInstalled(FAKE_SID, MIN_USABLE_HELPER_VERSION - 1);
+    expect(await status()).toMatchObject({ outdated: true, tooOld: true, usable: false });
+    expect(win.calls.some((c) => c[1] === "/query")).toBe(false);
+  });
+
+  it("an install with no version recorded counts as too old", async () => {
+    auth(true);
+    markInstalled();
+    win.files.set(helperPaths().installRecord, JSON.stringify({ userSid: FAKE_SID }));
+    expect(await status()).toMatchObject({ tooOld: true, usable: false });
   });
 });
 
