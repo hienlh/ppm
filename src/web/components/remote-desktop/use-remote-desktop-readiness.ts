@@ -42,6 +42,10 @@ export interface RemoteDesktopRequirement {
   detail: string;
   /** A consequence to read before pressing an action. Absent on older hosts. */
   warning?: string;
+  /** What to do, in order. Absent on older hosts. */
+  steps?: string[];
+  /** Why the action is safe to press from afar. Absent on older hosts. */
+  safety?: string;
   actions: RequirementAction[];
 }
 

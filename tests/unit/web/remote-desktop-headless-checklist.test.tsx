@@ -12,6 +12,7 @@ afterAll(uninstallDom);
 const { RemoteDesktopReadinessGate } = await import("../../../src/web/components/remote-desktop/remote-desktop-readiness-gate.tsx");
 const { api } = await import("../../../src/web/lib/api-client");
 const { describeHelper } = await import("../../../src/web/components/settings/remote-desktop-headless-helper.tsx");
+const { windowsSessionRow } = await import("../../../src/services/remote-desktop/remote-desktop-win32-session-row.ts");
 
 const WARNING = "Bringing the session back signs it in at this PC's own screen and leaves it unlocked.";
 
@@ -85,6 +86,48 @@ describe("Windows checklist rows", () => {
       expect(b.className).toContain("max-md:h-[26px]");
       expect(b.className).not.toContain("min-h-11");
     }
+  });
+});
+
+describe("the session row as the host writes it", () => {
+  const DISCONNECTED = { sessionId: 2, state: "disconnected", isConsole: false } as const;
+  function capsWith(helper: Parameters<typeof windowsSessionRow>[1]) {
+    return { ...disconnectedCaps(), requirements: [windowsSessionRow(DISCONNECTED, helper)] };
+  }
+
+  it("helper set up: numbered steps, then the cost, then the safety note, then the button", async () => {
+    spies.push(spyOn(api, "get").mockResolvedValue(capsWith({ usable: true, installed: true, virtualDisplay: true }) as never));
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    await settle();
+    const row = view.container.querySelector('[data-testid="remote-desktop-requirement-win-session"]')!;
+    const steps = row.querySelector('[data-testid="remote-desktop-requirement-win-session-steps"]');
+    expect(steps?.tagName).toBe("OL");
+    expect([...steps!.querySelectorAll("li")].map((li) => li.textContent)).toHaveLength(3);
+    const safety = row.querySelector('[data-testid="remote-desktop-requirement-win-session-safety"]');
+    expect(safety?.textContent).toContain("never turns the virtual display off");
+    // Read top to bottom: what to do, what it costs, why it is safe, then the button itself.
+    const order = [...row.querySelectorAll("[data-testid], button")].map((el) => el.getAttribute("data-testid") ?? "button");
+    expect(order).toEqual([
+      "remote-desktop-requirement-win-session-steps",
+      "remote-desktop-requirement-win-session-warning",
+      "remote-desktop-requirement-win-session-safety",
+      "button",
+    ]);
+    const button = row.querySelector("button")!;
+    expect(button.textContent).toContain("Bring session back");
+    expect(button.className).toContain("h-7");
+    expect(button.className).toContain("max-md:h-[26px]");
+  });
+
+  it("helper missing: the steps say where to set it up, and no empty button row is drawn", async () => {
+    spies.push(spyOn(api, "get").mockResolvedValue(capsWith({ usable: false, installed: false }) as never));
+    view = await mount(<RemoteDesktopReadinessGate onCancel={() => {}}><div /></RemoteDesktopReadinessGate>);
+    await settle();
+    const row = view.container.querySelector('[data-testid="remote-desktop-requirement-win-session"]')!;
+    expect(row.querySelector("button")).toBeNull();
+    expect(row.querySelector(".flex-wrap")).toBeNull();
+    expect(row.querySelector('[data-testid="remote-desktop-requirement-win-session-steps"]')?.textContent)
+      .toContain("administrator (UAC) prompt");
   });
 });
 
@@ -204,6 +247,11 @@ describe("headless helper status line", () => {
     expect(describeHelper({ ...base, installed: true, usable: true })).toContain("Set up.");
     expect(describeHelper({ ...base, installed: true, otherUser: true })).toContain("another Windows user");
     expect(describeHelper({ ...base, installed: true, outdated: true })).toContain("older PPM");
+    expect(describeHelper({ ...base, installed: true, outdated: true, tooOld: true })).toContain("will not use it");
+    // A v2 helper: still used, the update only suggested.
+    const v2 = describeHelper({ ...base, installed: true, usable: true, outdated: true, tooOld: false });
+    expect(v2).toContain("Set up.");
+    expect(v2).toContain("optional");
     expect(describeHelper({ ...base, job: { kind: "install", state: "running", message: null } })).toContain("administrator prompt");
   });
 });

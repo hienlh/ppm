@@ -107,7 +107,15 @@ describe("windowsHostRequirements with the headless helper", () => {
     const row = windowsHostRequirements(await snapshotWindowsHost(host))[0]!;
     expect(row.actions).toEqual([]);
     expect(row.warning).toBeUndefined();
-    expect(row.detail).toContain("Settings → Remote Desktop");
+    expect(row.steps?.[0]).toContain("Settings → Remote Desktop");
+  });
+
+  it("passes the helper's whole status to the row, so a v2 helper still gets the button", async () => {
+    const { host } = fakeHost({ sessionId: 2, state: "disconnected", isConsole: false }, [], true);
+    host.helper = async () => ({ usable: true, installed: true, outdated: true, tooOld: false, virtualDisplay: true });
+    const row = windowsHostRequirements(await snapshotWindowsHost(host))[0]!;
+    expect(row.actions).toEqual([{ kind: "host", label: "Bring session back", action: "reattach" }]);
+    expect(row.safety).toContain("optional");
   });
 });
 

@@ -12,14 +12,14 @@ import type { RemoteDesktopRequirement } from "./remote-desktop-requirements.ts"
 import { getHelperStatus } from "./win32-helper/helper-service.ts";
 import { hardwareMonitorCount } from "./win32-helper/hardware-monitor-count.ts";
 import { isVirtualDisplayAttached } from "./win32-helper/virtual-display-mode.ts";
+import { windowsSessionRow, type SessionRowHelper } from "./remote-desktop-win32-session-row.ts";
 
-/** What the checklist needs to know about the SYSTEM helper (`win32-helper/`). */
-export interface WindowsHelperView {
-  /** Installed for this user, current, every task present. */
-  usable: boolean;
-  /** The install includes the virtual display driver and its on/off tasks. */
-  virtualDisplay?: boolean;
-}
+export { UNLOCK_WARNING, WIN_SESSION_ID } from "./remote-desktop-win32-session-row.ts";
+
+/** What the checklist needs to know about the SYSTEM helper (`win32-helper/`): `usable` is
+ *  installed for this user, recent enough and every task present; `virtualDisplay`, the install
+ *  includes the virtual display driver and its on/off tasks; the rest explain why it is not usable. */
+export type WindowsHelperView = SessionRowHelper;
 
 export interface WindowsHostApi {
   /** PPM's own Windows session, or null when Windows would not say. */
@@ -97,11 +97,6 @@ export async function snapshotWindowsHost(host: WindowsHostApi): Promise<Windows
   return snapshot;
 }
 
-/** Said wherever the user can bring the session back: it is what that action costs. */
-export const UNLOCK_WARNING = "Bringing the session back signs it in at this PC's own screen and leaves it "
-  + "unlocked: anyone at the PC, or anyone who plugs a monitor in, sees and can use your desktop.";
-
-export const WIN_SESSION_ID = "win-session";
 export const WIN_DISPLAY_ID = "win-display";
 
 /**
@@ -117,22 +112,7 @@ export function windowsHostRequirements(snapshot: WindowsHostSnapshot): RemoteDe
   if (!session) return [];
   const disconnected = session.state === "disconnected";
   const helper = snapshot.helper.usable;
-  const rows: RemoteDesktopRequirement[] = [{
-    id: WIN_SESSION_ID,
-    ok: !disconnected,
-    gates: "video",
-    title: "Windows session on screen",
-    detail: `Your Windows session (#${session.sessionId}) is disconnected. This usually happens when a `
-      + "Remote Desktop (RDP) window is closed: Windows keeps your apps running but draws nothing, "
-      + "so there is no picture to capture. "
-      + (helper
-        ? "PPM can bring it back to this PC's own screen."
-        : "Bring it back to this PC's own screen: sign in at the PC, or reconnect once with RDP or "
-          + "TeamViewer. To let PPM do this from here, set up the headless helper once in Settings → "
-          + "Remote Desktop (it needs an administrator prompt on the PC)."),
-    ...(helper ? { warning: UNLOCK_WARNING } : {}),
-    actions: helper ? [{ kind: "host", label: "Bring session back", action: "reattach" }] : [],
-  }];
+  const rows: RemoteDesktopRequirement[] = [windowsSessionRow(session, snapshot.helper)];
   if (disconnected) return rows;
   if (snapshot.fallback) {
     const size = `${snapshot.fallback.width}x${snapshot.fallback.height}`;
