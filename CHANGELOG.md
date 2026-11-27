@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.43] - 2026-11-27
+
+### Fixed
+
+- **A reply to the pinned card list on Telegram is never dropped**: it goes to the card you meant, or PPM asks which card it answers and keeps your words until you pick one.
+- **Exports and password changes ask for PPM's password** (account tokens, Codex accounts, saved database connections), and five wrong guesses lock the check for five minutes.
+
 ## [0.26.42] - 2026-11-27
 
 ### Changed
