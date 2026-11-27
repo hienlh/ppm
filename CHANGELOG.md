@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.26.40] - 2026-11-27
+
+### Added
+
+- **Remote Desktop on a Windows PC left disconnected by RDP**: the checklist says so and brings the session back to the screen through a small helper installed from Settings → Remote Desktop with one administrator prompt.
+- **A virtual display for Windows PCs with no monitor**: the same helper adds one (1920x1080); the checklist offers it instead of streaming Windows' 1024x768 fallback screen.
+- **A safety net for those helper actions**: unless you confirm "I can still reach this PC" within 5 minutes, the PC gets a screen back by itself.
+- **The viewer says when Windows ignores your input** because an administrator window is in front, and which app it is.
+- **One pinned list of the cards waiting for you on Telegram**, each answerable from the list with its own buttons; asked once as a new feature, with a switch in Settings.
+
+### Fixed
+
+- **Remote Desktop capture failures on Windows say why** (disconnected session or no display) instead of a bare "Capture failed".
+- **A slow Remote Desktop helper no longer reads as a failure**: PPM waits up to 60 seconds and says "not known yet" when it has to stop waiting.
+- **Renaming the machine in Settings no longer re-registers it with PPM Cloud.**
+- **PPM Cloud reconnects with a new device key** after `ppm cloud link` instead of retrying the refused one.
+
 ## [0.26.39] - 2026-11-26
 
 ### Added
