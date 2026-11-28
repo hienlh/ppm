@@ -16,6 +16,7 @@ import { avc1CodecString } from "./avc1-codec-string.ts";
 import type { AccessUnit } from "./access-unit-assembler.ts";
 import { injectPointer, injectKey, injectWheel, injectText, releaseAllModifiers, isInputAvailable, releaseRemoteInput, getInputBackend } from "./remote-desktop-input.ts";
 import { resolveDisplay, type RemoteDisplay } from "./remote-desktop-displays.ts";
+import { createInputQueue } from "./remote-desktop-input-queue.ts";
 import { startRelay, type RelayHandle } from "./mediamtx-process.ts";
 import { findMediamtxBinary } from "./mediamtx-paths.ts";
 import { registerWhepTarget, releaseWhepTicket } from "./remote-desktop-whep-registry.ts";
@@ -76,6 +77,8 @@ export class RemoteDesktopSession {
   private sentConfig = false;
   private closed = false;
   private readonly heldKeyCodes = new Set<string>();
+  /** Input is injected in arrival order — see `remote-desktop-input-queue.ts`. */
+  private readonly input = createInputQueue();
   /** Bumped on every (re)start of capture. An ffmpeg that has been superseded by a quality
    *  change still emits buffered access units and *always* fires `onExit`; without this both
    *  would be attributed to the live capture — the exit would tear the whole session down and
@@ -627,11 +630,11 @@ export class RemoteDesktopSession {
       // The client swallows its own Ctrl+V (it has to: `preventDefault` on that keydown is what
       // cancels the browser's `paste` event, so the text would never arrive) — so the paste
       // keystroke is ours to deliver, and only after the write has actually landed.
-      if (wrote) await this.injectPasteCombo(shift === true);
+      if (wrote) await this.input.run(() => this.injectPasteCombo(shift === true));
       // No clipboard tool on the host: type the text instead of dropping the paste on the
       // floor. Slower and subject to the host's IME, but a paste that arrives beats silence —
       // and `/capabilities` already told the client to offer the install command.
-      else if (text.length <= MAX_TEXT_CHARS) await injectText(text);
+      else if (text.length <= MAX_TEXT_CHARS) await this.input.run(() => injectText(text));
       return;
     }
     if (msg.type === "clipboardRead") {
@@ -639,7 +642,11 @@ export class RemoteDesktopSession {
       return;
     }
     if (!isInputAvailable()) return; // part 1b unsupported on this OS — silently ignore
+    await this.input.run(() => this.handleInputMessage(msg));
+  }
 
+  /** Pointer, wheel, key, text and releaseAll — always run through `this.input`, in order. */
+  private async handleInputMessage(msg: Record<string, unknown>): Promise<void> {
     if (msg.type === "pointer") {
       const { xFrac, yFrac, button, down } = msg as { xFrac?: unknown; yFrac?: unknown; button?: unknown; down?: unknown };
       if (typeof xFrac === "number" && typeof yFrac === "number") {

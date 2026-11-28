@@ -26,6 +26,7 @@ import {
   type SingleTrack, type TwoFingerTrack, type RemoteDesktopInputMode,
 } from "./remote-desktop-touch-gesture-tracker";
 import { beginDoubleTapDrag, dragPressDelay, pressDragButton } from "./remote-desktop-double-tap-drag";
+import { followCursor } from "./remote-desktop-zoom-follow";
 
 export type { RemoteDesktopInputMode };
 
@@ -196,6 +197,10 @@ export function useRemoteDesktopTouch({
       if (usedArmed) onRightClickUsedRef.current?.();
     };
 
+    // The container's own rect at the start of the current one-finger touch: the view the
+    // zoomed picture is panned within, which Mouse mode keeps the cursor inside.
+    let restBox: Rect | null = null;
+
     // The container's rect (never transformed) is only the OUTER box the video is letterboxed
     // within — `object-fit: contain` (or the matching sizing on the canvas) means the canvas
     // element's CSS box fills that outer box, but the pixels it actually draws are narrower or
@@ -204,6 +209,7 @@ export function useRemoteDesktopTouch({
     // screen position instead of the corresponding video pixel whenever there was a letterbox.
     const getVideoRect = (): Rect => {
       const box = container.getBoundingClientRect();
+      restBox = box;
       const canvas = canvasRef.current;
       if (!canvas || !canvas.width || !canvas.height) return box;
       return letterboxedContentRect(box, canvas.width, canvas.height);
@@ -267,6 +273,15 @@ export function useRemoteDesktopTouch({
           cursorRef.current = r.cursor;
           pendingRef.current.cursor = r.cursor;
           pendingRef.current.sendCursorMove = !!r.sendCursorMove;
+          // Zoomed in, the picture slides to keep the cursor in view. Moving the picture does
+          // not move the cursor: its motion comes from the finger's own deltas.
+          if (restBox) {
+            const followed = followCursor(transformRef.current, r.cursor, single.rect, restBox);
+            if (followed !== transformRef.current) {
+              transformRef.current = followed;
+              pendingRef.current.transform = followed;
+            }
+          }
           schedule();
         }
         const drag = single.drag;
