@@ -144,6 +144,11 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `GET    /api/assistant/telegram/legacy-memories`
 - `POST   /api/assistant/telegram/bind`
 
+## /api/card-files
+
+- `GET    /api/card-files/:id/info`
+- `GET    /api/card-files/:id`
+
 ## /api/chat
 
 - `GET    /api/chat/sessions/running`
@@ -929,4 +934,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.46 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.47 -->
