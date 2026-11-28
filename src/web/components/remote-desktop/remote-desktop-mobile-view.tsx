@@ -89,8 +89,13 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
   // an audio toggle the host cannot honour.
   const { caps } = useRemoteDesktopReadiness(false);
   const recorder = useRemoteDesktopRecorder(canvasRef, getAudioTracks);
+  // The key bar's sticky Ctrl/Alt/Win: while one is down, a letter typed on the soft keyboard
+  // is sent as its key code so the host sees a shortcut, not a typed character.
+  const stickyHeldRef = useRef<ReadonlySet<string>>(new Set());
+  const onStickyHeldChange = useCallback((held: ReadonlySet<string>) => { stickyHeldRef.current = held; }, []);
+  const comboHeld = useCallback(() => [...stickyHeldRef.current].some((code) => code !== "ShiftLeft"), []);
   const { inputRef: keyboardInputRef, show: showKeyboard } =
-    useRemoteDesktopVirtualKeyboard(sendMessage, streaming, clipboardSync ? onPasteText : undefined);
+    useRemoteDesktopVirtualKeyboard(sendMessage, streaming, clipboardSync ? onPasteText : undefined, comboHeld);
 
   // Lifts the toolbar/key-bar row above the on-screen keyboard instead of the whole sheet
   // shrinking to make room for it (that was the previous, since-reverted behavior — see
@@ -217,7 +222,11 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          className="absolute size-px opacity-0"
+          // Enter as a key, not "Go"/"Done", which some Android keyboards turn into an editor
+          // action that never reaches the page as a keydown.
+          enterKeyHint="enter"
+          // 16px: iOS zooms the whole page into any focused field with a smaller font.
+          className="absolute size-px text-base opacity-0"
           aria-hidden="true"
           tabIndex={-1}
           onBlur={() => setKeyBarOpen(false)}
@@ -274,6 +283,7 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
           <RemoteDesktopMobileKeyBar
             sendMessage={sendMessage}
             onCopyCombo={clipboardSync ? requestHostClipboard : undefined}
+            onHeldChange={onStickyHeldChange}
           />
         )}
         <RemoteDesktopMobileToolbar

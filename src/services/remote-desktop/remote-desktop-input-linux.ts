@@ -184,9 +184,10 @@ function findScratchKeycode(conn: X11Connection): number | null {
  * whichever finishes first unbinds the keycode the other is still using, so the loser taps a
  * key bound to nothing and types silence, or types the winner's character.
  *
- * The client makes this ordinary rather than exotic: the virtual keyboard sends one `text`
- * message per keystroke and another at `compositionend`, and the slow path is exactly the
- * non-ASCII input — Vietnamese, CJK — where those arrive fastest.
+ * The client makes this ordinary rather than exotic: the virtual keyboard sends a `text`
+ * message for every change to its field, and the slow path is exactly the non-ASCII input —
+ * Vietnamese, CJK — where those arrive fastest. (The session's input queue now orders text
+ * against keys as well; this queue still guards any other caller.)
  */
 let textQueue: Promise<void> = Promise.resolve();
 

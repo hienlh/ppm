@@ -29,6 +29,8 @@ export interface RemoteDesktopMobileKeyBarProps {
   /** Fired after a copy/cut combo — the touch equivalent of the desktop's Ctrl+C cue, since
    *  none of these buttons goes through `use-remote-input-capture`'s key handler. */
   onCopyCombo?: () => void;
+  /** The sticky modifiers now held, so letters typed on the soft keyboard can become a chord. */
+  onHeldChange?: (held: ReadonlySet<string>) => void;
 }
 
 export const MODIFIERS = [
@@ -66,6 +68,11 @@ export const COMBOS: readonly { label: string; codes: readonly string[] }[] = [
   { label: "Ctrl+Alt+Del", codes: ["ControlLeft", "AltLeft", "Delete"] },
 ];
 
+/** Cancelling `mousedown` is what keeps focus where it is; the click still fires. */
+export function keepKeyboardFocus(e: { preventDefault: () => void }): void {
+  e.preventDefault();
+}
+
 function KeyBarButton({
   onClick,
   active,
@@ -94,11 +101,15 @@ function KeyBarButton({
   );
 }
 
-export function RemoteDesktopMobileKeyBar({ sendMessage, onCopyCombo }: RemoteDesktopMobileKeyBarProps) {
+export function RemoteDesktopMobileKeyBar({ sendMessage, onCopyCombo, onHeldChange }: RemoteDesktopMobileKeyBarProps) {
   const [held, setHeld] = useState<ReadonlySet<string>>(new Set());
   const [fnOn, setFnOn] = useState(false);
   const heldRef = useRef(held);
   heldRef.current = held;
+  const onHeldChangeRef = useRef(onHeldChange);
+  onHeldChangeRef.current = onHeldChange;
+  useEffect(() => { onHeldChangeRef.current?.(held); }, [held]);
+  useEffect(() => () => onHeldChangeRef.current?.(new Set()), []);
 
   // Safety net: a modifier left toggled on must not stay logically held on the host once this
   // bar goes away (keyboard dismissed, sheet closed) — same reasoning as `releaseAll` elsewhere.
@@ -135,6 +146,10 @@ export function RemoteDesktopMobileKeyBar({ sendMessage, onCopyCombo }: RemoteDe
     <div
       className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-white/10 bg-black/90 px-2 py-1.5"
       data-testid="remote-desktop-mobile-key-bar"
+      // A tap on a button here would otherwise move focus off the hidden input: the soft
+      // keyboard closes, the input's blur closes this bar, and the bar is gone before the click
+      // reaches the button — the key never sent and every sticky modifier released.
+      onMouseDown={keepKeyboardFocus}
     >
       {MODIFIERS.map((m) => (
         <KeyBarButton key={m.code} onClick={() => toggleModifier(m.code)} active={held.has(m.code)}>
