@@ -29,12 +29,14 @@ interface Props {
   mode: "native" | "transcode";
   /** Seconds from ffprobe (transcode mode); native mode reads it from the element. */
   probeDuration?: number | null;
+  /** Transcode mode: `smooth` holds the stream to ~4 Mbit/s for a slow link (the File Explorer's Smooth choice). */
+  quality?: "smooth";
   /** Native decode failed (e.g. HEVC in .mov) — caller may retry through ffmpeg. */
   onNativeError?: () => void;
 }
 
 /** Custom player shared by both playback paths so rotation, speed and shortcuts behave the same. */
-export function VideoPlayer({ filePath, projectName, mode, probeDuration = null, onNativeError }: Props) {
+export function VideoPlayer({ filePath, projectName, mode, quality, probeDuration = null, onNativeError }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -44,6 +46,8 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
   const wantPlayRef = useRef(true);
   // Set while a drag holds a playing video still, so the release knows to play it again.
   const resumeAfterScrubRef = useRef(false);
+  // How the last press on the picture was made: only a mouse click toggles play (see the stage).
+  const lastPointerRef = useRef<string>("mouse");
   // One id per mounted player: the server replaces (kills) this player's previous
   // ffmpeg job on every seek and stops it when told the player is gone.
   const [sessionId] = useState(newMediaSessionId);
@@ -63,7 +67,7 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
   const [error, setError] = useState<string | null>(null);
 
   const isTranscode = mode === "transcode";
-  const src = isTranscode ? transcodeMediaUrl(filePath, projectName, start, sessionId) : rawMediaUrl(filePath, projectName);
+  const src = isTranscode ? transcodeMediaUrl(filePath, projectName, start, sessionId, quality) : rawMediaUrl(filePath, projectName);
   const duration = isTranscode ? probeDuration : nativeDuration;
   const position = scrub ?? (isTranscode ? start + elapsed : elapsed);
 
@@ -177,8 +181,11 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
     },
     seekBy: (d) => seekTo((isTranscode ? start : 0) + (videoRef.current?.currentTime ?? 0) + d),
     toggleFullscreen: () => {
-      if (document.fullscreenElement) void document.exitFullscreen();
-      else void rootRef.current?.requestFullscreen?.();
+      if (document.fullscreenElement) { void document.exitFullscreen(); return; }
+      const root = rootRef.current;
+      // iPhone Safari has no element full screen, only the video's own (its native player).
+      if (root?.requestFullscreen) void root.requestFullscreen();
+      else (videoRef.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null)?.webkitEnterFullscreen?.();
     },
     toggleMute: () => setMuted((m) => !m),
     volumeBy: (d) => { setMuted(false); setVolume((v) => Math.min(1, Math.max(0, Math.round((v + d) * 100) / 100))); },
@@ -206,8 +213,12 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
       <div
         ref={stageRef}
         className="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden"
-        onClick={(e) => { rootRef.current?.focus(); if (e.detail === 1) actions.togglePlay(); }}
-        onDoubleClick={actions.toggleFullscreen}
+        // A mouse click on the picture plays or pauses, a double click goes full screen. A tap does
+        // neither: iOS reports every tap as `detail` 1, so a double tap played and paused at once.
+        // On a touch screen the control bar's buttons do it.
+        onPointerDown={(e) => { lastPointerRef.current = e.pointerType; }}
+        onClick={(e) => { rootRef.current?.focus(); if (lastPointerRef.current === "mouse" && e.detail === 1) actions.togglePlay(); }}
+        onDoubleClick={() => { if (lastPointerRef.current === "mouse") actions.toggleFullscreen(); }}
       >
         <video
           ref={videoRef}

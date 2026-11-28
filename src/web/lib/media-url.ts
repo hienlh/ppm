@@ -36,10 +36,12 @@ export function rawMediaUrl(filePath: string, projectName: string): string {
  * job before starting this one, so a seek never leaves an orphaned ffmpeg behind —
  * even through proxies (Cloudflare Tunnel) that do not propagate client disconnects.
  */
-export function transcodeMediaUrl(filePath: string, projectName: string, start = 0, sessionId?: string): string {
+export function transcodeMediaUrl(filePath: string, projectName: string, start = 0, sessionId?: string, quality?: "smooth"): string {
   let url = mediaBase("transcode", filePath, projectName);
   if (start > 0) url += `&start=${start.toFixed(3)}`;
   if (sessionId) url += `&sid=${encodeURIComponent(sessionId)}`;
+  // `smooth`: held to ~4 Mbit/s for a phone on a slow link (the "Smooth" choice of a playable file).
+  if (quality) url += `&quality=${quality}`;
   return withToken(url);
 }
 

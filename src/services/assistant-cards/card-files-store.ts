@@ -37,6 +37,9 @@ export const cardFilesDir = (): string => join(getPpmDir(), "card-files");
 export const cardFilePath = (id: string): string => join(cardFilesDir(), `${id}.bin`);
 /** A smaller copy of a video made for Telegram's upload limit, kept beside the original. */
 export const cardFileTelegramCopyPath = (id: string): string => join(cardFilesDir(), `${id}.telegram.mp4`);
+/** The "Smooth" copy of a video (`card-file-smooth.ts`), and the mark saying why there is none. */
+export const cardFileSmoothPath = (id: string): string => join(cardFilesDir(), `${id}.smooth.mp4`);
+export const cardFileSmoothMarkerPath = (id: string): string => join(cardFilesDir(), `${id}.smooth.json`);
 const metaPath = (id: string): string => join(cardFilesDir(), `${id}.json`);
 
 export class CardFileRefused extends Error {}
@@ -144,7 +147,9 @@ export function readCardFileSync(id: string): StoredCardFile | null {
 /** Removes one copy (a report that was not filed); never throws. */
 export async function removeCardFile(id: string): Promise<void> {
   if (!CARD_FILE_ID_RE.test(id)) return;
-  for (const p of [cardFilePath(id), metaPath(id), cardFileTelegramCopyPath(id)]) await rm(p, { force: true }).catch(() => {});
+  for (const p of [cardFilePath(id), metaPath(id), cardFileTelegramCopyPath(id), cardFileSmoothPath(id), cardFileSmoothMarkerPath(id)]) {
+    await rm(p, { force: true }).catch(() => {});
+  }
 }
 
 /** Deletes copies past their age, then the oldest past the total size; never throws. */

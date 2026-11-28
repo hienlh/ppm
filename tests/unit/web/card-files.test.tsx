@@ -27,19 +27,22 @@ const file = (over: Partial<CardFile>): CardFile => ({
 
 let infoStatus = 200;
 let infoFile: CardFile = file({});
+let infoSmooth: "ready" | "pending" | "none" = "none";
 let view: Mounted | null = null;
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   infoStatus = 200;
   infoFile = file({});
+  infoSmooth = "none";
+  localStorage.removeItem("ppm-video-quality");
   localStorage.setItem("ppm-auth-token", "tok");
   useCardFileViewer.setState({ id: null });
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith("/info")) {
       return infoStatus === 200
-        ? Response.json({ ok: true, data: { file: infoFile } })
+        ? Response.json({ ok: true, data: { file: infoFile, smooth: infoSmooth } })
         : Response.json({ ok: false, error: "This file is no longer kept (files stay 30 days)" }, { status: infoStatus });
     }
     return new Response("bytes");
@@ -125,6 +128,43 @@ describe("the viewer (/card-file/<id>)", () => {
     expect(zoom.getAttribute("data-zoom")).toBe("fit");
     await click(zoom.querySelector("img"));
     expect(zoom.getAttribute("data-zoom")).toBe("actual");
+  });
+
+  it("offers Original / Smooth once the smooth copy is ready, switches copy and remembers the choice", async () => {
+    infoSmooth = "ready";
+    localStorage.setItem("ppm-video-quality", "original");
+    view = await mount(createElement(CardFileViewer));
+    await act(async () => { useCardFileViewer.getState().open(ID); });
+    await flush();
+    const src = () => q<HTMLVideoElement>("[data-testid=native-video] video")!.getAttribute("src");
+    expect(src()).toBe(`/api/card-files/${ID}?token=tok`);
+    const smooth = q<HTMLButtonElement>('[data-quality-toggle] [data-quality="smooth"]')!;
+    expect(smooth.className).toContain("h-7");
+    expect(smooth.className).toContain("max-md:h-[26px]");
+    await click(smooth);
+    expect(src()).toBe(`/api/card-files/${ID}?variant=smooth&token=tok`);
+    expect(localStorage.getItem("ppm-video-quality")).toBe("smooth");
+    expect(view.container.textContent).toContain("Smooth copy, about 4 Mbit/s");
+    // Download still gives the original.
+    expect(q("[data-card-file-download]")?.getAttribute("href")).toBe(`/api/card-files/${ID}?download=1&token=tok`);
+  });
+
+  it("plays the original while the smooth copy is being made, Smooth shown as preparing", async () => {
+    infoSmooth = "pending";
+    localStorage.setItem("ppm-video-quality", "smooth");
+    view = await mount(createElement(CardFileViewer));
+    await act(async () => { useCardFileViewer.getState().open(ID); });
+    await flush();
+    expect(q<HTMLVideoElement>("[data-testid=native-video] video")!.getAttribute("src")).toBe(`/api/card-files/${ID}?token=tok`);
+    expect(q('[data-quality-toggle] [data-quality="smooth"]')?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("shows no choice for a video with no smooth copy", async () => {
+    infoSmooth = "none";
+    view = await mount(createElement(CardFileViewer));
+    await act(async () => { useCardFileViewer.getState().open(ID); });
+    await flush();
+    expect(q("[data-quality-toggle]")).toBeNull();
   });
 
   it("says a pruned file is no longer kept", async () => {

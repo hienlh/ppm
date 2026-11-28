@@ -15,6 +15,7 @@ import { withdrawCards } from "./card-withdraw.ts";
 import { cardWithdrawOn, liveWithdrawEnv, openCardsOfManager } from "./card-withdraw-env.ts";
 import { DIGEST_NOT_ASKED, fileReport, reportFieldError, sameReport, type ReportEnv } from "./manager-report-tool.ts";
 import { discardStagedFiles, stageReportFiles, type StageDeps } from "./card-file-staging.ts";
+import { startSmoothCopies } from "./card-file-smooth.ts";
 import { getAssistantSettings } from "../assistant/assistant-settings.service.ts";
 import { createLogger } from "../logger.ts";
 import { readShotSync } from "../design/shots/design-shots.service.ts";
@@ -107,7 +108,8 @@ const reportFileDirs = (): string[] => {
  * `files` are checked and copied first (`card-file-staging.ts`), and a copy no card took is removed.
  */
 export async function reportToAssistantCall(
-  sessionId: string, args: unknown, env: ReportEnv = reportEnv, stageDeps: StageDeps & { allowedDirs?: () => string[] } = {},
+  sessionId: string, args: unknown, env: ReportEnv = reportEnv,
+  stageDeps: StageDeps & { allowedDirs?: () => string[]; startSmooth?: (ids: string[]) => Promise<void> } = {},
 ): Promise<Json> {
   const row = managerChats.forSession(sessionId);
   if (!row) {
@@ -132,7 +134,11 @@ export async function reportToAssistantCall(
     };
   }
   const result = fileReport(callEnv, caller, args);
-  if (staged) await discardStagedFiles(staged.copied.filter((id) => !taken.has(id)));
+  if (staged) {
+    await discardStagedFiles(staged.copied.filter((id) => !taken.has(id)));
+    // A video the card took gets its "Smooth" copy started now, in the background.
+    if (taken.size) void (stageDeps.startSmooth ?? startSmoothCopies)([...taken]).catch(() => {});
+  }
   if (!result.ok) return textResult(result.message, true);
   return textResult(JSON.stringify({
     ...(result.cardId ? { cardId: result.cardId } : {}), kind: result.kind, ...(result.note ? { note: result.note } : {}),

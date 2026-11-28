@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { PREVIEW_MIME_TYPES } from "../../shared/card-files.ts";
-import { cardFileOf, cardFilePath, readCardFile } from "../../services/assistant-cards/card-files-store.ts";
+import { cardFileOf, cardFilePath, cardFileSmoothPath, readCardFile } from "../../services/assistant-cards/card-files-store.ts";
+import { ensureSmoothCopy, smoothRunning, smoothState } from "../../services/assistant-cards/card-file-smooth.ts";
 import { rangeFileResponse } from "../helpers/range-file-response.ts";
 
 /**
@@ -26,7 +27,10 @@ function contentDisposition(kind: "inline" | "attachment", name: string): string
 cardFileRoutes.get("/:id/info", async (c) => {
   const file = await readCardFile(c.req.param("id"));
   if (!file) return c.json({ ok: false, error: "This file is no longer kept (files stay 30 days)" }, 404);
-  return c.json({ ok: true, data: { file: cardFileOf(file), createdAt: file.createdAt } });
+  // A video whose smooth copy was cut off by a restart gets its job started again here.
+  const smooth = smoothState(file);
+  if (smooth === "pending" && !smoothRunning(file.id)) void ensureSmoothCopy(file);
+  return c.json({ ok: true, data: { file: cardFileOf(file), createdAt: file.createdAt, smooth } });
 });
 
 /**
@@ -38,8 +42,20 @@ cardFileRoutes.get("/:id/info", async (c) => {
 cardFileRoutes.get("/:id", async (c) => {
   const file = await readCardFile(c.req.param("id"));
   if (!file) return c.text("Not found", 404);
-  const path = cardFilePath(file.id);
+  // `?variant=smooth`: the video's smooth copy (an MP4 PPM encoded), never a download of it.
+  const smooth = c.req.query("variant") === "smooth";
+  if (smooth && file.kind !== "video") return c.text("Not found", 404);
+  const path = smooth ? cardFileSmoothPath(file.id) : cardFilePath(file.id);
   if (!(await Bun.file(path).exists())) return c.text("Not found", 404);
+  if (smooth) {
+    return rangeFileResponse(path, c.req.raw, {
+      "Content-Disposition": contentDisposition("inline", file.name.replace(/\.[^.]+$/, "") + " (smooth).mp4"),
+      "Cache-Control": "private, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer",
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+    }, "video/mp4");
+  }
   const previewable = (PREVIEW_MIME_TYPES as readonly string[]).includes(file.mime);
   const download = c.req.query("download") === "1" || !previewable;
   return rangeFileResponse(path, c.req.raw, {

@@ -117,7 +117,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
 
   private async refreshFileLinkBase(): Promise<void> {
     try {
-      const ask = this.deps.fileLinkBase ?? (() => notificationLink({ path: "/" }));
+      const ask = this.deps.fileLinkBase ?? (() => notificationLink({ path: "/", project: "", sessionId: "" }));
       this.fileLinkBase = (await ask()).replace(/\/+$/, "");
     } catch (e) {
       log.warn(`no PPM address for card file links: ${(e as Error).message}`);

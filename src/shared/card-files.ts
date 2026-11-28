@@ -41,6 +41,15 @@ export const TELEGRAM_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 export const TELEGRAM_VIDEO_TARGET_BYTES = 47 * 1024 * 1024;
 export const CARD_FILE_ID_RE = /^[0-9a-f]{32}$/;
 
+/**
+ * A card video's "Smooth" copy (~4 Mbit/s, same resolution): `ready` to play, `pending` while it
+ * is made, `none` when there is none (not a video, already light, or it failed).
+ */
+export type CardFileSmoothState = "ready" | "pending" | "none";
+
+/** Which copy a viewer plays: the file as attached, or the smooth copy. */
+export type VideoQuality = "original" | "smooth";
+
 /** The app path of the page that shows one card file: `/card-file/<id>`. */
 export const CARD_FILE_ROUTE = "/card-file";
 

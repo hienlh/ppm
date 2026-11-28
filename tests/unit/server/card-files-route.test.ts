@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cardFileRoutes } from "../../../src/server/routes/card-files.ts";
-import { removeCardFile, storeCardFile, type StoredCardFile } from "../../../src/services/assistant-cards/card-files-store.ts";
+import { cardFileSmoothPath, removeCardFile, storeCardFile, type StoredCardFile } from "../../../src/services/assistant-cards/card-files-store.ts";
 
 let dir: string;
 let pdf: StoredCardFile;
@@ -65,6 +65,27 @@ describe("GET /api/card-files/<id>", () => {
     expect(body.data.file).toMatchObject({ id: pdf.id, name: "spec.pdf", kind: "pdf" });
     expect(body.data.file.projectPath).toBeUndefined();
     expect((await cardFileRoutes.request(`/${"f".repeat(32)}/info`)).status).toBe(404);
+  });
+
+  it("serves a video's smooth copy with Range once it exists, and reports where it stands", async () => {
+    writeFileSync(join(dir, "clip.mp4"), Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypisom"), Buffer.alloc(40)]));
+    const clip = await storeCardFile(join(dir, "clip.mp4"), "clip.mp4", dir);
+    try {
+      // No copy yet: the smooth bytes are not there.
+      expect((await cardFileRoutes.request(`/${clip.id}?variant=smooth`)).status).toBe(404);
+      writeFileSync(cardFileSmoothPath(clip.id), "smooth-bytes-0123456789");
+      const info = await (await cardFileRoutes.request(`/${clip.id}/info`)).json() as { data: { smooth: string } };
+      expect(info.data.smooth).toBe("ready");
+      const part = await cardFileRoutes.request(`/${clip.id}?variant=smooth`, { headers: { Range: "bytes=0-4" } });
+      expect(part.status).toBe(206);
+      expect(part.headers.get("content-type")).toBe("video/mp4");
+      expect(await part.text()).toBe("smoot");
+      expect((await cardFileRoutes.request(`/${pdf.id}?variant=smooth`)).status).toBe(404);
+      const pdfInfo = await (await cardFileRoutes.request(`/${pdf.id}/info`)).json() as { data: { smooth: string } };
+      expect(pdfInfo.data.smooth).toBe("none");
+    } finally {
+      await removeCardFile(clip.id);
+    }
   });
 
   it("answers 404 for an unknown or malformed id", async () => {

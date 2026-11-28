@@ -199,20 +199,20 @@ try {
   assert.match(compressed.text, new RegExp(`compressed from ${clipMb} MB`));
   ok(`Telegram: card lists the files with viewer links; picture and PDF as documents replying to it; the clip as a ${(compressed.file.bytes / 1048576).toFixed(1)} MB two-pass copy "compressed from ${clipMb} MB"`);
 
-  // 4. The card in PPM, desktop.
-  const heights = (loc) => loc.evaluate((el) => [...el.querySelectorAll("[data-card-file-open], [data-card-file-download]")].map((b) => Math.round(b.getBoundingClientRect().height)));
-  await page.goto(`${web}/project/alpha/assistant`);
-  const rows = page.locator("[data-card-files]:visible").first();
-  await rows.waitFor({ timeout: 30000 });
-  await rows.scrollIntoViewIfNeeded();
-  assert.ok((await heights(rows)).every((h) => h === 28), `desktop buttons are 28px (${await heights(rows)})`);
-  await page.waitForTimeout(500);
-  await rows.screenshot({ path: join(shotsDir, "1440-card-files.png") });
-  await page.screenshot({ path: join(shotsDir, "1440-assistant-with-card.png") });
-  await rows.locator('[data-card-file="video"] [data-card-file-open]').click();
-  const play = async (pg, label) => {
-    const video = pg.locator("[data-card-file-viewer] [data-testid=native-video] video");
+  // The smooth copy is made in the background from the moment the card exists.
+  console.log("waiting for the smooth copy…");
+  const smoothNow = async () => (await fx.api(`/api/card-files/${card.payload.files[0].id}/info`)).data.smooth;
+  await until("smooth copy ready", async () => (await smoothNow()) === "ready", 15 * 60_000, 3000);
+  ok("the smooth copy (~4 Mbit/s, same resolution) was made in the background");
+
+  const heights = (loc, sel = "[data-card-file-open], [data-card-file-download]") =>
+    loc.evaluate((el, s) => [...el.querySelectorAll(s)].map((b) => Math.round(b.getBoundingClientRect().height)).filter((h) => h > 0), sel);
+  const videoIn = (pg) => pg.locator("[data-card-file-viewer] [data-testid=native-video] video");
+  /** Plays, seeks to 30 s and pauses the viewer's video; checks which copy it is. */
+  const play = async (pg, label, copy) => {
+    const video = videoIn(pg);
     await video.waitFor({ timeout: 15000 });
+    await until(`${label}: the ${copy} copy`, async () => (await video.getAttribute("src"))?.includes("variant=smooth") === (copy === "smooth"), 15000, 100);
     const attrs = await video.evaluate((v) => ({ controls: v.controls, inline: v.playsInline, preload: v.preload }));
     assert.deepEqual(attrs, { controls: true, inline: true, preload: "metadata" }, `${label}: the browser's own player`);
     await video.evaluate((v) => v.play());
@@ -223,20 +223,40 @@ try {
     assert.equal(await video.evaluate((v) => v.paused), true, `${label}: pauses`);
     return video;
   };
-  await play(page, "1440");
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: join(shotsDir, "1440-viewer-video.png") });
-  await page.locator("[data-card-file-close]").click();
-  ok("1440: card rows with 28 px buttons; Play opens the viewer; the original plays, seeks to 30 s and pauses in the browser's own player");
+  const toggleHeights = (pg) => heights(pg.locator("[data-quality-toggle]:visible").first(), "[data-quality]");
 
-  // 5. A 390 px phone opening the Telegram link.
+  // 4. The card in PPM, desktop: Original by default, Smooth on request.
+  await page.goto(`${web}/project/alpha/assistant`);
+  const rows = page.locator("[data-card-files]:visible").first();
+  await rows.waitFor({ timeout: 30000 });
+  await rows.scrollIntoViewIfNeeded();
+  assert.ok((await heights(rows)).every((h) => h === 28), `desktop buttons are 28px (${await heights(rows)})`);
+  await page.waitForTimeout(500);
+  await rows.screenshot({ path: join(shotsDir, "1440-card-files.png") });
+  await page.screenshot({ path: join(shotsDir, "1440-assistant-with-card.png") });
+  await rows.locator('[data-card-file="video"] [data-card-file-open]').click();
+  await play(page, "1440 original", "original");
+  assert.ok((await toggleHeights(page)).every((h) => h === 28), `1440: Original / Smooth is 28px (${await toggleHeights(page)})`);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: join(shotsDir, "1440-viewer-original.png") });
+  await page.locator('[data-quality-toggle] [data-quality="smooth"]').click();
+  await play(page, "1440 smooth", "smooth");
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: join(shotsDir, "1440-viewer-smooth.png") });
+  // The choice is this device's: put it back for the rest of the run.
+  await page.locator('[data-quality-toggle] [data-quality="original"]').click();
+  await page.locator("[data-card-file-close]").click();
+  ok("1440: card rows 28 px; the viewer opens on Original, Smooth switches copy; both play, seek to 30 s and pause; Original / Smooth is 28 px");
+
+  // 5. A 390 px phone opening the Telegram link: Smooth by default, Original on request.
   const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, serviceWorkers: "block" });
   await phoneCtx.addInitScript(onboardingDone);
   const mob = await phoneCtx.newPage();
   await mob.goto(`${web}/`);
   await mob.evaluate((t) => localStorage.setItem("ppm-auth-token", t), await page.evaluate(() => localStorage.getItem("ppm-auth-token") ?? ""));
   await mob.goto(`${web}${link}`);
-  const mobVideo = await play(mob, "390");
+  const mobVideo = await play(mob, "390 smooth", "smooth");
+  assert.ok((await toggleHeights(mob)).every((h) => h === 26), `390: Original / Smooth is 26px (${await toggleHeights(mob)})`);
   // One tap on the picture: at most one play/pause change (the old player toggled on every tap).
   await mobVideo.evaluate((v) => { window.__changes = 0; v.addEventListener("play", () => window.__changes++); v.addEventListener("pause", () => window.__changes++); });
   const box = await mobVideo.boundingBox();
@@ -244,7 +264,13 @@ try {
   await mob.waitForTimeout(800);
   const changes = await mob.evaluate(() => window.__changes);
   assert.ok(changes <= 1, `one tap changed play/pause ${changes} times`);
-  await mob.screenshot({ path: join(shotsDir, "390-viewer-video-from-telegram-link.png") });
+  await mob.screenshot({ path: join(shotsDir, "390-viewer-smooth-from-telegram-link.png") });
+  await mob.locator('[data-quality-toggle] [data-quality="original"]').tap();
+  await play(mob, "390 original", "original");
+  await mob.waitForTimeout(300);
+  await mob.screenshot({ path: join(shotsDir, "390-viewer-original.png") });
+  assert.equal(await mob.evaluate(() => localStorage.getItem("ppm-video-quality")), "original", "the phone remembers its choice");
+  await mob.locator('[data-quality-toggle] [data-quality="smooth"]').tap();
   await mob.locator("[data-card-file-close]").tap();
   await mob.goto(`${web}/project/alpha/assistant`);
   const mobRows = mob.locator("[data-card-files]:visible").first();
@@ -258,24 +284,46 @@ try {
   await mob.waitForTimeout(400);
   await mob.screenshot({ path: join(shotsDir, "390-viewer-picture.png") });
   await mob.locator("[data-card-file-close]").tap();
-  ok(`390: the Telegram link opens the viewer; plays, seeks, pauses; one tap = ${changes} play/pause change; card buttons 26 px; the picture opens fitted`);
+  ok(`390: the Telegram link opens the viewer on Smooth, Original switches; both play, seek, pause; one tap = ${changes} play/pause change; the choice is remembered; buttons 26 px`);
 
-  // 6. The File Explorer plays the same clip in the browser's own player.
-  await mob.goto(`${web}/files?path=${encodeURIComponent(clip)}`);
+  // 6. The File Explorer: Original in the browser's own player, Smooth through the live transcode.
   const name = clip.split(/[\\/]/).pop();
+  const explorerVideo = async (pg, label, copy) => {
+    const pane = pg.locator(`[data-video-preview="${copy}"]:visible`).first();
+    await pane.waitFor({ timeout: 60000 });
+    const video = pane.locator("video").first();
+    if (copy === "smooth") await until(`${label}: transcode`, async () => /quality=smooth/.test(await video.evaluate((v) => v.currentSrc)), 30000, 200);
+    else assert.equal(await pane.locator("[data-testid=native-video]").count(), 1, `${label}: the browser's own player`);
+    if (copy === "original") await video.evaluate((v) => v.play());
+    await until(`${label}: plays`, () => video.evaluate((v) => !v.paused && v.videoWidth > 0 && v.currentTime > 1), 60000, 300);
+    await video.evaluate((v) => v.pause());
+    assert.equal(await video.evaluate((v) => v.paused), true, `${label}: pauses`);
+  };
+  // Phone: starts on Smooth (the choice made above).
+  await mob.goto(`${web}/files?path=${encodeURIComponent(clip)}`);
   const entry = mob.getByText(name, { exact: true }).first();
   await entry.waitFor({ timeout: 30000 });
   await entry.tap();
-  const explorerVideo = mob.locator("[data-testid=native-video] video:visible").first();
-  await explorerVideo.waitFor({ timeout: 30000 });
-  assert.equal(await mob.locator("[data-testid=video-player]").count(), 0, "the hand-drawn player is not used for an mp4");
-  await explorerVideo.evaluate((v) => v.play());
-  await until("explorer: plays", () => explorerVideo.evaluate((v) => !v.paused && v.currentTime > 1), 30000, 200);
-  await explorerVideo.evaluate((v) => v.pause());
+  await explorerVideo(mob, "390 explorer smooth", "smooth");
   await mob.waitForTimeout(300);
-  await mob.screenshot({ path: join(shotsDir, "390-explorer-native-player.png") });
-  ok("390: the File Explorer opens the clip in the browser's own player, which plays");
-
+  await mob.screenshot({ path: join(shotsDir, "390-explorer-smooth.png") });
+  await mob.locator('[data-quality-toggle]:visible [data-quality="original"]').first().tap();
+  await explorerVideo(mob, "390 explorer original", "original");
+  await mob.waitForTimeout(300);
+  await mob.screenshot({ path: join(shotsDir, "390-explorer-original.png") });
+  // Desktop: starts on Original.
+  await page.goto(`${web}/files?path=${encodeURIComponent(clip)}`);
+  const deskEntry = page.getByText(name, { exact: true }).first();
+  await deskEntry.waitFor({ timeout: 30000 });
+  await deskEntry.dblclick();
+  await explorerVideo(page, "1440 explorer original", "original");
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: join(shotsDir, "1440-explorer-original.png") });
+  await page.locator('[data-quality-toggle]:visible [data-quality="smooth"]').first().click();
+  await explorerVideo(page, "1440 explorer smooth", "smooth");
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: join(shotsDir, "1440-explorer-smooth.png") });
+  ok("File Explorer at 390 and 1440: Original plays in the browser's own player, Smooth plays through the ~4 Mbit/s transcode");
   // The Settings section where the folder is listed.
   await page.goto(`${web}/?openSettings=assistant`);
   await page.locator('[data-testid="assistant-settings-tab-managers"]:visible').first().click();

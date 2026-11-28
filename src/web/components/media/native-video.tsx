@@ -15,12 +15,16 @@ import { useEffect, useRef } from "react";
  * pressed. The element is keyed by `src`, so a new file gets a fresh element rather than one that
  * keeps the old position.
  */
-export function NativeVideo({ src, autoPlay = false, onError, label }: {
+export function NativeVideo({ src, autoPlay = false, onError, label, startAt, onProgress }: {
   src: string;
   autoPlay?: boolean;
   /** The browser cannot decode it (HEVC in a .mov, say); the caller may try another way. */
   onError?: () => void;
   label?: string;
+  /** Seconds to start at: where the other copy was when the viewer switched Original / Smooth. */
+  startAt?: number;
+  /** Where playback is and whether it plays, so a switch of copy can carry on from there. */
+  onProgress?: (time: number, playing: boolean) => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
 
@@ -50,6 +54,10 @@ export function NativeVideo({ src, autoPlay = false, onError, label }: {
         aria-label={label}
         className="max-h-full max-w-full"
         onError={onError}
+        onLoadedMetadata={(e) => { if (startAt && startAt > 0) e.currentTarget.currentTime = startAt; }}
+        onTimeUpdate={(e) => onProgress?.(e.currentTarget.currentTime, !e.currentTarget.paused)}
+        onPause={(e) => onProgress?.(e.currentTarget.currentTime, false)}
+        onPlay={(e) => onProgress?.(e.currentTarget.currentTime, true)}
       />
     </div>
   );

@@ -79,6 +79,24 @@ export function encoderArgs(encoder: string): string[] {
   }
 }
 
+/**
+ * The same encoders held to a bitrate instead of a quality: the File Explorer's "Smooth" stream,
+ * for a phone on a link that cannot carry the original. `kbps` is the average, with 25% of
+ * headroom for a busy scene; a hardware encoder (NVENC, QSV, AMF, VideoToolbox, VAAPI) keeps the
+ * encode real time on the PPM host.
+ */
+export function encoderArgsAtBitrate(encoder: string, kbps: number): string[] {
+  const avg = `${kbps}k`, max = `${Math.round(kbps * 1.25)}k`, buf = `${kbps * 2}k`;
+  switch (encoder) {
+    case "h264_nvenc": return ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-b:v", avg, "-maxrate", max, "-bufsize", buf];
+    case "h264_qsv": return ["-c:v", "h264_qsv", "-preset", "veryfast", "-b:v", avg, "-maxrate", max, "-bufsize", buf];
+    case "h264_amf": return ["-c:v", "h264_amf", "-quality", "speed", "-rc", "vbr_peak", "-b:v", avg, "-maxrate", max, "-bufsize", buf];
+    case "h264_videotoolbox": return ["-c:v", "h264_videotoolbox", "-b:v", avg, "-maxrate", max, "-realtime", "1"];
+    case "h264_vaapi": return ["-c:v", "h264_vaapi", "-b:v", avg, "-maxrate", max];
+    default: return ["-c:v", "libx264", "-preset", "veryfast", "-b:v", avg, "-maxrate", max, "-bufsize", buf];
+  }
+}
+
 async function encoderWorks(ffmpeg: string, encoder: string): Promise<boolean> {
   try {
     const proc = Bun.spawn(

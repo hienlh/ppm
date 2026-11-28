@@ -16,7 +16,7 @@
  * every seek's ffmpeg running to the end of the file and exhausted the job slots.
  * Only the job's own PID is ever killed — never a blanket kill by image name.
  */
-import { encoderArgs, getFfmpegCapabilities } from "./ffmpeg-capabilities.ts";
+import { encoderArgs, encoderArgsAtBitrate, getFfmpegCapabilities } from "./ffmpeg-capabilities.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("transcode");
@@ -62,10 +62,15 @@ export interface TranscodeOptions {
   signal?: AbortSignal;
   /** Player instance id; a new job for the same id replaces (kills) the previous one. */
   sessionId?: string;
+  /** `smooth`: held to {@link SMOOTH_TRANSCODE_KBPS} for a slow link, rather than to a quality. */
+  quality?: "default" | "smooth";
 }
 
 /** Build the ffmpeg argv; pure so tests can assert on it without spawning. */
-export function buildTranscodeArgs(ffmpeg: string, absPath: string, encoder: string, start = 0): string[] {
+/** The `Smooth` stream's picture bitrate (kbps): watchable over a phone link that cannot carry the original. */
+export const SMOOTH_TRANSCODE_KBPS = 4000;
+
+export function buildTranscodeArgs(ffmpeg: string, absPath: string, encoder: string, start = 0, quality: "default" | "smooth" = "default"): string[] {
   return [
     ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
     ...(start > 0 ? ["-ss", start.toFixed(3)] : []),
@@ -74,7 +79,7 @@ export function buildTranscodeArgs(ffmpeg: string, absPath: string, encoder: str
     "-map", "0:v:0", "-map", "0:a:0?",
     // Browsers only decode 4:2:0 H.264; cap at 1080p keeping even dimensions.
     "-vf", "scale='min(1920,iw)':-2", "-pix_fmt", "yuv420p",
-    ...encoderArgs(encoder),
+    ...(quality === "smooth" ? encoderArgsAtBitrate(encoder, SMOOTH_TRANSCODE_KBPS) : encoderArgs(encoder)),
     // 2s keyframe interval at 30fps → fragments start quickly after a seek.
     "-g", "60",
     "-c:a", "aac", "-b:a", "128k", "-ac", "2",
@@ -96,13 +101,13 @@ export async function startTranscode(absPath: string, opts: TranscodeOptions = {
   if (opts.sessionId) stopTranscode(opts.sessionId);
   if (active >= MAX_CONCURRENT_TRANSCODES) throw new TranscodeBusyError();
 
-  const proc = Bun.spawn(buildTranscodeArgs(caps.ffmpeg, absPath, caps.encoder, opts.start), {
+  const proc = Bun.spawn(buildTranscodeArgs(caps.ffmpeg, absPath, caps.encoder, opts.start, opts.quality), {
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
   });
   active++;
-  log.info(`ffmpeg pid=${proc.pid} transcoding ${absPath} with ${caps.encoder}${opts.start ? ` from ${opts.start}s` : ""} (${active} running)`);
+  log.info(`ffmpeg pid=${proc.pid} transcoding ${absPath} with ${caps.encoder}${opts.quality === "smooth" ? ` (smooth, ${SMOOTH_TRANSCODE_KBPS} kbps)` : ""}${opts.start ? ` from ${opts.start}s` : ""} (${active} running)`);
   let finished = false;
   const finish = () => {
     if (finished) return;

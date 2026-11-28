@@ -111,6 +111,56 @@ export function compressVideoForTelegram(input: string, output: string): Promise
   return next;
 }
 
+/** The "Smooth" copy's picture bitrate: watchable over a phone link that cannot carry the original. */
+export const SMOOTH_VIDEO_KBPS = 4000;
+/** A video already this light (picture and sound together) gets no smooth copy: it would not be smoother. */
+export const SMOOTH_SKIP_TOTAL_KBPS = 5500;
+
+export type SmoothResult = CompressResult | { ok: false; skipped: true; why: string };
+
+/**
+ * Writes the "Smooth" copy of a card's video at `output`: two-pass H.264 at
+ * {@link SMOOTH_VIDEO_KBPS}, same resolution and frame rate, AAC 128 kbps, faststart, so it plays
+ * and seeks with Range like the original. A video already at or under {@link SMOOTH_SKIP_TOTAL_KBPS}
+ * is skipped. Runs in the same one-at-a-time queue as the Telegram compression. Never throws.
+ */
+export function encodeSmoothCopy(input: string, output: string): Promise<SmoothResult> {
+  const next = chain.then(() => smoothOnce(input, output), () => smoothOnce(input, output));
+  chain = next.catch(() => {});
+  return next;
+}
+
+async function smoothOnce(input: string, output: string): Promise<SmoothResult> {
+  const ffmpeg = findFfmpegBinary("ffmpeg");
+  if (!ffmpeg) return { ok: false, why: "ffmpeg is not installed on the PPM host" };
+  const probe = await run([ffmpeg, "-hide_banner", "-nostdin", "-i", input], PROBE_TIMEOUT_MS);
+  const seconds = parseDurationSeconds(probe.stderr);
+  if (!seconds) return { ok: false, why: "ffmpeg could not read the video's length" };
+  const totalKbps = ((await stat(input)).size * 8) / seconds / 1000;
+  if (totalKbps <= SMOOTH_SKIP_TOTAL_KBPS) return { ok: false, skipped: true, why: "the original is already light enough to play smoothly" };
+  const audio = hasAudioStream(probe.stderr);
+  const part = `${output}.part.mp4`;
+  const passlog = `${output}.passlog`;
+  try {
+    const plan = { videoKbps: SMOOTH_VIDEO_KBPS, audioKbps: audio ? 128 : 0 };
+    const timeout = Math.min(60 * 60_000, Math.max(10 * 60_000, seconds * 4000));
+    const started = Date.now();
+    for (const cmd of twoPassArgs(ffmpeg, input, part, passlog, plan)) {
+      const res = await run(cmd, timeout);
+      if (res.code !== 0) return { ok: false, why: `ffmpeg could not encode it (${lastLine(res.stderr, res.code)})` };
+    }
+    const size = (await stat(part)).size;
+    await rename(part, output);
+    log.info(`card video smooth copy made in ${Math.round((Date.now() - started) / 1000)}s: ${(size / 1024 / 1024).toFixed(1)} MB at ${SMOOTH_VIDEO_KBPS} kbps (was ${Math.round(totalKbps)} kbps)`);
+    return { ok: true, size };
+  } catch (e) {
+    return { ok: false, why: `encoding failed (${(e as Error).message})` };
+  } finally {
+    await rm(part, { force: true }).catch(() => {});
+    await removePassLogs(passlog);
+  }
+}
+
 /** Removes the pass logs x264 leaves (`<passlog>-0.log`, `-0.log.mbtree`, …). */
 async function removePassLogs(passlog: string): Promise<void> {
   const names = await readdir(dirname(passlog)).catch(() => [] as string[]);
