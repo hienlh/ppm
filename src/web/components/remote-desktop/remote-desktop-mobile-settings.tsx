@@ -12,7 +12,9 @@
  */
 import { useMemo } from "react";
 import { Circle, Clipboard, EyeOff, Gauge, Image, MousePointer2, Square, Volume2 } from "@/lib/icons";
+import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 import { cn } from "@/lib/utils";
+import { CURSOR_SIZES, type RemoteDesktopCursorSize } from "./remote-desktop-cursor-size";
 import { fitLocalMode, localScreenSize, resolutionChoices } from "./remote-desktop-resolution-list";
 import type { HostMode } from "./use-remote-desktop-readiness";
 
@@ -21,6 +23,9 @@ export interface RemoteDesktopMobileSettingsProps {
   onToggleStats: () => void;
   showCursor: boolean;
   onSetShowCursor: (show: boolean) => void;
+  /** Size of the virtual cursor drawn in Mouse mode. */
+  cursorSize: RemoteDesktopCursorSize;
+  onSetCursorSize: (size: RemoteDesktopCursorSize) => void;
   clipboardEnabled: boolean;
   onSetClipboardEnabled: (enabled: boolean) => void;
   audioOn: boolean;
@@ -93,7 +98,7 @@ function SettingRow({
 }
 
 export function RemoteDesktopMobileSettings({
-  statsVisible, onToggleStats, showCursor, onSetShowCursor,
+  statsVisible, onToggleStats, showCursor, onSetShowCursor, cursorSize, onSetCursorSize,
   clipboardEnabled, onSetClipboardEnabled,
   audioOn, audioReason, onSetAudioOn,
   privacyOn, privacyReason, onSetPrivacyOn,
@@ -126,6 +131,28 @@ export function RemoteDesktopMobileSettings({
         onToggle={() => onSetShowCursor(!showCursor)}
         testId="remote-desktop-mobile-cursor-toggle"
       />
+      <div className="flex items-center gap-3 px-3 py-1.5 text-white/80" data-testid="remote-desktop-mobile-cursor-size">
+        <span className="min-w-0 flex-1 truncate text-xs">Pointer size (Mouse mode)</span>
+        <div className="flex shrink-0 gap-1" role="radiogroup" aria-label="Pointer size">
+          {CURSOR_SIZES.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              role="radio"
+              aria-checked={cursorSize === s.id}
+              onClick={() => onSetCursorSize(s.id)}
+              data-testid={`remote-desktop-mobile-cursor-size-${s.id}`}
+              className={cn(
+                TEXT_CONTROL_HEIGHT,
+                "rounded-full px-2.5 text-[11.5px] max-md:px-[7px]",
+                cursorSize === s.id ? "bg-white/25 text-white" : "bg-white/10 text-white/70 active:bg-white/20",
+              )}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <SettingRow
         icon={<Clipboard className="size-4" />}
         label="Sync clipboard"

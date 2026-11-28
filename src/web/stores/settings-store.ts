@@ -4,6 +4,7 @@ import { SETTINGS_CLIENT_ID } from "@/lib/settings-client-id";
 import { SETTINGS_CLIENT_HEADER } from "../../shared/settings-events";
 import type { PpmTheme, PpmThemeMode, PpmThemeStyle } from "@/theme/types";
 import { parseQualityChoice, type QualityChoice } from "../../shared/remote-desktop-quality";
+import { parseCursorSize, type RemoteDesktopCursorSize } from "../components/remote-desktop/remote-desktop-cursor-size";
 import { isUnlinkMap, updateUnlinks, type UnlinkMap } from "../../shared/linked-session-unlinks";
 import {
   DEFAULT_DB_EXPLORER, DEFAULT_DB_EXPLORER_VIEW, sanitizeDbExplorer, sanitizeDbExplorerView,
@@ -160,6 +161,8 @@ interface SettingsState {
   /** Two-way clipboard sync. Off means Ctrl+V is forwarded to the host as a plain keystroke,
    *  so the host pastes its *own* clipboard and nothing crosses the connection. */
   remoteDesktopClipboardSync: boolean;
+  /** Size of the phone viewer's virtual cursor in Mouse mode. */
+  remoteDesktopCursorSize: RemoteDesktopCursorSize;
   /**
    * H.264 encoder to ask the host for, or null to take the host's own first choice.
    *
@@ -178,6 +181,7 @@ interface SettingsState {
   setRemoteDesktopCustomQualityMore: (more: boolean) => void;
   setRemoteDesktopShowCursor: (show: boolean) => void;
   setRemoteDesktopClipboardSync: (enabled: boolean) => void;
+  setRemoteDesktopCursorSize: (size: RemoteDesktopCursorSize) => void;
   setRemoteDesktopCodec: (encoder: string | null) => void;
   setThemeStyle: (style: PpmThemeStyle) => void;
   setThemeMode: (mode: PpmThemeMode) => void;
@@ -266,6 +270,7 @@ interface PersistedSettings {
   remoteDesktopCustomQualityMore?: boolean;
   remoteDesktopShowCursor?: boolean;
   remoteDesktopClipboardSync?: boolean;
+  remoteDesktopCursorSize?: RemoteDesktopCursorSize;
   remoteDesktopCodec?: string | null;
   sysmonTempUnit?: TempUnit;
   sysmonKernelTimes?: boolean;
@@ -476,6 +481,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   remoteDesktopCustomFps: clampCustomFps(_initial.remoteDesktopCustomFps),
   remoteDesktopShowCursor: _initial.remoteDesktopShowCursor ?? true,
   remoteDesktopClipboardSync: _initial.remoteDesktopClipboardSync ?? true,
+  remoteDesktopCursorSize: parseCursorSize(_initial.remoteDesktopCursorSize),
   remoteDesktopCodec: typeof _initial.remoteDesktopCodec === "string" ? _initial.remoteDesktopCodec : null,
   mobileWordWrap: _initial.mobileWordWrap ?? true,
   lspEnabled: _initial.lspEnabled ?? false,
@@ -683,6 +689,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setRemoteDesktopClipboardSync: (enabled) => {
     persistDevicePref({ remoteDesktopClipboardSync: enabled });
     set({ remoteDesktopClipboardSync: enabled });
+  },
+
+  setRemoteDesktopCursorSize: (size) => {
+    persistDevicePref({ remoteDesktopCursorSize: size });
+    set({ remoteDesktopCursorSize: size });
   },
 
   setRemoteDesktopCodec: (encoder) => {

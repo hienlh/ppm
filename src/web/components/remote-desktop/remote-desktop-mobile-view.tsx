@@ -25,6 +25,7 @@ import { saveCanvasScreenshot } from "./remote-desktop-recording";
 import { RemoteDesktopInputBlockedBar } from "./remote-desktop-input-blocked-bar";
 import { RemoteDesktopStatsOverlay } from "./remote-desktop-stats-overlay";
 import { letterboxedContentRect } from "./remote-desktop-coords";
+import { CURSOR_SIZE_PX } from "./remote-desktop-cursor-size";
 import { useRemoteDesktopDisplayChoice } from "./use-remote-desktop-display-choice";
 import { RemoteDesktopClipboardNotice } from "./remote-desktop-clipboard-notice";
 import { useRemoteDesktopReadiness } from "./use-remote-desktop-readiness";
@@ -53,6 +54,9 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
   const clipboardSync = useSettingsStore((s) => s.remoteDesktopClipboardSync);
   const setClipboardSync = useSettingsStore((s) => s.setRemoteDesktopClipboardSync);
   const qualityChoice = useSettingsStore((st) => st.remoteDesktopQuality);
+  const cursorSize = useSettingsStore((st) => st.remoteDesktopCursorSize);
+  const setCursorSize = useSettingsStore((st) => st.setRemoteDesktopCursorSize);
+  const cursorPx = CURSOR_SIZE_PX[cursorSize];
   const streaming = connState === "streaming";
   // A picture that keeps coming is what confirms the Windows safety net (the gate does the call).
   usePictureProof(streaming, getFrameCount);
@@ -164,8 +168,8 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
               style={{
                 left: cursorLeft,
                 top: cursorTop,
-                width: 14,
-                height: 14,
+                width: cursorPx,
+                height: cursorPx,
                 // Counter-scale by 1/zoom: this marker lives inside the zoomed stage, so
                 // without this it would grow right along with the video when zoomed in.
                 transform: `translate(-50%, -50%) scale(${1 / transform.scale})`,
@@ -244,6 +248,8 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
             onToggleStats={toggleStats}
             showCursor={showCursor}
             onSetShowCursor={setShowCursor}
+            cursorSize={cursorSize}
+            onSetCursorSize={setCursorSize}
             clipboardEnabled={clipboardSync}
             onSetClipboardEnabled={setClipboardSync}
             audioOn={audioOn}
