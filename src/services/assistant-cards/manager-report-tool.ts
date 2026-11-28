@@ -118,7 +118,15 @@ export const WITHDRAW_OFF_NOTE = "The user has not turned on card withdrawal (Se
 /** The longest task reference a report takes. */
 export const REPORT_TASK_MAX = 60;
 
-export const DIGEST_TAKEN = "Your answer is in the morning digest PPM is putting together. A second digest answer replaces this one.";
+/** Told to a manager whose digest answer was taken: how many lines went in, so a slip is visible. */
+export function digestTakenNote(count: number): string {
+  const lines = count === 0 ? "Your answer, with no items, is" : count === 1 ? "Your 1 item is" : `Your ${count} items are`;
+  return `${lines} in the morning digest PPM is putting together. A second digest answer replaces this one.`;
+}
+export const DIGEST_ITEMS_REQUIRED = "A digest needs `items`: one short line each, at most "
+  + `${DIGEST_ITEMS_MAX}. Pass \`items: []\` if there is nothing to report.`;
+export const DIGEST_BODY_REFUSED = "`body` does not go with digest: only `items` reach the digest card. Put each line "
+  + `in \`items\` (at most ${DIGEST_ITEMS_MAX}, ${DIGEST_ITEM_MAX} characters each) and call again without \`body\`.`;
 export const DIGEST_NOT_ASKED = "No morning digest was asked of this chat; use done, failed, needs_decision or urgent.";
 /** Told to a manager whose report is word for word one still open on the user's card. */
 export const SAME_REPORT_NOTE = "The same report is already on the user's card, still open; it was not filed again.";
@@ -209,6 +217,13 @@ function fieldError(args: Record<string, unknown>): string | null {
     if (args.kind === "digest") return "`task` does not go with digest.";
     if (typeof args.task !== "string" || !args.task.trim() || args.task.length > REPORT_TASK_MAX) return "`task` is a task of this project, like `ppm/76` or `#76`.";
   }
+  if (args.kind === "digest") {
+    // A digest is its `items` and nothing else: a `body` here used to be accepted and dropped, so a
+    // manager that wrote its whole status into `body` was told it was in the digest while the card
+    // showed none of it.
+    if (args.body !== undefined) return DIGEST_BODY_REFUSED;
+    if (args.items === undefined) return DIGEST_ITEMS_REQUIRED;
+  }
   if (args.items !== undefined) {
     if (args.kind !== "digest") return "`items` go only with digest.";
     if (!Array.isArray(args.items) || args.items.length > DIGEST_ITEMS_MAX) return `\`items\` is a list of at most ${DIGEST_ITEMS_MAX}.`;
@@ -290,7 +305,7 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
   if (requested === "digest") {
     const items = Array.isArray(args.items) ? (args.items as string[]).map((i) => cleanCardBody(i, DIGEST_ITEM_MAX)).filter(Boolean) : [];
     const taken = env.digestAnswer(caller.sessionId, items);
-    return taken.ok ? { ok: true, kind: "digest", note: DIGEST_TAKEN } : refuse(caller, "digest", "digest not taken", taken.message);
+    return taken.ok ? { ok: true, kind: "digest", note: digestTakenNote(items.length) } : refuse(caller, "digest", "digest not taken", taken.message);
   }
   const withdrawing = args.supersedes !== undefined || args.task !== undefined;
   const withdrawOn = env.withdrawOn?.() === true;
@@ -457,7 +472,7 @@ export function reportToolDefinition() {
         title: { type: "string", description: `One line, at most ${REPORT_TITLE_MAX} characters.` },
         body: {
           type: "string",
-          description: `Details, at most ${REPORT_BODY_MAX} characters, in Markdown (no HTML): short sections, \`-\` bullets, `
+          description: `Not with digest. Details, at most ${REPORT_BODY_MAX} characters, in Markdown (no HTML): short sections, \`-\` bullets, `
             + "**bold** for what matters, `code` for file names, commands and ids. About six lines, one action per card. "
             + "Never list choices here (\"(1)… (2)…\", \"A) … B) …\"): put them in `options`.",
         },
@@ -491,7 +506,7 @@ export function reportToolDefinition() {
             additionalProperties: false,
           },
         },
-        items: { type: "array", items: { type: "string" }, maxItems: DIGEST_ITEMS_MAX, description: "digest only: one line each." },
+        items: { type: "array", items: { type: "string" }, maxItems: DIGEST_ITEMS_MAX, description: "digest only, and required there: one line each. The digest card shows these and nothing else." },
         chat: {
           type: "string",
           description: "needs_decision and urgent only: the session id of the chat this decision is about, when it is one "

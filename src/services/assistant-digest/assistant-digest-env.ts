@@ -35,7 +35,8 @@ const log = createLogger("assistant-digest");
 
 /** What every manager chat is asked: fixed PPM text, never anything a model wrote. */
 export const DIGEST_ASK_TEXT = "Morning digest. When you are free, call `report_to_assistant` with kind `digest` and at most 12 short "
-  + "items: what is waiting on the user, what is running, what finished since the last digest. Do not start other work for this.";
+  + "`items`, one line each (the card shows only `items`, so leave `body` out): what is waiting on the user, what is "
+  + "running, what finished since the last digest. Do not start other work for this.";
 
 /**
  * Added to the ask while the user has card withdrawal on: fixed text too, so the manager looks up

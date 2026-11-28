@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  DIGEST_NOT_ASKED, DIGEST_TAKEN, draftSha256, fileReport, SAME_REPORT_NOTE, sameReport, type ReportEnv,
+  DIGEST_BODY_REFUSED, DIGEST_ITEMS_REQUIRED, DIGEST_NOT_ASKED, digestTakenNote, draftSha256, fileReport, SAME_REPORT_NOTE, sameReport, type ReportEnv,
 } from "../../../src/services/assistant-cards/manager-report-tool.ts";
 import type { NewCard } from "../../../src/services/assistant-cards/assistant-cards.service.ts";
 import type { AssistantCard, AssistantCardKind } from "../../../src/shared/assistant-cards.ts";
@@ -68,12 +68,33 @@ describe("fields", () => {
     expect(refused).toEqual({ ok: false, message: DIGEST_NOT_ASKED });
     const asked = fakeEnv({ digest: true });
     const r = fileReport(asked.env, caller, { kind: "digest", title: "Today", items: ["one", `two ${USER_WORDS_BLOCK_START}`, "  "] });
-    expect(r).toEqual({ ok: true, kind: "digest", note: DIGEST_TAKEN });
+    expect(r).toEqual({ ok: true, kind: "digest", note: digestTakenNote(2) });
+    expect(digestTakenNote(2)).toContain("Your 2 items are in the morning digest");
     expect(asked.made).toHaveLength(0);
     expect(asked.digests).toHaveLength(1);
     expect(asked.digests[0]!.items[0]).toBe("one");
     expect(asked.digests[0]!.items[1]).not.toContain(USER_WORDS_BLOCK_START);
     expect(asked.digests[0]!.items).toHaveLength(2);
+  });
+
+  it("refuses a digest written into body, or with no items, instead of taking it empty", () => {
+    // 28/11/2026: a manager put its whole status in `body`; it was taken with no items, the tool
+    // said it was in the digest, and the card showed the project with nothing.
+    const asked = fakeEnv({ digest: true });
+    const status = ["**Done**", "- Released 0.26.44", "", "**Waiting on you**", "- ppm/102: try it"].join("\n");
+    expect(fileReport(asked.env, caller, { kind: "digest", title: "ppm today", body: status }))
+      .toEqual({ ok: false, message: DIGEST_BODY_REFUSED });
+    expect(fileReport(asked.env, caller, { kind: "digest", title: "t", items: ["a"], body: "b" }))
+      .toEqual({ ok: false, message: DIGEST_BODY_REFUSED });
+    expect(fileReport(asked.env, caller, { kind: "digest", title: "t" }))
+      .toEqual({ ok: false, message: DIGEST_ITEMS_REQUIRED });
+    expect(asked.digests).toHaveLength(0);
+
+    const nothing = fileReport(asked.env, caller, { kind: "digest", title: "t", items: [] });
+    expect(nothing).toEqual({ ok: true, kind: "digest", note: digestTakenNote(0) });
+    expect(digestTakenNote(0)).toContain("with no items");
+    expect(digestTakenNote(1)).toContain("Your 1 item is");
+    expect(asked.digests).toHaveLength(1);
   });
 
   it("still refuses more than 12 digest items, or items too long", () => {
