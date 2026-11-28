@@ -24,9 +24,13 @@
  *   while writing it (every version Telegram confirmed is kept, per desk message), never against the
  *   desk as it is now (`assistant-telegram-cards-desk-reply.ts`). Not certain, the words are kept and
  *   the user is asked which card they answer: they are never dropped.
- * - **Edits are spaced out**: a change waits a moment for the next one (`debounceMs`), the desk holds
- *   still for a while after the user writes in the chat (`quietAfterUserMs`), and edits it makes by
- *   itself keep a gap (`minGapMs`). What the user does on the desk itself is drawn at once.
+ * - **Edits are paced by what changed**: a card that stopped waiting leaves within about a second
+ *   (`removeDelayMs`, so a burst of ends is still one edit); a new card waits a few seconds for the
+ *   next change (`debounceMs`, at most `maxWaitMs`); two edits keep `minGapMs` apart. What the user
+ *   does on the desk itself is drawn at once. The desk does not hold still while the user writes:
+ *   a reply is matched against the versions they saw, so an edit meanwhile cannot misroute it.
+ * - **Rate limits**: an edit refused with a 429 is not repeated with the words it carried; the lane
+ *   waits Telegram's `retry_after` and the draw that follows reads the cards as they are by then.
  */
 import type { AssistantClock, Cancel } from "../assistant-wake/assistant-clock.ts";
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
@@ -62,17 +66,20 @@ const SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60_000;
 
 /** How the desk paces its own edits; tests set every value to 0. */
 export interface DeskTiming {
-  /** A change waits this long for the next one, so a burst is one edit. */
+  /** A new or changed card waits this long for the next change, so a burst is one edit. */
   debounceMs: number;
-  /** After the user writes in the chat, the desk holds still this long: they may be replying to it. */
-  quietAfterUserMs: number;
-  /** Two edits the desk makes by itself are at least this far apart. */
-  minGapMs: number;
-  /** However the above add up, a pending change goes out within this long. */
+  /** However often cards keep coming, a pending change goes out within this long of the first. */
   maxWaitMs: number;
+  /**
+   * A card that stopped waiting (answered, withdrawn) leaves within this long: an answered card
+   * still listed reads as a question nobody took. Short, so several ending together are one edit.
+   */
+  removeDelayMs: number;
+  /** Two edits the desk makes by itself are at least this far apart (Telegram's pace for a chat). */
+  minGapMs: number;
 }
 
-export const DESK_TIMING: DeskTiming = { debounceMs: 2_000, quietAfterUserMs: 45_000, minGapMs: 15_000, maxWaitMs: 120_000 };
+export const DESK_TIMING: DeskTiming = { debounceMs: 3_000, maxWaitMs: 5_000, removeDelayMs: 300, minGapMs: 1_000 };
 
 /** Where a reply to a desk goes: a card's own message, or a question with the cards to choose from. */
 export type DeskReplyRoute =
@@ -110,11 +117,13 @@ interface ChatDesk {
   seq: number;
   /** What the message says now, so an identical draw is skipped. */
   drawn: string | null;
-  /** The last message the user wrote in the chat. */
-  userAt: number;
   /** A change waiting to be drawn: when the first one came, and the timer that draws it. */
   pendingSince: number;
   timer: Cancel | null;
+  /** When that timer fires; a card ending never pushes it later. */
+  dueAt: number;
+  /** A card stopped waiting since the last draw: the pending draw keeps the short delay. */
+  removal: boolean;
 }
 
 export class AssistantTelegramCardsDesk {
@@ -143,7 +152,7 @@ export class AssistantTelegramCardsDesk {
 
   private desk(chatId: string): ChatDesk {
     let d = this.desks.get(chatId);
-    if (!d) this.desks.set(chatId, d = { current: null, shown: null, pressPending: 0, drawnAt: 0, index: 0, group: null, seq: 0, drawn: null, userAt: 0, pendingSince: 0, timer: null });
+    if (!d) this.desks.set(chatId, d = { current: null, shown: null, pressPending: 0, drawnAt: 0, index: 0, group: null, seq: 0, drawn: null, pendingSince: 0, timer: null, dueAt: 0, removal: false });
     return d;
   }
 
@@ -186,7 +195,7 @@ export class AssistantTelegramCardsDesk {
   }
 
   remove(chatId: string, key: string): void {
-    if (this.entries.get(chatId)?.delete(key)) this.changed(chatId);
+    if (this.entries.get(chatId)?.delete(key)) this.changed(chatId, { removal: true });
   }
 
   /** The card is gone from every chat. */
@@ -238,13 +247,6 @@ export class AssistantTelegramCardsDesk {
     return [e.icon, e.project?.trim() ? `${e.project.trim()} ·` : "", e.title.replace(/\s+/g, " ").trim()].filter(Boolean).join(" ");
   }
 
-  /** The user wrote in the chat: the desk holds still a while, in case they are replying to it. */
-  noteUserActivity(chatId: string): void {
-    const d = this.desk(chatId);
-    d.userAt = this.clock.now();
-    if (d.timer) this.schedule(chatId, d);
-  }
-
   /**
    * A button on this chat's desk message was pressed (one of the desk's or a card's): the user is
    * looking at it. True when the message is the desk, so the caller redraws it after the press —
@@ -287,41 +289,53 @@ export class AssistantTelegramCardsDesk {
 
   /**
    * Something on the desk may have changed. Drawn at once when the user is acting on the desk
-   * (`now`, or a press on it moments ago); otherwise paced (`DeskTiming`).
+   * (`now`, or a press on it moments ago); a card that stopped waiting (`removal`) within
+   * `removeDelayMs`; anything else after `debounceMs` (`DeskTiming`).
    */
-  changed(chatId: string, opts: { now?: boolean } = {}): void {
+  changed(chatId: string, opts: { now?: boolean; removal?: boolean } = {}): void {
     if (this.stopped) return;
     const d = this.desk(chatId);
     const pressed = d.pressPending > 0 && this.clock.now() - d.pressPending <= PRESS_SEEN_MS;
     if (opts.now || pressed) {
-      d.timer?.();
-      d.timer = null;
-      d.pendingSince = 0;
+      this.clearPending(d);
       this.enqueueDraw(chatId);
       return;
     }
     if (!d.pendingSince) d.pendingSince = this.clock.now();
+    if (opts.removal) d.removal = true;
     this.schedule(chatId, d);
   }
 
-  /** (Re)sets the timer of a paced change for the latest moment the pacing allows. */
+  private clearPending(d: ChatDesk): void {
+    d.timer?.();
+    d.timer = null;
+    d.pendingSince = 0;
+    d.removal = false;
+  }
+
+  /**
+   * (Re)sets the timer of a paced change. A new card pushes it back to `debounceMs` from now, up to
+   * `maxWaitMs` from the first change; a removal brings it forward to `removeDelayMs`, and nothing
+   * moves a removal's draw later.
+   */
   private schedule(chatId: string, d: ChatDesk): void {
     const now = this.clock.now();
     const t = this.timing;
-    const at = Math.min(
-      Math.max(now + t.debounceMs, d.userAt + t.quietAfterUserMs, d.drawnAt + t.minGapMs),
-      d.pendingSince + t.maxWaitMs,
-    );
+    const gap = d.drawnAt + t.minGapMs;
+    let at = d.removal
+      ? Math.max(now + t.removeDelayMs, gap)
+      : Math.min(Math.max(now + t.debounceMs, gap), d.pendingSince + t.maxWaitMs);
+    if (d.removal && d.timer) at = Math.min(at, d.dueAt);
     d.timer?.();
     d.timer = null;
     if (at <= now) {
-      d.pendingSince = 0;
+      this.clearPending(d);
       this.enqueueDraw(chatId);
       return;
     }
+    d.dueAt = at;
     d.timer = this.clock.setTimer(() => {
-      d.timer = null;
-      d.pendingSince = 0;
+      this.clearPending(d);
       if (!this.stopped) this.enqueueDraw(chatId);
     }, at - now);
   }
@@ -457,9 +471,11 @@ export class AssistantTelegramCardsDesk {
     const markup: InlineKeyboardMarkup = { inline_keyboard: drawn.rows };
 
     if (messageId !== null) {
-      let res = await client.editMessageText(chatId, messageId, drawn.html, { replyMarkup: markup, final: true });
+      // A 429 comes back here rather than being repeated with this text: the lane waits it out and
+      // the next draw reads the cards as they are then.
+      let res = await client.editMessageText(chatId, messageId, drawn.html, { replyMarkup: markup, final: true, returnRateLimit: true });
       if (!res.ok && !("throttled" in res) && res.errorCode === 400 && BUTTON_URL_INVALID.test(res.description)) {
-        res = await client.editMessageText(chatId, messageId, drawn.html, { replyMarkup: withoutLinks(markup), final: true });
+        res = await client.editMessageText(chatId, messageId, drawn.html, { replyMarkup: withoutLinks(markup), final: true, returnRateLimit: true });
       }
       if (this.gone(chatId, d)) {
         this.deps.codes.dropGroup(group);

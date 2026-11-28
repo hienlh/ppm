@@ -78,6 +78,18 @@ describe("TelegramBotClient", () => {
     expect(warnings()).toContain("sendMessage failed: 429");
   });
 
+  it("hands a 429 on an edit back when asked, instead of sending the same text again", async () => {
+    const bot = client();
+    const sent = await bot.sendMessage(CHAT, "list v1");
+    const id = sent.ok ? sent.result.message_id : -1;
+    fake.failNext("editMessageText", { code: 429, retryAfter: 4 });
+    const res = await bot.editMessageText(CHAT, id, "list v2", { final: true, returnRateLimit: true });
+    expect(res).toMatchObject({ ok: false, errorCode: 429, retryAfter: 4 });
+    expect(slept).toEqual([]);
+    expect(fake.calls.filter((c) => c.method === "editMessageText" && c.body.message_id === id).length).toBe(1);
+    expect(fake.sent(CHAT).find((m) => m.message_id === id)!.text).toBe("list v1");
+  });
+
   it("resends as plain text when Telegram cannot parse the HTML", async () => {
     const res = await client().sendMessage(CHAT, "<b>a < b</b> &amp; <i>c</i>");
     expect(res.ok).toBe(true);

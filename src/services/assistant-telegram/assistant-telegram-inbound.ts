@@ -95,8 +95,7 @@ export interface InboundDeps {
    * The pinned card desk: its own buttons (`press`, the toast to show), where a reply to it goes (a
    * card's own message, or the cards to ask about; null when the reply is not to a desk), a waiting
    * card's own message (`cardMessage`), `/cards` (what to reply, or null), a press on any button of
-   * the desk's message (`pressedOn`, true for the desk), after which it is drawn again (`redraw`),
-   * and every message the user writes (`noteUserActivity`: the desk holds still meanwhile).
+   * the desk's message (`pressedOn`, true for the desk), after which it is drawn again (`redraw`).
    */
   desk?: {
     press(chatId: string, press: DeskPress, group: string): string;
@@ -105,7 +104,6 @@ export interface InboundDeps {
     resend(chatId: string): string | null;
     pressedOn(chatId: string, messageId: number | undefined): boolean;
     redraw(chatId: string): void;
-    noteUserActivity(chatId: string): void;
   };
   /**
    * Words for the chat working on a task: a reply to a task card, or the next message after
@@ -289,7 +287,6 @@ export class AssistantTelegramInbound {
     }
     // Allowed again (reconnected): a later refusal is worth saying once more.
     this.forgetRefusals(chatId);
-    try { this.deps.desk?.noteUserActivity(chatId); } catch { /* the desk only paces itself by it */ }
     // A reply to the pinned card desk is a reply to the card the user was reading, for everything
     // below — or, when that is not certain, kept while the user is asked which card it answers.
     const viaDesk = this.throughDesk(chatId, message);

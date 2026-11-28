@@ -272,7 +272,6 @@ export class AssistantTelegramBridge {
         press: (chatId, press, group) => desk.press(chatId, press, group),
         replyFor: (chatId, messageId, input) => desk.replyFor(chatId, messageId, input),
         cardMessage: (chatId, key) => desk.cardMessage(chatId, key),
-        noteUserActivity: (chatId) => desk.noteUserActivity(chatId),
         resend: (chatId) => desk.resend(chatId),
         pressedOn: (chatId, messageId) => desk.pressedOn(chatId, messageId),
         redraw: (chatId) => desk.redraw(chatId),

@@ -11,7 +11,7 @@ import { TELEGRAM_API_BASE_ENV } from "../../src/services/telegram/telegram-api-
 import { AssistantTelegramSendQueue } from "../../src/services/assistant-telegram/assistant-telegram-send-queue.ts";
 import { ButtonCodes, CODE_TTL_MS } from "../../src/services/assistant-telegram/assistant-telegram-button-codes.ts";
 import type { BridgeAction, DeskPress } from "../../src/services/assistant-telegram/assistant-telegram-actions.ts";
-import { AssistantTelegramCardsDesk, DESK_TICK_MS } from "../../src/services/assistant-telegram/assistant-telegram-cards-desk.ts";
+import { AssistantTelegramCardsDesk, DESK_TICK_MS, DESK_TIMING } from "../../src/services/assistant-telegram/assistant-telegram-cards-desk.ts";
 import { memoryCardDeskStore, type CardDeskStore } from "../../src/services/assistant-telegram/assistant-telegram-cards-desk-store.ts";
 import { MOVED_DESK_HTML, OFF_DESK_HTML, type DeskEntry } from "../../src/services/assistant-telegram/assistant-telegram-cards-desk-draw.ts";
 import { stripTelegramHtml } from "../../src/services/telegram/telegram-html-format.ts";
@@ -27,7 +27,7 @@ afterAll(() => {
 });
 
 /** A clock whose timers run when the test says so. */
-function manualClock(): AssistantClock & { at: number; fire(): void } {
+function manualClock(): AssistantClock & { at: number; fire(): void; advance?(ms: number): void } {
   let timers: Array<() => void> = [];
   return {
     at: 0,
@@ -51,15 +51,24 @@ interface Rig {
 
 let nextChat = 9_100_000;
 /** No pacing: every change is drawn at once, so a test sees each one. */
-const AT_ONCE = { debounceMs: 0, quietAfterUserMs: 0, minGapMs: 0, maxWaitMs: 0 };
+const AT_ONCE = { debounceMs: 0, maxWaitMs: 0, removeDelayMs: 0, minGapMs: 0 };
 
-function rig(opts: { store?: CardDeskStore; sendTimeoutMs?: number; chat?: number; on?: boolean; timing?: Partial<typeof AT_ONCE> } = {}): Rig {
+function rig(opts: {
+  store?: CardDeskStore; sendTimeoutMs?: number; chat?: number; on?: boolean; timing?: Partial<typeof AT_ONCE>;
+  clock?: ReturnType<typeof manualClock>;
+  /** Every wait the send lane takes, as Telegram asked for it (ms). */
+  laneWaits?: number[];
+  /** How long the lane really sleeps for a wait (default: a thousandth of it). */
+  scaleDelay?: (ms: number) => number;
+} = {}): Rig {
   const chat = opts.chat ?? nextChat++;
-  const clock = manualClock();
+  const clock = opts.clock ?? manualClock();
   clock.at = 10 * 60 * 60_000;
   const client = new TelegramBotClient(fake.token, { editIntervalMs: 0, sleep: async () => {}, ...(opts.sendTimeoutMs ? { sendTimeoutMs: opts.sendTimeoutMs } : {}) });
   const codes = new ButtonCodes<BridgeAction>({ now: () => clock.now() });
-  const queue = new AssistantTelegramSendQueue(client, { canSend: () => true, scaleDelay: (ms) => ms / 1000 });
+  const queue = new AssistantTelegramSendQueue(client, {
+    canSend: () => true, scaleDelay: (ms) => { opts.laneWaits?.push(ms); return opts.scaleDelay ? opts.scaleDelay(ms) : ms / 1000; },
+  });
   const store = opts.store ?? memoryCardDeskStore();
   const on = { value: opts.on ?? true };
   const desk = new AssistantTelegramCardsDesk({ queue, codes, store, clock, enabled: () => on.value, timing: { ...AT_ONCE, ...opts.timing } });
@@ -324,40 +333,181 @@ describe("the pinned card desk, after review", () => {
   });
 });
 
-describe("the pinned card desk, paced", () => {
-  const PACED = { debounceMs: 2_000, quietAfterUserMs: 45_000, minGapMs: 15_000, maxWaitMs: 120_000 };
-  const edits = (r: Rig) => fake.calls.filter((c) => c.method === "editMessageText" && Number(c.body.chat_id) === r.chat).length;
+/** A clock whose timers run in due order as the test moves time forward. */
+function steppingClock(): ReturnType<typeof manualClock> {
+  let timers: Array<{ at: number; fn: () => void }> = [];
+  const c = {
+    at: 0,
+    now() { return c.at; },
+    setTimer(fn: () => void, ms: number) {
+      const t = { at: c.at + Math.max(0, ms), fn };
+      timers.push(t);
+      return () => { timers = timers.filter((x) => x !== t); };
+    },
+    fire() { c.advance(0); },
+    advance(ms: number) {
+      const to = c.at + ms;
+      for (;;) {
+        const due = timers.filter((t) => t.at <= to).sort((a, b) => a.at - b.at)[0];
+        if (!due) break;
+        timers = timers.filter((t) => t !== due);
+        c.at = due.at;
+        due.fn();
+      }
+      c.at = to;
+    },
+  };
+  return c;
+}
 
-  it("draws a burst of changes as one edit, and holds still after the user writes", async () => {
-    const r = rig({ timing: PACED });
-    r.desk.put(r.chatId, card(r, 3));
-    r.clock.fire();
-    await r.idle();
+describe("the pinned card desk, paced", () => {
+  const editCalls = (r: Rig) => fake.calls.filter((c) => c.method === "editMessageText" && Number(c.body.chat_id) === r.chat);
+  const edits = (r: Rig) => editCalls(r).filter((c) => !c.failed).length;
+  const count = (r: Rig, id: number) => Number(visible(r, id).text.match(/Waiting for you \((\d+)\)/)?.[1] ?? 0);
+
+  /** Moves time on in 100 ms steps, letting each draw reach Telegram, until `ok`; the time it took. */
+  async function until(r: Rig, ok: () => boolean, limitMs = 60_000): Promise<number> {
+    const start = r.clock.now();
+    for (;;) {
+      await r.idle();
+      if (ok()) return r.clock.now() - start;
+      if (r.clock.now() - start >= limitMs) throw new Error(`not within ${limitMs} ms`);
+      r.clock.advance!(100);
+    }
+  }
+
+  /** Lets `ms` pass in 100 ms steps, each draw reaching Telegram on the way. */
+  async function pass(r: Rig, ms: number): Promise<void> {
+    const end = r.clock.now() + ms;
+    while (r.clock.now() < end) {
+      r.clock.advance!(100);
+      await r.idle();
+    }
+  }
+
+  /** A desk listing `n` cards (Deploy n shown), drawn, with the clock well past its last edit. */
+  async function deskWith(n: number, over: { laneWaits?: number[]; scaleDelay?: (ms: number) => number } = {}): Promise<{ r: Rig; id: number }> {
+    const r = rig({ clock: steppingClock(), timing: DESK_TIMING, ...over });
+    for (let i = n; i >= 1; i--) r.desk.put(r.chatId, card(r, i));
+    await until(r, () => deskMessages(r).length === 1);
     const id = deskMessages(r)[0]!.message_id;
-    const before = edits(r);
-    r.desk.put(r.chatId, card(r, 2));
-    r.desk.put(r.chatId, card(r, 1));
-    await r.idle();
-    expect(edits(r)).toBe(before);
-    r.desk.noteUserActivity(r.chatId);
+    await pass(r, 10_000);
+    return { r, id };
+  }
+
+  it("takes an answered card off within two seconds, even right after the last edit", async () => {
+    const { r, id } = await deskWith(3);
+    r.desk.remove(r.chatId, "card:req-3");
+    expect(await until(r, () => count(r, id) === 2)).toBeLessThan(2_000);
+    // A second answer straight after that edit still keeps Telegram's pace, and stays under 2 s.
     r.desk.remove(r.chatId, "card:req-2");
-    r.clock.fire();
-    await r.idle();
+    expect(await until(r, () => count(r, id) === 1)).toBeLessThan(2_000);
+  });
+
+  it("takes several cards that end together off in one edit", async () => {
+    const { r, id } = await deskWith(3);
+    const before = edits(r);
+    r.desk.remove(r.chatId, "card:req-3");
+    r.desk.remove(r.chatId, "card:req-2");
+    r.desk.removeEverywhere("card:req-1");
+    expect(await until(r, () => visible(r, id).text.startsWith("✅"))).toBeLessThan(2_000);
     expect(edits(r)).toBe(before + 1);
-    expect(visible(r, id).text).toContain("Waiting for you (2)");
+  });
+
+  it("holds a new card a few seconds so a burst is one edit, and never more than five", async () => {
+    const { r, id } = await deskWith(1);
+    const before = edits(r);
+    const from = r.clock.now();
+    r.desk.put(r.chatId, card(r, 2));
+    // Another card every second: the first one is still shown 5 s after it came, with the ones since.
+    let n = 2;
+    const shown = await until(r, () => {
+      if ((r.clock.now() - from) % 1_000 === 0 && r.clock.now() > from && n < 9) r.desk.put(r.chatId, card(r, ++n));
+      return count(r, id) > 1;
+    });
+    expect(shown).toBeLessThanOrEqual(5_000);
+    expect(shown).toBeGreaterThanOrEqual(3_000);
+    expect(edits(r)).toBe(before + 1);
+  });
+
+  it("shows a lone new card after three seconds", async () => {
+    const { r, id } = await deskWith(1);
+    r.desk.put(r.chatId, card(r, 2));
+    expect(await until(r, () => count(r, id) === 2)).toBe(3_000);
+  });
+
+  it("does not let a new card hold back a card that ended", async () => {
+    const { r, id } = await deskWith(2);
+    r.desk.put(r.chatId, card(r, 3));
+    r.clock.advance!(500);
+    r.desk.remove(r.chatId, "card:req-2");
+    r.desk.put(r.chatId, card(r, 4));
+    expect(await until(r, () => !visible(r, id).text.includes("Deploy 2"))).toBeLessThan(2_000);
+    expect(visible(r, id).text).toContain("Deploy 4");
+  });
+
+  it("keeps editing while the user writes: a reply is matched against what they saw", async () => {
+    const { r, id } = await deskWith(2);
+    const writingFrom = r.clock.now();
+    // While the user writes to the card shown (Deploy 2), a card arrives and is listed.
+    r.desk.put(r.chatId, card(r, 3));
+    expect(await until(r, () => count(r, id) === 3)).toBeLessThanOrEqual(5_000);
+    expect(visible(r, id).text).toContain("Allow deploy 2?");
+    await pass(r, 10_000);
+    expect(r.desk.replyFor(r.chatId, id, { sentAt: writingFrom + 15_000, text: "go ahead" }))
+      .toEqual({ to: 52, key: "card:req-2", why: "one card shown" });
+  });
+
+  it("does not hand a reply to the next card when the one the user was reading is answered meanwhile", async () => {
+    const { r, id } = await deskWith(2);
+    const writingFrom = r.clock.now();
+    expect(visible(r, id).text).toContain("Allow deploy 2?");
+    // Answered in PPM while the user writes: the desk moves on to Deploy 1 within two seconds.
+    r.desk.remove(r.chatId, "card:req-2");
+    expect(await until(r, () => visible(r, id).text.includes("Allow deploy 1?"))).toBeLessThan(2_000);
+    await pass(r, 8_000);
+    const route = r.desk.replyFor(r.chatId, id, { sentAt: writingFrom + 10_000, text: "go ahead" });
+    expect(route).toEqual({ ask: [{ key: "card:req-1", label: "🔐 nxsys · Deploy 1" }], ended: [expect.stringContaining("Deploy 2")] });
   });
 
   it("draws at once what the user does on the list", async () => {
-    const r = rig({ timing: PACED });
-    r.desk.put(r.chatId, card(r, 2));
-    r.desk.put(r.chatId, card(r, 1));
-    r.clock.fire();
-    await r.idle();
-    const id = deskMessages(r)[0]!.message_id;
-    r.desk.noteUserActivity(r.chatId);
+    const { r, id } = await deskWith(2);
     expect(pressDesk(r, id, "2")).toBe("2 of 2");
     await r.idle();
     expect(visible(r, id).text).toContain("Allow deploy 1?");
+  });
+
+  it("after a 429 waits what Telegram asked and sends the newest list, not the refused one again", async () => {
+    const laneWaits: number[] = [];
+    // The lane really sleeps 400 ms for it: long enough to end a second card meanwhile.
+    const { r, id } = await deskWith(3, { laneWaits, scaleDelay: (ms) => (ms === 7_000 ? 400 : ms / 1000) });
+    fake.failNext("editMessageText", { code: 429, retryAfter: 7 });
+    r.desk.remove(r.chatId, "card:req-3");
+    // The refused edit is not repeated by the client: the lane waits 7 s.
+    r.clock.advance!(300);
+    await fake.waitFor(() => editCalls(r).some((c) => c.failed === 429));
+    // Another card ends while the lane waits: it rides on the one edit that follows.
+    r.desk.remove(r.chatId, "card:req-2");
+    await until(r, () => count(r, id) === 1);
+    expect(laneWaits).toContain(7_000);
+    expect(editCalls(r).slice(-2).map((c) => c.failed ?? "ok")).toEqual([429, "ok"]);
+    expect(visible(r, id).history.some((h) => h.includes("Waiting for you (2)"))).toBe(false);
+  });
+
+  it("brings the desk up to date at once after a restart", async () => {
+    const store = memoryCardDeskStore();
+    const first = rig({ store });
+    first.desk.put(first.chatId, card(first, 2));
+    first.desk.put(first.chatId, card(first, 1));
+    await first.idle();
+    const id = deskMessages(first)[0]!.message_id;
+    first.desk.stop();
+    // Deploy 2 ended while PPM was down; the new process draws with the real pacing.
+    const second = rig({ store, chat: first.chat, clock: steppingClock(), timing: DESK_TIMING });
+    second.desk.put(second.chatId, card(second, 1));
+    await second.desk.start([second.chatId]);
+    expect(await until(second, () => count(second, id) === 1)).toBe(0);
+    second.desk.stop();
   });
 });
 

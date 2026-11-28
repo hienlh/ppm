@@ -92,7 +92,7 @@ beforeAll(async () => {
     debounceMs: 30, pollTimeoutS: 1, scaleDelay: (ms) => ms / 1000,
     sessionLink: async (provider, id) => `http://localhost:8080/assistant?session=${provider}/${id}`,
     chatLink: async (project, provider, id) => `http://localhost:8080/project/${project}?openChat=${provider}/${id}`,
-    desk: { store: memoryCardDeskStore(), timing: { debounceMs: 0, quietAfterUserMs: 0, minGapMs: 0, maxWaitMs: 0 } },
+    desk: { store: memoryCardDeskStore(), timing: { debounceMs: 0, maxWaitMs: 0, removeDelayMs: 0, minGapMs: 0 } },
   });
 });
 
