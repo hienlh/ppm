@@ -9,7 +9,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   beginSingleTouch, beginTwoFingerTouch, resolveSingleTouchEnd, resolveTwoFingerEnd,
-  advanceTwoFingerTouch, TAP_MAX_DURATION_MS,
+  advanceTwoFingerTouch, resolveLongPress, advanceSingleTouch, TAP_MAX_DURATION_MS,
 } from "../../../src/web/components/remote-desktop/remote-desktop-touch-gesture-tracker.ts";
 import { letterboxedContentRect } from "../../../src/web/components/remote-desktop/remote-desktop-coords.ts";
 
@@ -107,5 +107,36 @@ describe("one-finger tap = left click", () => {
       expect(down!.xFrac as number).toBeCloseTo(0.42, 6);
       expect(down!.yFrac as number).toBeCloseTo(0.58, 6);
     }
+  });
+});
+
+describe("long press and the Right click button aim like a tap", () => {
+  it("a long press right-clicks at the finger in touch mode and at the cursor in mouse mode, zoomed", () => {
+    const p = screenPoint(0.3, 0.6, ZOOMED);
+    const touchHold = resolveLongPress(beginSingleTouch(p.x, p.y, VIDEO), "touch", ZOOMED, CURSOR)!;
+    expect(touchHold.at.xFrac).toBeCloseTo(0.3, 6);
+    expect(touchHold.at.yFrac).toBeCloseTo(0.6, 6);
+    expect(touchHold.messages[0]).toMatchObject({ button: "right", down: true });
+    expect(resolveLongPress(beginSingleTouch(p.x, p.y, VIDEO), "mouse", ZOOMED, CURSOR)!.at).toEqual(CURSOR);
+  });
+
+  it("a hold that turned into a drag is not a long press, and a long press is not also a tap", () => {
+    const dragged = beginSingleTouch(100, 100, VIDEO);
+    advanceSingleTouch(dragged, 140, 100, "touch", IDENTITY, CURSOR);
+    expect(resolveLongPress(dragged, "touch", IDENTITY, CURSOR)).toBeNull();
+    const held = beginSingleTouch(100, 100, VIDEO);
+    expect(resolveLongPress(held, "touch", IDENTITY, CURSOR)).not.toBeNull();
+    expect(resolveSingleTouchEnd(held, 100, 100, "touch", IDENTITY, CURSOR)).toEqual([]);
+    advanceSingleTouch(held, 160, 100, "touch", IDENTITY, CURSOR);
+    expect(held.moved).toBe(false); // no left-button drag after the menu opened
+  });
+
+  it("an armed tap right-clicks where a tap would left-click, zoomed", () => {
+    const p = screenPoint(0.7, 0.2, ZOOMED);
+    const [down] = resolveSingleTouchEnd(beginSingleTouch(p.x, p.y, VIDEO), p.x, p.y, "touch", ZOOMED, CURSOR, "right");
+    expect(down).toMatchObject({ button: "right", down: true });
+    expect(down!.xFrac as number).toBeCloseTo(0.7, 6);
+    const [mouseDown] = resolveSingleTouchEnd(beginSingleTouch(p.x, p.y, VIDEO), p.x, p.y, "mouse", ZOOMED, CURSOR, "right");
+    expect(mouseDown).toMatchObject({ button: "right", ...CURSOR });
   });
 });

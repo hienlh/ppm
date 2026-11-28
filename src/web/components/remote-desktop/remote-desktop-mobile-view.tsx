@@ -57,12 +57,17 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
   // A picture that keeps coming is what confirms the Windows safety net (the gate does the call).
   usePictureProof(streaming, getFrameCount);
 
-  const { transform, virtualCursor, resetZoom } = useRemoteDesktopTouch({
+  // The toolbar's Right click button: on until the next one-finger tap uses it.
+  const [rightClickArmed, setRightClickArmed] = useState(false);
+  const disarmRightClick = useCallback(() => setRightClickArmed(false), []);
+  const { transform, virtualCursor, clickFeedback, resetZoom } = useRemoteDesktopTouch({
     containerRef,
     canvasRef,
     mode,
     sendMessage,
     enabled: streaming,
+    rightClickArmed,
+    onRightClickUsed: disarmRightClick,
   });
   // A phone paste goes through the *host clipboard* rather than being typed character by
   // character: typing is subject to the host's IME (a Telex host rewrites "World" as "ửold"),
@@ -112,14 +117,17 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
   // instead of inverse. Reading layout here (not in an effect) is fine: it only feeds a cosmetic
   // overlay position, recomputed on every render the cursor itself changes, which already
   // happens on every drag frame.
-  let cursorLeft = `${(virtualCursor?.xFrac ?? 0.5) * 100}%`;
-  let cursorTop = `${(virtualCursor?.yFrac ?? 0.5) * 100}%`;
-  if (virtualCursor && containerRef.current && canvasRef.current?.width && canvasRef.current.height) {
+  // The right-click ring is placed the same way.
+  const stagePosition = (frac: { xFrac: number; yFrac: number }) => {
+    const canvas = canvasRef.current;
+    if (!containerRef.current || !canvas?.width || !canvas.height) {
+      return { left: `${frac.xFrac * 100}%`, top: `${frac.yFrac * 100}%` };
+    }
     const box = containerRef.current.getBoundingClientRect();
-    const videoRect = letterboxedContentRect({ left: 0, top: 0, width: box.width, height: box.height }, canvasRef.current.width, canvasRef.current.height);
-    cursorLeft = `${videoRect.left + virtualCursor.xFrac * videoRect.width}px`;
-    cursorTop = `${videoRect.top + virtualCursor.yFrac * videoRect.height}px`;
-  }
+    const videoRect = letterboxedContentRect({ left: 0, top: 0, width: box.width, height: box.height }, canvas.width, canvas.height);
+    return { left: `${videoRect.left + frac.xFrac * videoRect.width}px`, top: `${videoRect.top + frac.yFrac * videoRect.height}px` };
+  };
+  const { left: cursorLeft, top: cursorTop } = stagePosition(virtualCursor ?? { xFrac: 0.5, yFrac: 0.5 });
 
   return (
     <div className="relative h-full w-full bg-black" data-testid="remote-desktop-mobile-view" data-conn-state={connState}>
@@ -163,6 +171,16 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
                 transform: `translate(-50%, -50%) scale(${1 / transform.scale})`,
               }}
               data-testid="remote-desktop-virtual-cursor"
+            />
+          )}
+          {clickFeedback && (
+            // Where a right click landed: confirms a long press registered, and shows where a
+            // two-finger tap or the armed button actually clicked.
+            <div
+              key={clickFeedback.id}
+              className="remote-desktop-click-ring pointer-events-none absolute size-9 rounded-full border-2 border-primary bg-primary/20"
+              style={{ ...stagePosition(clickFeedback.at), "--ring-scale": 1 / transform.scale } as React.CSSProperties}
+              data-testid="remote-desktop-click-feedback"
             />
           )}
         </div>
@@ -259,6 +277,8 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
           onNextQuality={() => setQuality(nextQualityChoice(qualityChoice))}
           mode={mode}
           onToggleMode={toggleMode}
+          rightClickArmed={rightClickArmed}
+          onToggleRightClick={() => setRightClickArmed((armed) => !armed)}
           onOpenKeyboard={openKeyboard}
           onResetZoom={resetZoom}
           settingsOpen={settingsOpen}

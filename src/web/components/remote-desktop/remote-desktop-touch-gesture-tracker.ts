@@ -12,6 +12,8 @@ export type RemoteDesktopInputMode = "touch" | "mouse";
 
 export const TAP_MOVE_THRESHOLD_PX = 10;
 export const TAP_MAX_DURATION_MS = 300;
+/** Holding one finger still this long is a right click (TeamViewer and Windows App both do it). */
+export const LONG_PRESS_MS = 500;
 export const TWO_FINGER_THRESHOLD_PX = 15;
 export const SCALE_MIN = 1;
 export const SCALE_MAX = 4;
@@ -20,7 +22,9 @@ function clamp(n: number, min: number, max: number): number {
   return Math.min(Math.max(n, min), max);
 }
 
-export function clickMessages(xFrac: number, yFrac: number, button: "left" | "right"): Record<string, unknown>[] {
+export type ClickButton = "left" | "right";
+
+export function clickMessages(xFrac: number, yFrac: number, button: ClickButton): Record<string, unknown>[] {
   return [
     { type: "pointer", xFrac, yFrac, button, down: true },
     { type: "pointer", xFrac, yFrac, button, down: false },
@@ -35,13 +39,16 @@ export interface SingleTrack {
   start: PointerSample;
   last: { x: number; y: number };
   moved: boolean;
+  /** The finger was held still for `LONG_PRESS_MS` and that already right-clicked: lifting it
+   *  must not click again, and (touch mode) moving it must not start a drag. */
+  longPressed: boolean;
   /** The displayed video's rect (post letterbox) at gesture start — cached because it does not
    *  change mid-drag. */
   rect: Rect;
 }
 
 export function beginSingleTouch(x: number, y: number, rect: Rect): SingleTrack {
-  return { start: { x, y, t: performance.now() }, last: { x, y }, moved: false, rect };
+  return { start: { x, y, t: performance.now() }, last: { x, y }, moved: false, longPressed: false, rect };
 }
 
 export interface SingleMoveResult {
@@ -62,6 +69,7 @@ export function advanceSingleTouch(
 ): SingleMoveResult {
   const dist = Math.hypot(x - track.start.x, y - track.start.y);
   if (mode === "touch") {
+    if (track.longPressed) { track.last = { x, y }; return {}; }
     if (!track.moved && dist > TAP_MOVE_THRESHOLD_PX) {
       track.moved = true;
       const start = fractionFromZoomedPoint(track.start.x, track.start.y, track.rect, transform);
@@ -87,6 +95,24 @@ export function advanceSingleTouch(
   return { cursor: next, sendCursorMove: true };
 }
 
+/** Where a click from one finger lands: the virtual cursor in MOUSE mode, the finger in TOUCH
+ *  mode (mapped back through zoom and pan). */
+export function singleTouchTarget(
+  track: SingleTrack,
+  x: number,
+  y: number,
+  mode: RemoteDesktopInputMode,
+  transform: ZoomPanTransform,
+  cursor: Fraction,
+): Fraction {
+  return mode === "mouse" ? cursor : fractionFromZoomedPoint(x, y, track.rect, transform);
+}
+
+/**
+ * `tapButton` is what a tap clicks: "right" while the toolbar's Right click button is armed.
+ * The result says which click it made, so the caller can disarm that button only when a tap
+ * actually used it (a drag does not).
+ */
 export function resolveSingleTouchEnd(
   track: SingleTrack,
   x: number,
@@ -94,17 +120,33 @@ export function resolveSingleTouchEnd(
   mode: RemoteDesktopInputMode,
   transform: ZoomPanTransform,
   cursor: Fraction,
+  tapButton: ClickButton = "left",
 ): Record<string, unknown>[] {
+  if (track.longPressed) return [];
   const end: PointerSample = { x, y, t: performance.now() };
   const tapped = isTapGesture(track.start, end, TAP_MOVE_THRESHOLD_PX, TAP_MAX_DURATION_MS);
-  if (mode === "touch") {
-    const frac = fractionFromZoomedPoint(x, y, track.rect, transform);
-    if (!track.moved && tapped) return clickMessages(frac.xFrac, frac.yFrac, "left");
-    if (track.moved) return [{ type: "pointer", xFrac: frac.xFrac, yFrac: frac.yFrac, button: "left", down: false }];
-    return [];
-  }
-  if (!track.moved && tapped) return clickMessages(cursor.xFrac, cursor.yFrac, "left");
+  const target = singleTouchTarget(track, x, y, mode, transform, cursor);
+  if (!track.moved && tapped) return clickMessages(target.xFrac, target.yFrac, tapButton);
+  if (mode === "touch" && track.moved) return [{ type: "pointer", xFrac: target.xFrac, yFrac: target.yFrac, button: "left", down: false }];
   return [];
+}
+
+/**
+ * Called when the long-press timer fires: a right click at the cursor (MOUSE) or where the
+ * finger went down (TOUCH). Returns null when the finger has moved past the tap threshold
+ * since, because that touch is a drag, not a hold.
+ */
+export function resolveLongPress(
+  track: SingleTrack,
+  mode: RemoteDesktopInputMode,
+  transform: ZoomPanTransform,
+  cursor: Fraction,
+): { messages: Record<string, unknown>[]; at: Fraction } | null {
+  if (track.moved || track.longPressed) return null;
+  if (Math.hypot(track.last.x - track.start.x, track.last.y - track.start.y) > TAP_MOVE_THRESHOLD_PX) return null;
+  track.longPressed = true;
+  const at = singleTouchTarget(track, track.start.x, track.start.y, mode, transform, cursor);
+  return { messages: clickMessages(at.xFrac, at.yFrac, "right"), at };
 }
 
 /* ------------------------------------------------------------------ */
