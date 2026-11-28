@@ -25,7 +25,8 @@ import { hydrateProjectCache, peekLastProjectRef } from "@/lib/browser-cache/pro
 // Registers the slash-list hydrator before boot hydration runs; the chat tab that
 // otherwise loads this module sits in a lazy chunk.
 import "@/lib/slash-items-cache";
-import { useUrlSync, parseUrlState, autoOpenFromUrl, openAssistantFromAddress, openFileBrowserFromAddress, openSettingsFromAddress, openVaultFromAddress, requestTurnJumpFromUrl } from "@/hooks/use-url-sync";
+import { CardFileViewer } from "@/components/assistant/cards/card-file-viewer";
+import { useUrlSync, parseUrlState, autoOpenFromUrl, openAssistantFromAddress, openCardFileFromAddress, openFileBrowserFromAddress, openSettingsFromAddress, openVaultFromAddress, requestTurnJumpFromUrl } from "@/hooks/use-url-sync";
 import { vaultLinkFromSearch } from "@/lib/vault-deep-link";
 import { settingsLinkFromSearch } from "@/lib/settings-deep-link";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
@@ -255,6 +256,8 @@ export function App() {
         if (urlState.assistant) openAssistantFromAddress(urlState.assistant);
         // A `/files?path=` address opens the file browser the same way: over whatever is on screen.
         if (urlState.filesPath) openFileBrowserFromAddress(urlState.filesPath);
+        // A `/card-file/<id>` address (a Telegram card's file link) opens that file's viewer over the app.
+        if (urlState.cardFileId) openCardFileFromAddress(urlState.cardFileId);
         // ?openVault=<id> (a vault card's Telegram notice): Settings → Vault, on that item.
         const vaultLink = initialVaultLinkRef.current;
         initialVaultLinkRef.current = null;
@@ -439,6 +442,7 @@ export function App() {
             {!minimalMode && <StatusBar />}
             {/* Floating windows — desktop only, self-gated; covers the working area. */}
             <WindowLayer />
+      <CardFileViewer />
           </div>
         </div>
 

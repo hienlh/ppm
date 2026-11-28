@@ -102,3 +102,22 @@ describe("permission mode and writable connections", () => {
     expect(s.db_write_connections).toEqual([4]);
   });
 });
+
+describe("report_file_dirs", () => {
+  it("keeps absolute folders once each, drops blank lines, and defaults to none", () => {
+    expect(readAssistantSettings({}).value.report_file_dirs).toEqual([]);
+    const r = readAssistantSettings({ report_file_dirs: ["C:\\Videos\\renders", " /home/u/exports ", "", "C:\\Videos\\renders", "~/clips"] });
+    expect(r.errors).toEqual([]);
+    expect(r.value.report_file_dirs).toEqual(["C:\\Videos\\renders", "/home/u/exports", "~/clips"]);
+  });
+
+  it("refuses relative folders, network paths and too many folders", () => {
+    expect(readAssistantSettings({ report_file_dirs: ["renders"] }).errors[0]).toContain("not an absolute folder path");
+    expect(readAssistantSettings({ report_file_dirs: ["\\\\server\\share"] }).errors[0]).toContain("not an absolute folder path");
+    expect(readAssistantSettings({ report_file_dirs: "C:\\x" }).errors[0]).toContain("must be a list");
+    const many = Array.from({ length: 21 }, (_, i) => `/d${i}`);
+    const r = readAssistantSettings({ report_file_dirs: many });
+    expect(r.errors[0]).toContain("at most 20");
+    expect(r.value.report_file_dirs).toHaveLength(20);
+  });
+});

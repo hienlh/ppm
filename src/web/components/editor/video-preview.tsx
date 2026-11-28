@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { extensionOf } from "@/components/os-explorer/can-open-in-ppm";
 import { probeMedia, rawMediaUrl, type MediaProbeInfo } from "@/lib/media-url";
 import { VideoPlayer } from "./video-player/video-player";
+import { NativeVideo } from "@/components/media/native-video";
 
 /** Containers every browser demuxes natively; anything else goes through ffmpeg. */
 const NATIVE_CONTAINERS = new Set(["mp4", "m4v", "webm", "ogg", "ogv", "mov"]);
@@ -50,14 +51,16 @@ export function VideoPreview({ filePath, projectName }: { filePath: string; proj
   if (mode.kind === "unsupported") {
     return <UnsupportedVideo filePath={filePath} projectName={projectName} probe={mode.probe} />;
   }
+  // The browser's own player (`NativeVideo`): its controls behave on a phone, where the
+  // hand-drawn ones played and paused on one double tap and had no full screen on iPhone. The
+  // custom player stays for a transcoded stream, which has no length for a native seek bar.
   return (
-    <VideoPlayer
-      filePath={filePath}
-      projectName={projectName}
-      mode="native"
+    <NativeVideo
+      src={rawMediaUrl(filePath, projectName)}
+      label={filePath}
       // A native container can still hide a codec the browser lacks (HEVC in .mov);
       // let ffmpeg have a go before giving up.
-      onNativeError={() => setMode({ kind: "probing" })}
+      onError={() => setMode({ kind: "probing" })}
     />
   );
 }

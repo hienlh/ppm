@@ -12,6 +12,7 @@ import { decisionTiles, sameAnswer, type DecisionAnswer } from "@/lib/decision-s
 import type { AssistantCard } from "../../../../../shared/assistant-cards";
 import { CardText, cardTime } from "../card-shell";
 import { CardImages } from "../card-images";
+import { CardFiles } from "../card-files";
 import { CardReplacesLine, CardTaskClosedLine } from "../card-withdrawal-parts";
 import { CardDraft } from "../card-draft";
 import { CardHandedOffTasks, TaskCodeText } from "../card-task-items";
@@ -108,6 +109,7 @@ export function DecisionSetCard({
       <h4 className="break-words text-[15px] font-semibold leading-snug text-text-primary" data-card-title="">{card.title}</h4>
       {card.body && <CardText text={card.body} fold={false} projectName={card.projectName} />}
       <CardImages images={card.payload.images} />
+      <CardFiles files={card.payload.files} />
       {card.payload.tasks && <CardHandedOffTasks projectName={card.projectName} tasks={card.payload.tasks} />}
       {draft && <CardDraft draft={draft} />}
       <CardReplacesLine card={card} />

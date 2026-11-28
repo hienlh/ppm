@@ -37,7 +37,10 @@ export async function authMiddleware(c: Context, next: Next) {
     // to widen to: it takes an APP ID, not a path, and answers only with the icon
     // that app's own desktop entry already points at.
     const isAppIcon = p.startsWith("/api/system/app-icon/");
-    if (p.endsWith("/stream") || isMediaPath || isAppIcon || p.endsWith("/image")) {
+    // A report card's file played by `<video src>`: it takes an id PPM made, never a path, and
+    // only the bytes route (not `/info`) is widened.
+    const isCardFile = /^\/api\/card-files\/[0-9a-f]{32}$/.test(p);
+    if (p.endsWith("/stream") || isMediaPath || isAppIcon || isCardFile || p.endsWith("/image")) {
       const queryToken = c.req.query("token");
       if (queryToken && queryToken === authConfig.token) {
         return next();

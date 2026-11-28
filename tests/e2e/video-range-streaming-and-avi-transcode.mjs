@@ -136,27 +136,15 @@ async function main() {
       await screenshot(cdp, "native-mp4-after-seek.png");
       return `t=${(await vstate(cdp)).t.toFixed(1)}`;
     });
-    await scenario("keyboard: → seeks +5s, r rotates, > speeds up, ↓ lowers volume", async () => {
-      await cdp.evalJs(`(() => { const v = document.querySelector('video'); v.pause(); v.currentTime = 2; document.querySelector('[data-testid="video-player"]').focus(); return true; })()`);
-      await Bun.sleep(300);
-      const key = async (k, code, shift = false) => {
-        await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: k, code, text: k.length === 1 ? k : undefined, modifiers: shift ? 8 : 0 });
-        await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: k, code, modifiers: shift ? 8 : 0 });
-        await Bun.sleep(150);
-      };
-      await key("ArrowRight", "ArrowRight");
-      await key("r", "KeyR");
-      await key(">", "Period", true);
-      await key("ArrowDown", "ArrowDown");
-      const s = JSON.parse(await cdp.evalJs(`(() => { const v = document.querySelector('video'); return JSON.stringify({ t: v.currentTime, tr: v.style.transform, rate: v.playbackRate, vol: v.volume }); })()`));
-      if (!(s.t >= 6.9 && s.t <= 7.3)) throw new Error(`currentTime ${s.t}, want ≈7`);
-      if (!/rotate\(90deg\)/.test(s.tr)) throw new Error(`transform ${s.tr}`);
-      if (s.rate !== 1.25) throw new Error(`playbackRate ${s.rate}`);
-      if (Math.abs(s.vol - 0.9) > 0.01) throw new Error(`volume ${s.vol}`);
-      await screenshot(cdp, "native-mp4-rotated-keyboard.png");
-      return `t=${s.t.toFixed(1)} ${s.tr} ${s.rate}x vol=${s.vol}`;
-    });
-    await closeAllTabs(cdp);
+    await scenario("native mp4 plays in the browser's own player: controls, playsinline, preload=metadata", async () => {
+      // The hand-drawn controls (and their rotate/speed keys) stay for transcoded streams only:
+      // on a phone they played and paused on one double tap and had no full screen on iPhone.
+      const s = JSON.parse(await cdp.evalJs(`(() => { const v = document.querySelector('[data-testid="native-video"] video'); return JSON.stringify({ found: !!v, controls: v?.controls, inline: v?.playsInline, preload: v?.preload, custom: !!document.querySelector('[data-testid="video-player"]') }); })()`));
+      if (!s.found || !s.controls || !s.inline || s.preload !== "metadata") throw new Error(`native player ${JSON.stringify(s)}`);
+      if (s.custom) throw new Error("the hand-drawn player is still mounted for a native mp4");
+      await screenshot(cdp, "native-mp4-browser-controls.png");
+      return JSON.stringify(s);
+    });    await closeAllTabs(cdp);
 
     // ── AVI (MJPEG+PCM): probe → transcode player, plays, seeks by restarting ffmpeg ──
     if (!existsSync(AVI)) { record("avi transcode (skipped: fixture missing)", true, AVI); }

@@ -128,7 +128,16 @@ export interface AssistantSettings {
    * PPM Assistant → Changes decides.
    */
   settings_tools?: boolean;
+  /**
+   * Folders, besides a manager's own project folder, it may attach files from on a report card
+   * (`report_to_assistant { files }`): absolute paths. Private folders inside them stay refused.
+   */
+  report_file_dirs: string[];
 }
+
+/** At most this many folders may be listed for report files; each path at most this long. */
+export const REPORT_FILE_DIRS_MAX = 20;
+export const REPORT_FILE_DIR_MAX_CHARS = 1024;
 
 /** See {@link AssistantSettings.permission_mode}. */
 export const ASSISTANT_PERMISSION_MODES = ["full", "ask"] as const;
@@ -164,6 +173,7 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   auto_readonly_commands: true,
   act_on_own: false,
   db_write_connections: [],
+  report_file_dirs: [],
 };
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -355,9 +365,31 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
       ...(permissionMode ? { permission_mode: permissionMode } : {}),
       db_write_connections: dbWriteConnections,
       ...(settingsTools !== undefined ? { settings_tools: settingsTools } : {}),
+      report_file_dirs: readReportFileDirs(raw.report_file_dirs, errors),
     },
     errors,
   };
+}
+
+/** Whether a folder is written as an absolute path, on Windows (`C:\…`) or anywhere else (`/…`, `~/…`). */
+const ABSOLUTE_DIR_RE = /^(?:[A-Za-z]:[\\/]|\/|~(?:[\\/]|$))/;
+
+/** Absolute folder paths, each once, at most {@link REPORT_FILE_DIRS_MAX}; blank lines dropped. */
+function readReportFileDirs(value: unknown, errors: string[]): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) { errors.push("report_file_dirs must be a list"); return []; }
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") { errors.push("report_file_dirs must hold folder paths"); continue; }
+    const dir = item.trim();
+    if (!dir) continue;
+    if (dir.length > REPORT_FILE_DIR_MAX_CHARS) { errors.push("a folder in report_file_dirs is too long"); continue; }
+    // A UNC path would reach out over the network each time a file under it is checked.
+    if (!ABSOLUTE_DIR_RE.test(dir) || /^[\\/]{2}/.test(dir)) { errors.push(`"${dir.slice(0, 80)}" is not an absolute folder path`); continue; }
+    if (!out.includes(dir)) out.push(dir);
+  }
+  if (out.length > REPORT_FILE_DIRS_MAX) errors.push(`at most ${REPORT_FILE_DIRS_MAX} folders for report files`);
+  return out.slice(0, REPORT_FILE_DIRS_MAX);
 }
 
 /** `full` or `ask`; absent or null means not chosen yet. */
@@ -407,6 +439,7 @@ export function maskAssistantSettings(settings: AssistantSettings): AssistantSet
     quiet_hours: { ...settings.quiet_hours },
     digest: { ...settings.digest },
     db_write_connections: [...settings.db_write_connections],
+    report_file_dirs: [...settings.report_file_dirs],
     mcp_servers: settings.mcp_servers.map((s) => s.transport === "stdio"
       ? { ...s, args: [...s.args], env: blank(s.env) }
       : { ...s, headers: blank(s.headers) }),

@@ -48,7 +48,7 @@ export function createSessionCollabMcpHandler(deps: {
   enabled: (tool: string, sessionId: string) => boolean;
   limiter?: CallLimiter;
   /** `report_to_assistant`, for the chat the token names (the live one by default). */
-  report?: (sessionId: string, args: unknown) => Json;
+  report?: (sessionId: string, args: unknown) => Json | Promise<Json>;
   /** `report_withdraw`, for the chat the token names (the live one by default). */
   withdraw?: (sessionId: string, args: unknown) => Json;
   /** What the schedule tools save through (the live database by default). */

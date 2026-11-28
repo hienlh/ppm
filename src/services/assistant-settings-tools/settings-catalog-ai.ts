@@ -32,6 +32,7 @@ const ASSISTANT_PERMISSIONS = "It changes what the Assistant itself may do";
 const KEPT_WHEN_UNNAMED = [
   "digest", "quiet_hours", "timezone", "manager_default_mode", "manager_template", "restart_news", "persona",
   "auto_readonly_commands", "act_on_own", "permission_mode", "db_write_connections", "settings_tools", "main_session",
+  "report_file_dirs",
 ] as const;
 
 /**

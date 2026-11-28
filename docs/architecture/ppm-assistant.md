@@ -1334,7 +1334,9 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   project, checked when the card is filed; the card shows them, and on Telegram they go just
   before the card as one photo or one album (`assistant-telegram-card-photos.ts`), each captioned
   with its number (no link: the photo is the picture), under the same quiet hours and silence as the card, and
-  not at all for a project whose cards reach the phone by title only. Rules events become `rules_note` / `rules_change` cards, and the Assistant pausing its
+  not at all for a project whose cards reach the phone by title only. A report may also carry
+  `files`: paths on this machine (a finished clip, original pictures, a PDF, a zip; at most six,
+  500 MB each). See [Files on report cards](#files-on-report-cards). Rules events become `rules_note` / `rules_change` cards, and the Assistant pausing its
   own messages a `budget` card (`assistant-event-cards.ts`). Every other chat of a project,
   watched or not, gets the same `approval` / `question` mirror (`ordinary-chat-cards.ts` says
   which: not the Assistant's own, not a manager, not an extension's turn; a Design chat's card is
@@ -1631,6 +1633,77 @@ chat resume them. Code in `src/services/restart-news/`.
   `tests/e2e/fixtures/assistant-restart-news-fixture.ts`. Run it in the capped `ppm-e2e-chromium`
   image with `PPM_ASSISTANT_WEB_DIR` and `PPM_RESTART_NEWS_SHOTS` set.
 
+### Files on report cards
+
+`report_to_assistant { files }` puts files from the machine on a card: a clip the chat rendered,
+original pictures, a PDF, a zip. The user gets them in PPM and on Telegram.
+
+- **Which files.** `card-file-path-check.ts` decides, and fails closed. A path is absolute, `~/…`,
+  or relative to the manager's project folder. The file must be inside that folder or a folder
+  listed in Settings → PPM Assistant → Manager chats → Files on cards (`report_file_dirs`,
+  absolute paths, at most 20). This is checked on the path as written and on its real path, so
+  `..` and a link pointing out are both refused. These are refused wherever they are: the PPM
+  folder (config database, vault files, Codex homes), `~/.cloudflared` and the database snapshots
+  (`isCredentialPath`), and every credential store the Assistant asks before reading
+  (`isAssistantPrivatePath`: `~/.ssh`, `~/.aws`, `~/.gnupg`, the home folder's dot-entries when the
+  project is the home folder). Secret names are refused too: `.env*`, `.envrc`, private keys and key
+  stores, credential files, and anything under a `.git`, `.ssh`, `.gnupg` or `.aws` folder. Only an
+  ordinary non-empty file of at most 500 MB passes; a UNC or device path is refused before the disk
+  is touched. The first refused file refuses the whole report.
+- **A copy, not a reference.** `card-file-staging.ts` copies each file into
+  `<ppm dir>/card-files/<id>.bin` (`card-files-store.ts`) before the card is made, so a later
+  change to the file does not reach the card. The copy is opened by its real path and refused if
+  it is no longer that ordinary file. Its type comes from its first bytes, never its name
+  (`sniffCardFile`). SVG and HTML are `other`, so they are never shown inline. A text file
+  holding the value of a vault item read in the last day is refused, because vault values never
+  leave PPM. A copy no card took (refused, merged into an identical open card, folded into a
+  chat's card) is removed at once. Copies are kept 30 days and at most 5 GB in all, oldest first.
+  Two reports attaching the same file (name, size, sha256) are the same report.
+- **In PPM.** `GET /api/card-files/<id>` sits behind the login and answers byte ranges
+  (`rangeFileResponse`), so an 83 MB clip starts at once and a seek is one small request. Only a
+  picture, video or PDF is served as itself; anything else is `application/octet-stream` as an
+  attachment, with `nosniff` and CSP `sandbox`. `<video>`, `<img>` and a download link cannot send
+  a header, so this route (and not its `/info`) takes `?token=` (`middleware/auth.ts`); it names an
+  id PPM made, never a path. On the card, `card-files.tsx` (done, failed and decision cards) lists
+  each file with its size, Open (Play for a video) and Download, plus a thumbnail for a picture of
+  8 MB or less.
+- **The viewer page, `/card-file/<id>`.** Open on the card and the link on a Telegram card both
+  show `card-file-viewer.tsx`, full screen over the app with the normal PPM session
+  (`use-url-sync.ts` → `openCardFileFromAddress`, `card-file-viewer-store.ts`). It plays the
+  original: nothing compressed and no size limit. A video plays in the browser's own player
+  (`components/media/native-video.tsx`), a picture is shown fitted and a tap enlarges it
+  (`zoomable-image.tsx`), and a PDF is shown inline. Download is a link the server answers as an
+  attachment, so a large clip never sits in the page's memory. Only files a report copied can be
+  opened, so the allowed-folder and secret checks above already applied.
+- **On Telegram** (`assistant-telegram-card-files.ts`). The card's text lists the files. When PPM
+  has an address for the phone (`notificationLink`: the tunnel, else the Tailscale Service, else
+  localhost), each name links to its viewer page. Each file then follows as a silent reply to the
+  card's message, **always by `sendDocument`** (`telegramFilePlan`), pictures and videos included.
+  A document arrives byte for byte. `sendPhoto` re-encodes a picture as a smaller JPEG, and
+  `sendVideo` plays in Telegram's player, which may show a lower-quality copy, so neither is used.
+  Each caption links to the viewer page. The Bot API takes 50 MB at most per upload. A larger video
+  is compressed with ffmpeg when the host has it (`card-file-video-compress.ts`): two-pass H.264
+  at a bitrate worked out from the clip's length to land near 47 MB, at the same resolution and
+  frame rate, AAC 128 kbps, four threads, one compression at a time, the copy kept beside the
+  original. The compression runs beside the send queue, so the chat's other messages are not held
+  up, and the copy's caption says "compressed from 83.0 MB" with a link to the original. A clip
+  that would get under 400 kbps of picture is not compressed. A file that still cannot go is
+  replaced by a message under the card saying it is too large and why, linking to the viewer. A
+  file whose upload may have arrived (`maybeSent`) is sent again once at most. A title-only
+  project gets no files.
+- **Up to 2 GB through a Local Bot API server (not built).** Telegram's `telegram-bot-api` server
+  lifts the upload limit to 2 GB. It needs the app's own `api_id`/`api_hash` from my.telegram.org,
+  a build of the server (C++, no official Windows binary), one process kept running beside PPM, and
+  `logOut` of the bot from the cloud API before switching. PPM already reaches Telegram through
+  one base URL (`telegram-api-base.ts`), but it accepts only loopback overrides, so the client
+  change is small. The work is in installing and supervising that process. The viewer page already
+  gives the original with no limit, so this is not planned.
+- **Tests.** Unit: `card-file-path-check.test.ts`, `card-files-store.test.ts`,
+  `manager-report-files.test.ts`, `card-file-video-compress.test.ts` (a real two-pass ffmpeg run
+  when installed, checking the resolution is kept), `assistant-telegram-card-files.test.ts`
+  (against the fake Bot API, which takes `sendVideo` and `sendDocument` with the 50 MB limit),
+  `card-files-route.test.ts` (Range), `card-files-auth.test.ts` and `web/card-files.test.tsx` (the
+  card and the viewer). e2e: `tests/e2e/assistant-card-files-e2e.mjs` (desktop and 390 px).
 ## Notebook
 
 A small notebook of facts the Assistant must not forget in a long session: a standing preference

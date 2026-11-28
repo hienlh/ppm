@@ -74,6 +74,27 @@ export interface TelegramPhotoUpload {
   filename: string;
   caption?: string;
 }
+/** What the Bot API takes in one `sendVideo` or `sendDocument`. */
+export const MAX_TELEGRAM_UPLOAD_BYTES = 50 * 1024 * 1024;
+
+/** One file to upload with the call that shows it best (`telegramFilePlan` picks it). */
+export interface TelegramFileUpload {
+  method: "sendPhoto" | "sendVideo" | "sendDocument";
+  bytes: Uint8Array;
+  filename: string;
+  /** The file's type as sniffed; sent as the part's type. */
+  mime: string;
+  /** HTML; cut to Telegram's caption length. */
+  caption?: string;
+}
+
+/**
+ * How long an upload of `bytes` may take: a minute, plus a second for every 200 KB (a slow uplink
+ * sends 50 MB in about four minutes), at most ten minutes.
+ */
+export function uploadTimeoutMs(bytes: number): number {
+  return Math.min(10 * 60_000, UPLOAD_TIMEOUT_MS + Math.ceil(bytes / (200 * 1024)) * 1000);
+}
 /** Edit timestamps older than this are dropped once the map grows: the message is long done. */
 const EDIT_MEMORY_MS = 60_000;
 const EDIT_MEMORY_LIMIT = 500;
@@ -199,15 +220,49 @@ export class TelegramBotClient {
       res.ok ? { ok: true as const, result: Array.isArray(res.result) ? res.result : [res.result] } : res);
   }
 
+  /**
+   * Upload one file of a card: a picture as a photo, an MP4 as a video Telegram plays in place, or
+   * anything as a document, answering the card's message when `replyTo` is set. Refused here,
+   * before anything is sent, when it is over the call's limit (10 MB a photo, 50 MB otherwise).
+   */
+  sendFile(
+    chatId: number | string,
+    file: TelegramFileUpload,
+    options: { replyTo?: number; silent?: boolean } = {},
+  ): Promise<TelegramCallResult<TelegramMessage>> {
+    const limit = file.method === "sendPhoto" ? MAX_TELEGRAM_PHOTO_BYTES : MAX_TELEGRAM_UPLOAD_BYTES;
+    if (file.bytes.byteLength === 0 || file.bytes.byteLength > limit) {
+      return Promise.resolve({ ok: false, errorCode: 400, description: `file must be 1 byte to ${limit / (1024 * 1024)} MB for ${file.method}` });
+    }
+    const field = file.method === "sendPhoto" ? "photo" : file.method === "sendVideo" ? "video" : "document";
+    const form = (): FormData => {
+      const f = new FormData();
+      f.set("chat_id", String(chatId));
+      if (options.silent) f.set("disable_notification", "true");
+      if (options.replyTo) f.set("reply_parameters", JSON.stringify({ message_id: options.replyTo, allow_sending_without_reply: true }));
+      if (file.method === "sendVideo") f.set("supports_streaming", "true");
+      // Scrubbed of vault values, then cut whole, as a photo's caption is.
+      const caption = file.caption ? splitTelegramHtml(scrubText(file.caption), MAX_TELEGRAM_CAPTION)[0] : undefined;
+      if (caption) { f.set("caption", caption); f.set("parse_mode", "HTML"); }
+      f.set(field, new Blob([new Uint8Array(file.bytes)], { type: file.mime || "application/octet-stream" }), file.filename);
+      return f;
+    };
+    return this.upload<TelegramMessage>(file.method, form, uploadTimeoutMs(file.bytes.byteLength));
+  }
+
   /** A multipart call, with the same single 429 wait as {@link call}. */
-  private async upload<T>(method: string, form: () => FormData): Promise<TelegramCallResult<T>> {
+  private async upload<T>(method: string, form: () => FormData, timeoutMs: number = UPLOAD_TIMEOUT_MS): Promise<TelegramCallResult<T>> {
     const once = async (): Promise<TelegramCallResult<T>> => {
       try {
         const res = await fetch(botMethodUrl(this.token, method), {
-          method: "POST", body: form(), signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+          method: "POST", body: form(), signal: AbortSignal.timeout(timeoutMs),
         });
         let json: TelegramApiResult<T>;
         try { json = (await res.json()) as TelegramApiResult<T>; } catch {
+          // As for a message: a 2xx cut off mid-answer, or a gateway timeout, may have delivered it.
+          if ((res.status >= 200 && res.status < 300) || res.status === 504) {
+            return { ok: false, errorCode: null, description: `answer cut off (HTTP ${res.status})`, maybeSent: true };
+          }
           return { ok: false, errorCode: res.status, description: `not a Bot API answer (HTTP ${res.status})` };
         }
         if (json.ok) return { ok: true, result: json.result as T };

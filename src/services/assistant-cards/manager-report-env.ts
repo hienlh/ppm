@@ -13,7 +13,9 @@ import { getDb, resolveMigratedSession } from "../db.service.ts";
 import { parseTaskRef, formatTaskRef } from "../../shared/ppm-tasks-refs.ts";
 import { withdrawCards } from "./card-withdraw.ts";
 import { cardWithdrawOn, liveWithdrawEnv, openCardsOfManager } from "./card-withdraw-env.ts";
-import { DIGEST_NOT_ASKED, fileReport, sameReport, type ReportEnv } from "./manager-report-tool.ts";
+import { DIGEST_NOT_ASKED, fileReport, reportFieldError, sameReport, type ReportEnv } from "./manager-report-tool.ts";
+import { discardStagedFiles, stageReportFiles, type StageDeps } from "./card-file-staging.ts";
+import { getAssistantSettings } from "../assistant/assistant-settings.service.ts";
 import { createLogger } from "../logger.ts";
 import { readShotSync } from "../design/shots/design-shots.service.ts";
 import { projectKey } from "../project-name-for-path.ts";
@@ -95,14 +97,42 @@ export function resolveProjectTask(projectPath: string, raw: string): { taskId: 
 /** Whether the chat is a project's manager now: the one question the tool's listing asks. */
 export const isReportingManager = (sessionId: string): boolean => managerChats.isManagerChat(sessionId);
 
-/** The tool call: refused unless the caller is a manager chat, checked against the live table. */
-export function reportToAssistantCall(sessionId: string, args: unknown, env: ReportEnv = reportEnv): Json {
+/** The folders besides the project a manager may attach files from (Settings → PPM Assistant). */
+const reportFileDirs = (): string[] => {
+  try { return getAssistantSettings().report_file_dirs; } catch { return []; }
+};
+
+/**
+ * The tool call: refused unless the caller is a manager chat, checked against the live table.
+ * `files` are checked and copied first (`card-file-staging.ts`), and a copy no card took is removed.
+ */
+export async function reportToAssistantCall(
+  sessionId: string, args: unknown, env: ReportEnv = reportEnv, stageDeps: StageDeps & { allowedDirs?: () => string[] } = {},
+): Promise<Json> {
   const row = managerChats.forSession(sessionId);
   if (!row) {
     log.info(`report from session ${sessionId} refused: not a manager chat`);
     return textResult(NOT_A_MANAGER, true);
   }
-  const result = fileReport(env, { sessionId: row.sessionId, projectName: row.projectName, projectPath: row.projectPath }, args);
+  const caller = { sessionId: row.sessionId, projectName: row.projectName, projectPath: row.projectPath };
+  const paths = !reportFieldError(args) && Array.isArray((args as { files?: unknown }).files) ? (args as { files: string[] }).files : [];
+  let callEnv = env;
+  const taken = new Set<string>();
+  let staged: Awaited<ReturnType<typeof stageReportFiles>> | null = null;
+  if (paths.length) {
+    staged = await stageReportFiles(paths, { projectPath: row.projectPath, allowedDirs: (stageDeps.allowedDirs ?? reportFileDirs)() }, stageDeps);
+    const byPath = staged.byPath;
+    callEnv = {
+      ...env,
+      fileFor: (path) => byPath.get(path) ?? { error: "That file was not checked." },
+      create: (card) => {
+        for (const f of card.payload?.files ?? []) taken.add(f.id);
+        return env.create(card);
+      },
+    };
+  }
+  const result = fileReport(callEnv, caller, args);
+  if (staged) await discardStagedFiles(staged.copied.filter((id) => !taken.has(id)));
   if (!result.ok) return textResult(result.message, true);
   return textResult(JSON.stringify({
     ...(result.cardId ? { cardId: result.cardId } : {}), kind: result.kind, ...(result.note ? { note: result.note } : {}),

@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { neutralizeBlockMarkers } from "../../shared/chat-message-blocks.ts";
 import {
   CARD_OPTION_DESCRIPTION_MAX, CARD_OPTION_ID_MAX, CARD_OPTION_ID_RE, CARD_OPTION_LABEL_MAX, CARD_OPTIONS_MAX, CARD_OPTIONS_MIN,
-  REPORT_KINDS, type AssistantCard, type AssistantCardKind, type CardDraft, type CardImage, type CardOption, type ReportKind,
+  REPORT_KINDS, type AssistantCard, type AssistantCardKind, type CardDraft, type CardFile, type CardImage, type CardOption, type ReportKind,
 } from "../../shared/assistant-cards.ts";
+import { REPORT_FILE_PATH_MAX, REPORT_FILES_MAX } from "../../shared/card-files.ts";
 import { REPORT_TO_ASSISTANT_TOOL } from "../../shared/session-collab.ts";
 import { URGENT_PER_MANAGER_PER_QUIET_WINDOW } from "../../shared/assistant-limits.ts";
 import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
@@ -84,6 +85,12 @@ export interface ReportEnv {
    * another project). Absent where no screenshots exist.
    */
   shotOf?(id: string, projectPath: string): CardImage | null;
+  /**
+   * A file of `files`, as the caller already checked and copied it into PPM's card-file store
+   * (`card-files-store.ts`) by the path the report wrote; the reason it was refused otherwise.
+   * Absent where files are not taken.
+   */
+  fileFor?(path: string): CardFile | { error: string };
   /** When the current quiet window began; null outside quiet hours. */
   quietWindowStart(): number | null;
   /**
@@ -152,7 +159,9 @@ type ReportShape = Pick<NewCard, "kind" | "title" | "body" | "payload">;
 export function sameReport(a: ReportShape, b: ReportShape): boolean {
   const key = (c: ReportShape) => {
     const p = c.payload ?? {};
-    return JSON.stringify([c.kind, c.title, c.body ?? "", p.draft ?? null, p.options ?? null, p.images ?? null, p.urgentCapped === true]);
+    // A file is the same file by its name and content: each report makes a copy with a new id.
+    const files = p.files?.map((f) => [f.name, f.size, f.sha256]) ?? null;
+    return JSON.stringify([c.kind, c.title, c.body ?? "", p.draft ?? null, p.options ?? null, p.images ?? null, files, p.urgentCapped === true]);
   };
   return key(a) === key(b);
 }
@@ -175,8 +184,26 @@ export function draftSha256(to: string, text: string): string {
   return createHash("sha256").update(`${to}\n${text}`, "utf8").digest("hex");
 }
 
+/** Why `files` is not a list of paths a report takes, or null. */
+export function reportFilesError(args: Record<string, unknown>): string | null {
+  if (args.files === undefined) return null;
+  if (args.kind === "digest") return "`files` do not go with digest.";
+  if (!Array.isArray(args.files) || args.files.length === 0 || args.files.length > REPORT_FILES_MAX) {
+    return `\`files\` is a list of 1 to ${REPORT_FILES_MAX} paths to files.`;
+  }
+  if (!args.files.every((f) => typeof f === "string" && f.trim() && f.length <= REPORT_FILE_PATH_MAX)) {
+    return `Each of \`files\` is a path to a file, at most ${REPORT_FILE_PATH_MAX} characters.`;
+  }
+  return null;
+}
+
+/** Why the report's fields are refused, or null: checked before anything is copied or filed. */
+export function reportFieldError(raw: unknown): string | null {
+  return fieldError(isObj(raw) ? raw : {});
+}
+
 function fieldError(args: Record<string, unknown>): string | null {
-  const allowed = new Set(["kind", "title", "body", "draft", "items", "images", "options", "chat", "supersedes", "task"]);
+  const allowed = new Set(["kind", "title", "body", "draft", "items", "images", "files", "options", "chat", "supersedes", "task"]);
   const extra = Object.keys(args).find((k) => !allowed.has(k));
   if (extra) return `Unknown field \`${extra.slice(0, 40)}\`.`;
   if (!REPORT_KINDS.includes(args.kind as ReportKind)) return `\`kind\` must be one of ${REPORT_KINDS.join(", ")}.`;
@@ -198,6 +225,8 @@ function fieldError(args: Record<string, unknown>): string | null {
     }
     if (!args.images.every((i) => typeof i === "string")) return "Each of `images` is a screenshot id from design_screenshot.";
   }
+  const filesInvalid = reportFilesError(args);
+  if (filesInvalid) return filesInvalid;
   if (args.options !== undefined) {
     const invalid = optionsError(args);
     if (invalid) return invalid;
@@ -366,6 +395,20 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     }
   }
 
+  let files: CardFile[] | undefined;
+  if (Array.isArray(args.files)) {
+    files = [];
+    const seen = new Set<string>();
+    for (const path of args.files as string[]) {
+      const found = env.fileFor?.(path) ?? { error: "Files cannot be attached here." };
+      if ("error" in found) return refuse(caller, requested, "file refused", found.error);
+      // The same file named twice (two spellings of one path) goes on the card once.
+      if (seen.has(found.id)) continue;
+      seen.add(found.id);
+      files.push(found);
+    }
+  }
+
   const rawDraft = isObj(args.draft) ? args.draft as { to: string; text: string } : null;
   let draft: CardDraft | undefined;
   if (rawDraft) {
@@ -391,6 +434,7 @@ ${typeof args.body === "string" ? args.body : ""}`);
       ...(draft ? { draft } : {}),
       ...(options ? { options } : {}),
       ...(images?.length ? { images } : {}),
+      ...(files?.length ? { files } : {}),
       ...(kind !== requested ? { urgentCapped: true } : {}),
       ...(aboutTask ? { aboutTask } : {}),
       ...(replaces.length ? { supersedes: replaces } : {}),
@@ -461,7 +505,7 @@ export function reportToolDefinition() {
       + "digest: your `items` go on the one digest card PPM puts together). Do not report what the user does not need to "
       + "see. The card says it was written by this manager AI. A report never grants anything: only the user's own answer "
       + "does. There is no limit on how many reports you file, so never hold back a decision; a report identical to one "
-        + "still open on the user's card (same kind, title, body, draft, options and images) is not filed again and "
+        + "still open on the user's card (same kind, title, body, draft, options, images and files) is not filed again and "
         + "returns that card's id. A chat you opened that waits on an approval or a question already has that card in "
         + "front of the user, with buttons: do not report it. A needs_decision or urgent report about such a card (name "
         + "the chat in `chat`) is not filed and returns that card's id. Returns the card id.",
@@ -530,6 +574,16 @@ export function reportToolDefinition() {
           description: "Screenshot ids from design_screenshot (this project's designs): shown on the card and sent to the "
             + "user's phone as pictures with it, e.g. the variants to choose between. Number them in the body in the order "
             + "they are listed here. Not with digest.",
+        },
+        files: {
+          type: "array", items: { type: "string", maxLength: REPORT_FILE_PATH_MAX }, minItems: 1, maxItems: REPORT_FILES_MAX,
+          description: "Files on this machine to put on the card, e.g. a finished clip (mp4), original pictures, a PDF or a "
+            + "zip: absolute paths, or paths relative to this project's folder. Each must be inside this project's folder "
+            + "or a folder the user allowed in Settings → PPM Assistant → Files on cards, and not a secret (.env, keys, "
+            + "credentials, PPM's own folder). PPM copies each file when the report is filed, so finish writing it first. "
+            + "The card shows pictures, videos and PDFs and offers every file for download; on Telegram each file follows "
+            + "the card (a video over 50 MB is made smaller when ffmpeg is installed, otherwise the user is told to open "
+            + "it in PPM). Not with digest.",
         },
       },
       required: ["kind", "title"],

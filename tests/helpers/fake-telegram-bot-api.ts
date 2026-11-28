@@ -48,6 +48,8 @@ export interface FakeSentMessage {
   history: string[];
   /** A photo the bot sent (`sendPhoto`, or one item of `sendMediaGroup`): its upload; `text` is its caption. */
   photo?: { bytes: number; filename: string; album?: number };
+  /** A video or document the bot sent (`sendVideo`, `sendDocument`): its upload; `text` is its caption. */
+  file?: { method: "sendVideo" | "sendDocument"; bytes: number; filename: string; type: string; streaming?: boolean };
 }
 
 export interface FakeFailure {
@@ -288,6 +290,12 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
   };
   let nextAlbum = 1;
 
+  /** `reply_parameters` of a multipart call: JSON in a text field, as Telegram reads it. */
+  const replyToOf = (raw: unknown): number | undefined => {
+    if (typeof raw !== "string") return undefined;
+    try { return (JSON.parse(raw) as { message_id?: number }).message_id; } catch { return undefined; }
+  };
+
   function handle(method: string, body: Record<string, unknown>): Response | Promise<Response> {
     switch (method) {
       case "sendPhoto": {
@@ -295,6 +303,33 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
         if (!Number.isFinite(chatId)) return refuse(400, "Bad Request: chat not found");
         const sent = photoMessage(chatId, body.photo, body.caption, body.disable_notification === "true");
         if (sent instanceof Response) return sent;
+        const replyTo = replyToOf(body.reply_parameters);
+        if (replyTo) sent.reply_to = replyTo;
+        messages.set(chatId, [...(messages.get(chatId) ?? []), sent]);
+        return ok(botMessage(sent));
+      }
+      case "sendVideo":
+      case "sendDocument": {
+        const chatId = Number(body.chat_id);
+        if (!Number.isFinite(chatId)) return refuse(400, "Bad Request: chat not found");
+        const part = body[method === "sendVideo" ? "video" : "document"];
+        if (!(part instanceof File) || part.size === 0) return refuse(400, `Bad Request: there is no ${method === "sendVideo" ? "video" : "document"} in the request`);
+        // The Bot API's own limit for an uploaded file.
+        if (part.size > 50 * 1024 * 1024) return refuse(413, "Request Entity Too Large");
+        let text = "";
+        if (body.caption !== undefined) {
+          if (typeof body.caption !== "string" || body.caption.length > 1024) return refuse(400, "Bad Request: message caption is too long");
+          const parsed = body.parse_mode === "HTML" ? parseTelegramHtml(body.caption) : { text: body.caption };
+          if ("error" in parsed) return refuse(400, parsed.error);
+          text = parsed.text;
+        }
+        const replyTo = replyToOf(body.reply_parameters);
+        const sent: FakeSentMessage = {
+          message_id: messageId(chatId), chat_id: chatId, text, ...(body.caption !== undefined ? { parse_mode: "HTML" } : {}),
+          ...(replyTo ? { reply_to: replyTo } : {}),
+          silent: body.disable_notification === "true", history: [],
+          file: { method, bytes: part.size, filename: part.name, type: part.type, ...(body.supports_streaming === "true" ? { streaming: true } : {}) },
+        };
         messages.set(chatId, [...(messages.get(chatId) ?? []), sent]);
         return ok(botMessage(sent));
       }

@@ -26,6 +26,9 @@ import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { cardEndLine, formatManagerCard, type CardDetail } from "./assistant-telegram-card-kinds.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
 import { cardPhotosTask } from "./assistant-telegram-card-photos.ts";
+import { cardFileSends } from "./assistant-telegram-card-files.ts";
+import { notificationLink } from "../notification-link.ts";
+import { cardFileAppPath } from "../../shared/card-files.ts";
 import { formatNewCardPointer } from "./assistant-telegram-followup-format.ts";
 import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { outcomeOf, sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
@@ -48,6 +51,8 @@ export interface ManagerCardsDeps {
   codes: ButtonCodes<BridgeAction>;
   chatLink: (project: string, providerId: string | null, sessionId: string) => Promise<string>;
   sessionLink: (providerId: string, sessionId: string) => Promise<string>;
+  /** PPM's address for a link from the phone; `notificationLink` by default. */
+  fileLinkBase?: () => Promise<string>;
   relayCard: (chatId: string, card: RelayedCard) => void;
   isShowing: (chatId: string, requestId: string) => boolean;
   recipients?: () => string[];
@@ -102,8 +107,22 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
    * whether the follow-up has asked about it already (it then sent nothing, counting on the card).
    */
   private readonly threaded = new Map<string, { asked: boolean }>();
+  /**
+   * PPM's address for a link from the phone, as last asked: each file on a card links to its
+   * viewer under it. Asked before a card with files is sent; an edit later reuses it.
+   */
+  private fileLinkBase: string | null = null;
 
   constructor(private readonly deps: ManagerCardsDeps) {}
+
+  private async refreshFileLinkBase(): Promise<void> {
+    try {
+      const ask = this.deps.fileLinkBase ?? (() => notificationLink({ path: "/" }));
+      this.fileLinkBase = (await ask()).replace(/\/+$/, "");
+    } catch (e) {
+      log.warn(`no PPM address for card file links: ${(e as Error).message}`);
+    }
+  }
 
   /**
    * Whether this card went to this chat under the user's reply: then it is the manager's whole
@@ -175,6 +194,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
 
   private async sendAll(cards: AssistantCard[], chats: string[], threads: Array<Map<string, Thread>>, header?: string): Promise<void> {
     // Links first, so every chat's lane gets the header and the cards in order.
+    if (cards.some((c) => c.payload.files?.length)) await this.refreshFileLinkBase();
     const links = await Promise.all(cards.map((c) => this.linkFor(c).catch(() => null)));
     // Folder and file paths in a card's text become links into PPM's file browser once checked.
     await Promise.all(cards.map((c) => primeTelegramPathLinks(`${c.title}\n${c.body ?? ""}`)));
@@ -244,7 +264,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       });
       return;
     }
-    const formatted = formatManagerCard(cardForTelegram(card), detail);
+    const formatted = formatManagerCard({ ...cardForTelegram(card), fileLinkBase: this.fileLinkBase }, detail);
     const group = groupOf(card.id, chatId);
     // The pictures first, so the card to answer them on comes last; never for a title-only project.
     const photos = detail === "full"
@@ -252,6 +272,12 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       : null;
     if (photos) this.deps.queue.enqueue(chatId, photos);
     const { html, rows, link } = this.message(chatId, card, formatted, url, extras);
+    // The files after the card, answering its message; never for a title-only project.
+    let cardMessageId: number | undefined;
+    const base = this.fileLinkBase;
+    const files = detail === "full"
+      ? cardFileSends(chatId, card, { replyTo: () => cardMessageId, url, viewLink: base ? (id) => `${base}${cardFileAppPath(id)}` : undefined })
+      : [];
     this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, {
       html,
       ...(rows.length ? { markup: { inline_keyboard: rows } } : {}),
@@ -263,6 +289,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       // So does the answer to a reply typed on the phone moments ago: the user is waiting for it.
       silent: () => card.kind !== "urgent" && !thread?.loud && this.silent(),
       onSent: (sent, info) => {
+        cardMessageId = sent.message_id;
         record(sent.message_id);
         if (waitsOnUser(card)) this.putOnDesk(chatId, card, sent.message_id, { html, rows, group });
         // A decision sent silently gets one reminder if it is still open later.
@@ -289,6 +316,12 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
         try { setCardOutboundError(card.id, why, Date.now()); } catch (e) { log.warn(`card ${card.id}: could not record the failed send: ${(e as Error).message}`); }
       },
     }));
+    // A file that is ready goes right behind the card; a video being made smaller joins the queue
+    // when its copy is done, so the chat's other messages do not wait for ffmpeg.
+    for (const { task, ready } of files) {
+      if (ready) void ready.then(() => this.deps.queue.enqueue(chatId, task));
+      else this.deps.queue.enqueue(chatId, task);
+    }
   }
 
   /** The one line naming a card that answered the user's reply but never reached the phone. */
@@ -381,7 +414,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       if (!waitsOnUser(card) || card.kind === "approval" || card.kind === "question") continue;
       const url = await this.linkFor(card).catch(() => null);
       const extras = await taskCardExtras(card, this.deps.chatLink).catch(() => null);
-      const shown = this.message(chatId, card, formatManagerCard(cardForTelegram(card), this.detail(card)), url, extras);
+      const shown = this.message(chatId, card, formatManagerCard({ ...cardForTelegram(card), fileLinkBase: this.fileLinkBase }, this.detail(card)), url, extras);
       this.putOnDesk(chatId, card, ref.messageId, shown);
     }
   }
@@ -407,7 +440,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     const refs = (getCardRow(card.id)?.telegramRefs ?? []).filter((r) => !r.followUp);
     const body = isLinkOnlyCard(card)
       ? waitingNoticeHtml(card, card.payload.answerInPpm as WaitingNoticeKind)
-      : formatManagerCard(cardForTelegram(card), this.detail(card)).html;
+      : formatManagerCard({ ...cardForTelegram(card), fileLinkBase: this.fileLinkBase }, this.detail(card)).html;
     const html = `${body}\n\n${cardEndLine(card)}`;
     for (const ref of refs) {
       this.deps.codes.dropGroup(groupOf(card.id, ref.chatId));
