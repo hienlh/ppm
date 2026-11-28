@@ -4,6 +4,11 @@ import { Button } from "@/components/ui/button";
 import { extensionOf } from "@/components/os-explorer/can-open-in-ppm";
 import { probeMedia, rawMediaUrl, type MediaProbeInfo } from "@/lib/media-url";
 import { VideoPlayer } from "./video-player/video-player";
+import { NativeVideo } from "@/components/media/native-video";
+import { QualityToggle } from "@/components/media/quality-toggle";
+import { useIsMobile } from "@/hooks/use-is-mobile";
+import { readVideoQuality, writeVideoQuality } from "@/lib/video-quality-pref";
+import type { VideoQuality } from "../../../shared/card-files";
 
 /** Containers every browser demuxes natively; anything else goes through ffmpeg. */
 const NATIVE_CONTAINERS = new Set(["mp4", "m4v", "webm", "ogg", "ogv", "mov"]);
@@ -50,15 +55,59 @@ export function VideoPreview({ filePath, projectName }: { filePath: string; proj
   if (mode.kind === "unsupported") {
     return <UnsupportedVideo filePath={filePath} projectName={projectName} probe={mode.probe} />;
   }
+  // The browser's own player (`NativeVideo`): its controls behave on a phone, where the
+  // hand-drawn ones played and paused on one double tap and had no full screen on iPhone. The
+  // custom player stays for a transcoded stream, which has no length for a native seek bar.
+  return <NativeWithSmooth filePath={filePath} projectName={projectName} onNativeError={() => setMode({ kind: "probing" })} />;
+}
+
+/**
+ * A file the browser plays itself, with Original / Smooth. Original streams the file with Range in
+ * the browser's own player. Smooth is the same file re-encoded live by the server at ~4 Mbit/s
+ * (hardware encoder when there is one), for a phone whose link cannot carry the original; it plays
+ * in the transcode player, which seeks by restarting the stream. Smooth needs ffmpeg on the host:
+ * without it the choice is not shown. The choice is remembered per device (a phone starts on
+ * Smooth, a desktop on Original).
+ */
+function NativeWithSmooth({ filePath, projectName, onNativeError }: { filePath: string; projectName: string; onNativeError: () => void }) {
+  const isMobile = useIsMobile();
+  const [quality, setQuality] = useState<VideoQuality>(() => readVideoQuality(isMobile));
+  // null: not asked yet; "unavailable": no ffmpeg (or the probe failed), so no Smooth.
+  const [probe, setProbe] = useState<MediaProbeInfo | "unavailable" | null>(null);
+
+  useEffect(() => { setProbe(null); }, [filePath]);
+  useEffect(() => {
+    if (quality !== "smooth" || probe !== null) return;
+    let cancelled = false;
+    probeMedia(filePath, projectName)
+      .then((p) => { if (!cancelled) setProbe(p.transcodable ? p : "unavailable"); })
+      .catch(() => { if (!cancelled) setProbe("unavailable"); });
+    return () => { cancelled = true; };
+  }, [quality, probe, filePath, projectName]);
+
+  const pick = (q: VideoQuality) => { writeVideoQuality(q); setQuality(q); };
+  const smoothReady = quality === "smooth" && probe !== null && probe !== "unavailable";
   return (
-    <VideoPlayer
-      filePath={filePath}
-      projectName={projectName}
-      mode="native"
-      // A native container can still hide a codec the browser lacks (HEVC in .mov);
-      // let ffmpeg have a go before giving up.
-      onNativeError={() => setMode({ kind: "probing" })}
-    />
+    <div className="flex h-full flex-col bg-black" data-video-preview={smoothReady ? "smooth" : "original"}>
+      {probe !== "unavailable" && (
+        <div className="flex shrink-0 items-center justify-end gap-2 border-b border-border bg-surface px-2 py-1">
+          <QualityToggle value={quality} onChange={pick} smoothPending={quality === "smooth" && probe === null} />
+        </div>
+      )}
+      <div className="min-h-0 flex-1">
+        {smoothReady
+          ? <VideoPlayer filePath={filePath} projectName={projectName} mode="transcode" quality="smooth" probeDuration={(probe as MediaProbeInfo).duration} />
+          : (
+            <NativeVideo
+              src={rawMediaUrl(filePath, projectName)}
+              label={filePath}
+              // A native container can still hide a codec the browser lacks (HEVC in .mov);
+              // let ffmpeg have a go before giving up.
+              onError={onNativeError}
+            />
+          )}
+      </div>
+    </div>
   );
 }
 

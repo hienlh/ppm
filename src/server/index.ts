@@ -290,6 +290,9 @@ app.route("/api/design-preview", designPreviewRoutes.api);
 // Design screenshots, signed in like every other route: Telegram gets the pictures themselves.
 import { designShotRoutes } from "./routes/design-shots.ts";
 app.route("/api/design-shots", designShotRoutes);
+// Files managers put on report cards, signed in like every other route: Telegram gets the files themselves.
+import { cardFileRoutes } from "./routes/card-files.ts";
+app.route("/api/card-files", cardFileRoutes);
 // The Share dialog's public address and sign-in state; the links themselves are per design.
 import { designShareAddressRoutes } from "./routes/design-share-address.ts";
 app.route("/api/design-shares", designShareAddressRoutes);

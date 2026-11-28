@@ -90,9 +90,11 @@ function report(ctx: PpmToolContext): PpmToolSummary {
   const replaced = Array.isArray(answer?.withdrawn)
     ? answer.withdrawn.filter((w) => isObj(w) && w.outcome === "withdrawn").length
     : Array.isArray(ctx.args.supersedes) ? ctx.args.supersedes.length : 0;
+  // Files the manager attached, from what was asked: the answer does not list them.
+  const files = Array.isArray(ctx.args.files) ? ctx.args.files.filter((f) => typeof f === "string").length : 0;
   return {
     label: labelFor(ctx, "Report to Assistant", "Reported to Assistant"),
-    detail: joinParts(kindLabel, title && oneLine(title, 80), replaced > 0 ? `replaces ${replaced}` : undefined),
+    detail: joinParts(kindLabel, title && oneLine(title, 80), files > 0 ? plural(files, "file") : undefined, replaced > 0 ? `replaces ${replaced}` : undefined),
   };
 }
 

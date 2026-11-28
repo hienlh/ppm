@@ -16,7 +16,8 @@
  * buttons of a card that offers choices (one per choice, numbered as the text lists them);
  * "Approve change" meets the same bar on the rules diff. None ever stands for text the user did not see.
  */
-import { cardWithdrawal, type AssistantCard, type CardOption } from "../../shared/assistant-cards.ts";
+import { cardWithdrawal, type AssistantCard, type CardFile, type CardOption } from "../../shared/assistant-cards.ts";
+import { TELEGRAM_UPLOAD_MAX_BYTES, cardFileAppPath, formatFileSize } from "../../shared/card-files.ts";
 import {
   DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, DIGEST_RESURFACED_HEADING, DIGEST_VOICE_LEARNED_HINT, digestVoiceLearnedHeading,
   digestWaitingSummary, type DigestProject, type DigestResurfacedTask, type DigestVoiceLearned,
@@ -184,7 +185,11 @@ export function telegramVisibleLength(html: string): number {
 
 /** The parts of a card the Telegram copy is built from. */
 export type CardForTelegram = Pick<AssistantCard, "kind" | "projectName" | "provenance" | "title" | "body" | "payload" | "okOffered">
-  & Partial<Pick<AssistantCard, "status" | "answer">>;
+  & Partial<Pick<AssistantCard, "status" | "answer">>
+  & {
+    /** PPM's address for a link from the phone (`notificationLink`); each file then links to its viewer. */
+    fileLinkBase?: string | null;
+  };
 
 /**
  * How long each choice's description may be, tried in turn when a card with choices would not fit
@@ -211,6 +216,28 @@ export function formatManagerCard(card: CardForTelegram, detail: CardDetail): Fo
     }
   }
   return renderCard({ ...card, okOffered: false }, detail, false);
+}
+
+/**
+ * The files the card carries, as its text lists them: one line each, name and size, linked to the
+ * PPM page that plays the original (`/card-file/<id>`: no size limit, nothing compressed, seekable),
+ * and for one over the Bot API's 50 MB limit what happens to its Telegram copy. The files
+ * themselves follow the card as replies to it (`assistant-telegram-card-files.ts`).
+ */
+function fileLines(files: readonly CardFile[], counter: { hidden: number }, base: string | null): string[] {
+  const lines = files.map((f) => {
+    const label = clean(oneLine(f.name), counter);
+    const name = base
+      ? `<a href="${escapeTelegramHtml(`${base.replace(/\/+$/, "")}${cardFileAppPath(f.id)}`)}">${label}</a> · ${formatFileSize(f.size)}`
+      : `${label} · ${formatFileSize(f.size)}`;
+    if (f.size <= TELEGRAM_UPLOAD_MAX_BYTES) return `📎 ${name}`;
+    return f.kind === "video"
+      ? `📎 ${name} <i>(over Telegram's 50 MB limit: a compressed copy follows if PPM can make one; the original is in PPM)</i>`
+      : `📎 ${name} <i>(over Telegram's 50 MB limit: open it in PPM)</i>`;
+  });
+  const count = files.length === 1 ? "1 file" : `${files.length} files`;
+  const head = base ? `${count}: tap a name to watch the original in PPM. Copies follow this card.` : `${count} follow this card.`;
+  return [`<i>${head}</i>`, ...lines];
 }
 
 /**
@@ -249,6 +276,7 @@ function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boole
   if (full && options.length) lines.push("", ...choiceLines(options, counter, descriptionCap));
   const pictures = card.payload.images?.length ?? 0;
   if (full && pictures) lines.push(`<i>🖼 ${pictures} picture${pictures === 1 ? "" : "s"} above, numbered as listed.</i>`);
+  if (full && card.payload.files?.length) lines.push(...fileLines(card.payload.files, counter, card.fileLinkBase ?? null));
   if (decision) {
     const draft = card.payload.draft;
     if (full && draft) {

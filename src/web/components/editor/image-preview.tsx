@@ -1,5 +1,6 @@
 import { Loader2, FileWarning } from "@/lib/icons";
 import { useBlobUrl } from "@/hooks/use-blob-url";
+import { ZoomableImage } from "@/components/media/zoomable-image";
 
 export function ImagePreview({ filePath, projectName }: { filePath: string; projectName: string }) {
   const { blobUrl, error } = useBlobUrl(filePath, projectName);
@@ -16,8 +17,8 @@ export function ImagePreview({ filePath, projectName }: { filePath: string; proj
     return <div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>;
   }
   return (
-    <div className="flex items-center justify-center h-full p-4 bg-surface overflow-auto">
-      <img src={blobUrl} alt={filePath} className="max-w-full max-h-full object-contain" />
+    <div className="h-full p-4 bg-surface">
+      <ZoomableImage src={blobUrl} alt={filePath} />
     </div>
   );
 }

@@ -7,12 +7,23 @@ import { AssistantDigestQuietSection } from "./assistant/assistant-digest-quiet-
 import { AssistantManagerChatsSection } from "./assistant/assistant-manager-chats-section";
 import { AssistantNotebookSection } from "./assistant/assistant-notebook-section";
 import { AssistantSettingsChangesSection } from "./assistant/assistant-settings-changes-section";
+import { AssistantReportFilesSection } from "./assistant/assistant-report-files-section";
+
+/** Manager chats, then the folders their report cards may attach files from. */
+function AssistantManagersPanel() {
+  return (
+    <div className="space-y-5">
+      <AssistantManagerChatsSection />
+      <AssistantReportFilesSection />
+    </div>
+  );
+}
 
 const PANELS: Record<AssistantSettingsTabId, ComponentType> = {
   general: AssistantGeneralSettings,
   sessions: AssistantSessionsTelegramSection,
   digest: AssistantDigestQuietSection,
-  managers: AssistantManagerChatsSection,
+  managers: AssistantManagersPanel,
   notebook: AssistantNotebookSection,
   changes: AssistantSettingsChangesSection,
 };

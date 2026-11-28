@@ -156,6 +156,14 @@ describe("report and schedule tools", () => {
       .toEqual({ label: "Report to Assistant", detail: "Urgent · Prod is down" });
     expect(ppmToolSummary("mcp__ppm-sessions__report_to_assistant", { kind: "urgent", title: "Prod is down" }, ok('{"cardId":"c1","kind":"needs_decision"}')))
       .toEqual({ label: "Reported to Assistant", detail: "Needs decision · Prod is down" });
+    // Files it attached, counted from the call; odd entries are not counted.
+    expect(ppmToolSummary("mcp__ppm-sessions__report_to_assistant", { kind: "done", title: "Clip ready", files: ["out/clip.mp4", "a.pdf", 7] }, ok('{"cardId":"c2","kind":"done"}')))
+      .toEqual({ label: "Reported to Assistant", detail: "Done · Clip ready · 2 files" });
+    expect(ppmToolSummary("ppm_sessions:report_to_assistant", { server: "ppm_sessions", tool: "report_to_assistant", arguments: { kind: "done", title: "Clip", files: ["x.zip"] } }, running))
+      .toEqual({ label: "Report to Assistant", detail: "Done · Clip · 1 file" });
+    // Refused (a file outside the project): the line still reads from what was asked.
+    expect(ppmToolSummary("mcp__ppm-sessions__report_to_assistant", { kind: "done", title: "Clip", files: ["../x.mp4"] }, failed("\"../x.mp4\" cannot be attached")).detail)
+      .toBe("Done · Clip · 1 file");
     expect(ppmToolIcon("mcp__ppm-sessions__report_to_assistant")).toBe("report");
   });
 

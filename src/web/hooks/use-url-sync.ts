@@ -18,6 +18,8 @@ import { dbObjectTabTitle, dbTabMetadataFromId, targetOf } from "@/lib/db-tabs";
 import { canonicalSessionId, useChatJumpStore } from "@/stores/chat-jump-store";
 import { TURN_ID_RE } from "../../shared/session-turn-ids";
 import { fileBrowserPathFromLocation } from "../../shared/file-browser-target";
+import { cardFileIdFromLocation } from "../../shared/card-files";
+import { useCardFileViewer } from "@/stores/card-file-viewer-store";
 import { openFileBrowserAt } from "@/lib/file-browser-locate";
 
 // ---------------------------------------------------------------------------
@@ -46,6 +48,8 @@ export interface UrlState {
    * file browser at, over whichever project is on screen. Never a project to open.
    */
   filesPath?: string | null;
+  /** `/card-file/<id>` (a report card's file, from Telegram or the card): the viewer opens over the app. */
+  cardFileId?: string | null;
 }
 
 /** A task id as the server mints them (`TASK_ID_PATTERN` in the task routes). */
@@ -91,6 +95,8 @@ export function parseUrlState(location: Pick<Location, "pathname" | "search"> = 
   if (assistant) return { projectName: null, tabType: null, tabIdentifier: null, openChat: null, assistant };
   const filesPath = fileBrowserPathFromLocation(path, location.search);
   if (filesPath) return { projectName: null, tabType: null, tabIdentifier: null, openChat: null, assistant: null, filesPath };
+  const cardFileId = cardFileIdFromLocation(path);
+  if (cardFileId) return { projectName: null, tabType: null, tabIdentifier: null, openChat: null, assistant: null, cardFileId };
 
   const match = path.match(/^\/project\/([^/]+)(?:\/([^/]+)(\/.*)?)?/);
   if (!match) return { projectName: null, tabType: null, tabIdentifier: null, openChat, assistant: null };
@@ -323,6 +329,16 @@ export function openAssistantFromAddress(link: AssistantDeepLink): void {
 export function openFileBrowserFromAddress(path: string): void {
   window.history.replaceState(null, "", "/");
   onceWindowLayerIsReady(() => void openFileBrowserAt(path));
+}
+
+/**
+ * Opens the viewer of the report-card file a `/card-file/<id>` address names (the link on a
+ * Telegram card). The server answers only for a file it copied onto a card, behind the login; the
+ * address names no workspace, so it is dropped once the viewer is open.
+ */
+export function openCardFileFromAddress(id: string): void {
+  window.history.replaceState(null, "", "/");
+  useCardFileViewer.getState().open(id);
 }
 
 /** Auto-open or focus a tab based on URL state */

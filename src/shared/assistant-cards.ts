@@ -4,6 +4,9 @@
  * morning digest) shows the same thing. Shared by the server and the browser.
  */
 import type { DigestProject, DigestResurfacedTask, DigestVoiceLearned } from "./assistant-digest.ts";
+import type { CardFile } from "./card-files.ts";
+
+export type { CardFile } from "./card-files.ts";
 
 export const ASSISTANT_CARD_KINDS = [
   "needs_decision", "urgent", "approval", "question", "done", "failed", "digest", "rules_note", "rules_change", "budget",
@@ -163,6 +166,11 @@ export interface AssistantCardPayload {
    * card and sent to Telegram with it as pictures.
    */
   images?: CardImage[];
+  /**
+   * Report cards: files from the manager's disk (`report_to_assistant { files }`), copied into PPM's
+   * card-file store when the report was filed; shown on the card and sent to Telegram after it.
+   */
+  files?: CardFile[];
   /** Report cards: filed by a subagent of the manager rather than the manager itself. */
   subagent?: boolean;
   /** Report cards: the manager asked for urgent, and the per-window cap turned it into a decision. */

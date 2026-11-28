@@ -176,7 +176,7 @@ fsBrowseRoutes.get("/probe", async (c) => {
 fsBrowseRoutes.get("/transcode", async (c) => {
   try {
     const abs = await resolveMediaPath(c.req.query("path"));
-    return abs instanceof Response ? abs : await handleMediaTranscode(abs, c.req.raw, c.req.query("start"), c.req.query("sid"));
+    return abs instanceof Response ? abs : await handleMediaTranscode(abs, c.req.raw, c.req.query("start"), c.req.query("sid"), c.req.query("quality"));
   } catch (e) {
     const { body, status } = fail(e);
     return c.json(body, status);

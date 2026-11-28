@@ -200,7 +200,7 @@ fileRoutes.get("/probe", async (c) => {
 fileRoutes.get("/transcode", async (c) => {
   try {
     const abs = resolveProjectFile(c);
-    return abs instanceof Response ? abs : await handleMediaTranscode(abs, c.req.raw, c.req.query("start"), c.req.query("sid"));
+    return abs instanceof Response ? abs : await handleMediaTranscode(abs, c.req.raw, c.req.query("start"), c.req.query("sid"), c.req.query("quality"));
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
   }

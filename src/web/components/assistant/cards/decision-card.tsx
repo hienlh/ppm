@@ -10,6 +10,7 @@
 import { BellRing, Check, ExternalLink, TriangleAlert, Undo2, X } from "@/lib/icons";
 import { CardDraft } from "./card-draft";
 import { CardImages } from "./card-images";
+import { CardFiles } from "./card-files";
 import { chooseAssistantCardOption, dismissAssistantCard, okAssistantCard } from "@/lib/assistant-cards-api";
 import { CardChoices } from "./card-choices";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
@@ -58,6 +59,7 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
       <h4 className="text-[15px] font-semibold leading-snug text-text-primary" data-card-title="">{card.title}</h4>
       {card.body && <CardText text={card.body} fold={card.status !== "open"} projectName={card.projectName} />}
       <CardImages images={card.payload.images} />
+      <CardFiles files={card.payload.files} />
       {card.payload.tasks && <CardHandedOffTasks projectName={card.projectName} tasks={card.payload.tasks} />}
       {options.length > 0 && (
         <CardChoices

@@ -56,9 +56,11 @@ function parseSessionId(raw: string | undefined): string | undefined {
  * GET …/transcode?path=&start=&sid= → live fragmented-MP4 body.
  * `sid` identifies the player; its previous job is killed before this one starts.
  */
-export async function handleMediaTranscode(absPath: string, req: Request, startRaw?: string, sidRaw?: string): Promise<Response> {
+export async function handleMediaTranscode(absPath: string, req: Request, startRaw?: string, sidRaw?: string, qualityRaw?: string): Promise<Response> {
   try {
-    const job = await startTranscode(absPath, { start: parseStart(startRaw), signal: req.signal, sessionId: parseSessionId(sidRaw) });
+    const job = await startTranscode(absPath, {
+      start: parseStart(startRaw), signal: req.signal, sessionId: parseSessionId(sidRaw), quality: qualityRaw === "smooth" ? "smooth" : "default",
+    });
     return new Response(job.stream, {
       headers: {
         "Content-Type": "video/mp4",

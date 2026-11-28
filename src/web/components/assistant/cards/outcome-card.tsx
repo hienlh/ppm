@@ -5,6 +5,7 @@
  */
 import { CircleCheckIcon, ExternalLink, Pause, X, XCircle } from "@/lib/icons";
 import { CardImages } from "./card-images";
+import { CardFiles } from "./card-files";
 import { dismissAssistantCard } from "@/lib/assistant-cards-api";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardButton, CardShell, CardText } from "./card-shell";
@@ -38,6 +39,7 @@ export function OutcomeCard({ card, onCard }: Props) {
       {card.body && !card.payload.taskChanges?.length && <CardText text={card.body} fold projectName={card.projectName} />}
       {!!card.payload.taskChanges?.length && <p className="text-xs text-text-subtle">Made in a turn PPM started, not one you wrote in.</p>}
       <CardImages images={card.payload.images} />
+      <CardFiles files={card.payload.files} />
       {card.payload.taskChanges && <CardTaskChanges changes={card.payload.taskChanges} />}
       {!!card.payload.taskChangesMore && <p className="text-xs text-text-subtle">…and {card.payload.taskChangesMore} more: see each task's History in PPM.</p>}
       {card.payload.detected && <p className="text-xs text-text-subtle">Seen by PPM: the manager chat has not reported on it.</p>}

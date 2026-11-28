@@ -177,6 +177,7 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
     auto_readonly_commands: sentKey("auto_readonly_commands") ? value.auto_readonly_commands : saved.auto_readonly_commands,
     act_on_own: sentKey("act_on_own") ? value.act_on_own : saved.act_on_own,
     db_write_connections: sentKey("db_write_connections") ? value.db_write_connections : saved.db_write_connections,
+    report_file_dirs: sentKey("report_file_dirs") ? value.report_file_dirs : saved.report_file_dirs,
     ...(timezone ? { timezone } : {}),
   };
   // Not chosen yet stays absent (the new-features question is still open); a save that names
