@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.46] - 2026-11-28
+
+### Fixed
+
+- **Typing in Remote Desktop on a phone reaches the host as you type**, in order, with Backspace, Enter and the key bar buttons no longer lost.
+- **Zoomed in on a phone, the view follows the cursor** when it nears the edge, as in TeamViewer and Windows App.
+
 ## [0.26.45] - 2026-11-28
 
 ### Added
