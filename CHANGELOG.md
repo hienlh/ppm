@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.26.45] - 2026-11-28
+
+### Added
+
+- **Right-click in Remote Desktop on a phone by holding a finger for half a second**, as in Windows App, or with a Right click button above the toolbar; a ring shows where it landed.
+- **Drag and drop in mouse mode**: tap, then touch again and drag, to move files and windows or select text.
+- **F1-F12, Alt+F4, Print Screen and Ctrl+Shift+Esc on the phone key bar**, behind a new Fn key.
+- **A Pointer size choice (Small, Medium, Large)** for the phone's virtual cursor, under More.
+
+### Fixed
+
+- **A two-finger right-click in mouse mode clicks at the cursor**, not between the fingers.
+- **A manager's morning digest answer written as plain text is refused with a hint** instead of showing that project empty on the digest card.
+
 ## [0.26.44] - 2026-11-27
 
 ### Fixed
