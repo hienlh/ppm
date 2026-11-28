@@ -4,7 +4,9 @@
  * highlights the button), tap again to release (key-down was already sent, so this just sends
  * the matching key-up) — lets a chord like "Ctrl + tap on the video" be built one tap at a time.
  * The combo buttons (Ctrl+C etc.) are a shortcut for the same idea: one tap sends the whole
- * down/up sequence, independent of whatever sticky modifiers happen to be held.
+ * down/up sequence, independent of whatever sticky modifiers happen to be held. Fn swaps the
+ * Esc/Tab/arrow group for F1–F12, the keys Windows App's keyboard offers that a phone's lacks.
+ * Buttons follow rule 3 of `docs/design-guidelines.md` (26px with text on a phone).
  *
  * No server changes needed — every button here is just the existing `{type:"key",code,down}`
  * protocol `use-remote-input-capture.ts` already speaks; the server's own `heldKeyCodes`
@@ -12,6 +14,7 @@
  * disconnect/heartbeat-timeout, the same as a real held key.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 import { cn } from "@/lib/utils";
 
 /** Ctrl/Cmd + C or X, by `code` rather than by button label so renaming a button cannot
@@ -28,14 +31,14 @@ export interface RemoteDesktopMobileKeyBarProps {
   onCopyCombo?: () => void;
 }
 
-const MODIFIERS = [
+export const MODIFIERS = [
   { label: "Ctrl", code: "ControlLeft" },
   { label: "Alt", code: "AltLeft" },
   { label: "Shift", code: "ShiftLeft" },
   { label: "Win", code: "MetaLeft" },
 ] as const;
 
-const FUNCTION_KEYS = [
+export const FUNCTION_KEYS = [
   { label: "Esc", code: "Escape" },
   { label: "Tab", code: "Tab" },
   { label: "←", code: "ArrowLeft" },
@@ -44,12 +47,19 @@ const FUNCTION_KEYS = [
   { label: "→", code: "ArrowRight" },
 ] as const;
 
-const COMBOS: readonly { label: string; codes: readonly string[] }[] = [
+/** Shown instead of `FUNCTION_KEYS` while Fn is on. */
+export const F_KEYS = Array.from({ length: 12 }, (_, i) => ({ label: `F${i + 1}`, code: `F${i + 1}` }));
+
+export const COMBOS: readonly { label: string; codes: readonly string[] }[] = [
   { label: "Ctrl+C", codes: ["ControlLeft", "KeyC"] },
   { label: "Ctrl+V", codes: ["ControlLeft", "KeyV"] },
   { label: "Ctrl+Z", codes: ["ControlLeft", "KeyZ"] },
   { label: "Ctrl+A", codes: ["ControlLeft", "KeyA"] },
   { label: "Alt+Tab", codes: ["AltLeft", "Tab"] },
+  { label: "Alt+F4", codes: ["AltLeft", "F4"] },
+  { label: "PrtSc", codes: ["PrintScreen"] },
+  // Task Manager: unlike Ctrl+Alt+Del, Windows accepts this one from SendInput.
+  { label: "Ctrl+Shift+Esc", codes: ["ControlLeft", "ShiftLeft", "Escape"] },
   // Windows blocks synthetic Ctrl+Alt+Del (the Secure Attention Sequence) from SendInput
   // regardless of privilege level — this is an OS restriction, not a bug here. The button is
   // best-effort: harmless to try, and there is no way to detect the block ahead of time.
@@ -72,7 +82,8 @@ function KeyBarButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "min-h-11 min-w-11 shrink-0 whitespace-nowrap rounded-md px-2.5 text-xs font-medium text-white/80",
+        TEXT_CONTROL_HEIGHT,
+        "min-w-[26px] shrink-0 whitespace-nowrap rounded-md px-2 text-[11.5px] font-medium text-white/80",
         "active:bg-white/15 transition-colors",
         active && "bg-primary text-primary-foreground",
         className,
@@ -85,6 +96,7 @@ function KeyBarButton({
 
 export function RemoteDesktopMobileKeyBar({ sendMessage, onCopyCombo }: RemoteDesktopMobileKeyBarProps) {
   const [held, setHeld] = useState<ReadonlySet<string>>(new Set());
+  const [fnOn, setFnOn] = useState(false);
   const heldRef = useRef(held);
   heldRef.current = held;
 
@@ -121,7 +133,7 @@ export function RemoteDesktopMobileKeyBar({ sendMessage, onCopyCombo }: RemoteDe
 
   return (
     <div
-      className="flex shrink-0 gap-1 overflow-x-auto border-t border-white/10 bg-black/90 px-2 py-1.5"
+      className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-white/10 bg-black/90 px-2 py-1.5"
       data-testid="remote-desktop-mobile-key-bar"
     >
       {MODIFIERS.map((m) => (
@@ -130,7 +142,8 @@ export function RemoteDesktopMobileKeyBar({ sendMessage, onCopyCombo }: RemoteDe
         </KeyBarButton>
       ))}
       <div className="mx-0.5 w-px shrink-0 bg-white/10" />
-      {FUNCTION_KEYS.map((k) => (
+      <KeyBarButton onClick={() => setFnOn((on) => !on)} active={fnOn}>Fn</KeyBarButton>
+      {(fnOn ? F_KEYS : FUNCTION_KEYS).map((k) => (
         <KeyBarButton key={k.code} onClick={() => tapKey(k.code)}>{k.label}</KeyBarButton>
       ))}
       <div className="mx-0.5 w-px shrink-0 bg-white/10" />

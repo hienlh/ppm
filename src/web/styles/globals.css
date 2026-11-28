@@ -511,6 +511,24 @@ html, body {
   .markdown-content.is-streaming > *:last-child { animation: none; }
 }
 
+/* Remote Desktop on a phone: a ring where a right click landed (long press, two-finger tap,
+ * Right click button). It sits inside the zoomed stage, so `--ring-scale` (1 / zoom) keeps it
+ * the same size on screen at any zoom. The element is removed after 450 ms, which is also what
+ * ends it when motion is reduced. */
+@keyframes remoteDesktopClickRing {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(calc(var(--ring-scale, 1) * 0.5)); }
+  to { opacity: 0; transform: translate(-50%, -50%) scale(calc(var(--ring-scale, 1) * 1.15)); }
+}
+
+.remote-desktop-click-ring {
+  transform: translate(-50%, -50%) scale(var(--ring-scale, 1));
+  animation: remoteDesktopClickRing 0.45s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remote-desktop-click-ring { animation: none; }
+}
+
 /*
  * Hover labels that stand in for a tooltip wait the same beat as the real one.
  *
