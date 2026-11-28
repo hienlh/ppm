@@ -8,7 +8,8 @@
  * tap = right click (at the cursor in MOUSE mode, between the fingers in TOUCH mode), pinch =
  * zoom, drag = pan (while zoomed) or scroll wheel (otherwise). One finger held still for
  * `LONG_PRESS_MS` is also a right click, aimed like a tap, and the toolbar's Right click button
- * turns the next one-finger tap into one. The
+ * turns the next one-finger tap into one. In MOUSE mode a tap followed at once by a second touch
+ * that drags is a left-button drag and drop (`remote-desktop-double-tap-drag.ts`). The
  * actual decision rules live in `remote-desktop-touch-gesture-tracker.ts`; this file only wires
  * DOM touch events to them and to React state.
  *
@@ -24,6 +25,7 @@ import {
   beginTwoFingerTouch, advanceTwoFingerTouch, resolveTwoFingerEnd, LONG_PRESS_MS,
   type SingleTrack, type TwoFingerTrack, type RemoteDesktopInputMode,
 } from "./remote-desktop-touch-gesture-tracker";
+import { beginDoubleTapDrag, dragPressDelay, pressDragButton } from "./remote-desktop-double-tap-drag";
 
 export type { RemoteDesktopInputMode };
 
@@ -165,6 +167,25 @@ export function useRemoteDesktopTouch({
     const clearLongPress = () => {
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
     };
+    // Mouse mode: when the last one-finger touch ended as a left-click tap, so the next touch
+    // can become a drag; and the timer holding back that drag's press.
+    let lastLeftTapEndAt: number | null = null;
+    let dragPressTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearDragPress = () => {
+      if (dragPressTimer) { clearTimeout(dragPressTimer); dragPressTimer = null; }
+    };
+    /** Lets go of a left button a drag has pressed on the host, for a touch that ends without
+     *  its own touchend (a second finger, a touchcancel). */
+    const releaseHeldButton = () => {
+      clearDragPress();
+      if (!single) return;
+      if (single.moved && modeRef.current === "touch") {
+        sendAll(resolveSingleTouchEnd(single, single.last.x, single.last.y, "touch", transformRef.current, cursorRef.current));
+      } else if (single.drag?.downSent) {
+        const c = cursorRef.current;
+        sendAll([{ type: "pointer", xFrac: c.xFrac, yFrac: c.yFrac, button: "left", down: false }]);
+      }
+    };
     /** Sends a click and, when it was a right click, shows where it landed and disarms the
      *  toolbar button if that is what made it one. */
     const sendClick = (msgs: Record<string, unknown>[], usedArmed: boolean) => {
@@ -196,8 +217,13 @@ export function useRemoteDesktopTouch({
       if (e.touches.length === 1) {
         two = null;
         const t = e.touches[0]!;
-        const track = beginSingleTouch(t.clientX, t.clientY, rect);
+        const drag = modeRef.current === "mouse" && !armedRef.current
+          ? beginDoubleTapDrag(lastLeftTapEndAt, performance.now(), cursorRef.current)
+          : null;
+        lastLeftTapEndAt = null;
+        const track = beginSingleTouch(t.clientX, t.clientY, rect, drag);
         single = track;
+        if (drag) return; // a drag waiting to happen, not a hold
         longPressTimer = setTimeout(() => {
           longPressTimer = null;
           if (single !== track) return;
@@ -207,12 +233,11 @@ export function useRemoteDesktopTouch({
           sendClick(r.messages, armedRef.current);
         }, LONG_PRESS_MS);
       } else if (e.touches.length === 2) {
-        // A second finger landing after the first had already started a touch-mode drag would
-        // otherwise leave the host's left button held down: that drag never gets its touchend.
-        if (single?.moved && modeRef.current === "touch") {
-          sendAll(resolveSingleTouchEnd(single, single.last.x, single.last.y, "touch", transformRef.current, cursorRef.current));
-        }
+        // A second finger landing after the first had already started a drag would otherwise
+        // leave the host's left button held down: that drag never gets its touchend.
+        releaseHeldButton();
         single = null;
+        lastLeftTapEndAt = null;
         const [a, b] = [e.touches[0]!, e.touches[1]!];
         two = beginTwoFingerTouch({ x: a.clientX, y: a.clientY }, { x: b.clientX, y: b.clientY }, transformRef.current.scale);
       } else {
@@ -244,6 +269,16 @@ export function useRemoteDesktopTouch({
           pendingRef.current.sendCursorMove = !!r.sendCursorMove;
           schedule();
         }
+        const drag = single.drag;
+        if (r.beginDrag && drag) {
+          const track = single;
+          const press = () => {
+            dragPressTimer = null;
+            if (single === track) sendAll(pressDragButton(drag, cursorRef.current));
+          };
+          const delay = dragPressDelay(drag, performance.now());
+          if (delay === 0) press(); else dragPressTimer = setTimeout(press, delay);
+        }
         return;
       }
       if (two && e.touches.length === 2) {
@@ -265,11 +300,16 @@ export function useRemoteDesktopTouch({
       e.stopPropagation();
       const t = e.changedTouches[0];
       clearLongPress();
+      clearDragPress();
       if (single) {
         const x = t ? t.clientX : single.last.x;
         const y = t ? t.clientY : single.last.y;
         const armed = armedRef.current;
-        sendClick(resolveSingleTouchEnd(single, x, y, modeRef.current, transformRef.current, cursorRef.current, armed ? "right" : "left"), armed);
+        const msgs = resolveSingleTouchEnd(single, x, y, modeRef.current, transformRef.current, cursorRef.current, armed ? "right" : "left");
+        sendClick(msgs, armed);
+        // Only a first tap opens the window for a drag: the second tap of a double click does not.
+        const leftTap = msgs.length === 2 && msgs[0]!.button === "left";
+        lastLeftTapEndAt = leftTap && !single.drag && modeRef.current === "mouse" ? performance.now() : null;
         single = null;
       }
       if (two) {
@@ -282,13 +322,10 @@ export function useRemoteDesktopTouch({
       e.stopPropagation();
       clearLongPress();
       // A held button left down on the host would be worse than a dropped click — release it.
-      // Only touch mode ever sends a "down" during a drag (mouse mode only moves the virtual
-      // cursor until a tap), so only touch mode has anything to release here.
-      if (single?.moved && modeRef.current === "touch") {
-        sendAll(resolveSingleTouchEnd(single, single.last.x, single.last.y, "touch", transformRef.current, cursorRef.current));
-      }
+      releaseHeldButton();
       single = null;
       two = null;
+      lastLeftTapEndAt = null;
     };
 
     container.addEventListener("touchstart", onTouchStart, { passive: false });
@@ -298,6 +335,7 @@ export function useRemoteDesktopTouch({
 
     return () => {
       clearLongPress();
+      clearDragPress();
       if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
       container.removeEventListener("touchstart", onTouchStart);
       container.removeEventListener("touchmove", onTouchMove);

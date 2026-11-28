@@ -7,6 +7,7 @@
  */
 import { classifyTwoFingerGesture, isTapGesture, touchDistance, touchMidpoint, type PointerSample } from "./remote-desktop-gesture-classifiers";
 import { fractionFromZoomedPoint, type ZoomPanTransform, type Fraction, type Rect } from "./remote-desktop-coords";
+import { releaseDragButton, type DoubleTapDrag } from "./remote-desktop-double-tap-drag";
 
 export type RemoteDesktopInputMode = "touch" | "mouse";
 
@@ -45,10 +46,13 @@ export interface SingleTrack {
   /** The displayed video's rect (post letterbox) at gesture start — cached because it does not
    *  change mid-drag. */
   rect: Rect;
+  /** Mouse mode: this touch followed a tap closely enough to drag with the left button down
+   *  (`remote-desktop-double-tap-drag.ts`). */
+  drag: DoubleTapDrag | null;
 }
 
-export function beginSingleTouch(x: number, y: number, rect: Rect): SingleTrack {
-  return { start: { x, y, t: performance.now() }, last: { x, y }, moved: false, longPressed: false, rect };
+export function beginSingleTouch(x: number, y: number, rect: Rect, drag: DoubleTapDrag | null = null): SingleTrack {
+  return { start: { x, y, t: performance.now() }, last: { x, y }, moved: false, longPressed: false, rect, drag };
 }
 
 export interface SingleMoveResult {
@@ -57,6 +61,9 @@ export interface SingleMoveResult {
   /** New virtual-cursor fraction (mouse mode only). */
   cursor?: Fraction;
   sendCursorMove?: boolean;
+  /** Mouse mode: a double-tap drag just started moving, so its left button should go down
+   *  (the hook decides when; see `dragPressDelay`). */
+  beginDrag?: boolean;
 }
 
 export function advanceSingleTouch(
@@ -86,13 +93,20 @@ export function advanceSingleTouch(
   // while zoomed in still moves the cursor the same *host* distance.
   const dx = (x - track.last.x) / transform.scale;
   const dy = (y - track.last.y) / transform.scale;
+  const wasMoved = track.moved;
   if (dist > TAP_MOVE_THRESHOLD_PX) track.moved = true;
   track.last = { x, y };
   const next: Fraction = {
     xFrac: clamp(cursor.xFrac + dx / track.rect.width, 0, 1),
     yFrac: clamp(cursor.yFrac + dy / track.rect.height, 0, 1),
   };
-  return { cursor: next, sendCursorMove: true };
+  // A double-tap drag keeps the host cursor still until its press has gone out, so the button
+  // goes down where the drag started rather than wherever the finger had got to.
+  return {
+    cursor: next,
+    sendCursorMove: !track.drag || track.drag.downSent,
+    beginDrag: !!track.drag && !wasMoved && track.moved,
+  };
 }
 
 /** Where a click from one finger lands: the virtual cursor in MOUSE mode, the finger in TOUCH
@@ -110,8 +124,7 @@ export function singleTouchTarget(
 
 /**
  * `tapButton` is what a tap clicks: "right" while the toolbar's Right click button is armed.
- * The result says which click it made, so the caller can disarm that button only when a tap
- * actually used it (a drag does not).
+ * A drag never clicks, so the caller can tell from the result whether the armed button was used.
  */
 export function resolveSingleTouchEnd(
   track: SingleTrack,
@@ -123,6 +136,7 @@ export function resolveSingleTouchEnd(
   tapButton: ClickButton = "left",
 ): Record<string, unknown>[] {
   if (track.longPressed) return [];
+  if (mode === "mouse" && track.drag && track.moved) return releaseDragButton(track.drag, cursor);
   const end: PointerSample = { x, y, t: performance.now() };
   const tapped = isTapGesture(track.start, end, TAP_MOVE_THRESHOLD_PX, TAP_MAX_DURATION_MS);
   const target = singleTouchTarget(track, x, y, mode, transform, cursor);
@@ -142,7 +156,8 @@ export function resolveLongPress(
   transform: ZoomPanTransform,
   cursor: Fraction,
 ): { messages: Record<string, unknown>[]; at: Fraction } | null {
-  if (track.moved || track.longPressed) return null;
+  // A touch that followed a tap is a drag waiting to happen, not a hold.
+  if (track.moved || track.longPressed || track.drag) return null;
   if (Math.hypot(track.last.x - track.start.x, track.last.y - track.start.y) > TAP_MOVE_THRESHOLD_PX) return null;
   track.longPressed = true;
   const at = singleTouchTarget(track, track.start.x, track.start.y, mode, transform, cursor);

@@ -13,6 +13,7 @@ import {
   useRemoteDesktopTouch, type RemoteDesktopInputMode,
 } from "../../../src/web/components/remote-desktop/use-remote-desktop-touch.ts";
 import { LONG_PRESS_MS } from "../../../src/web/components/remote-desktop/remote-desktop-touch-gesture-tracker.ts";
+import { DOUBLE_CLICK_GUARD_MS, DOUBLE_TAP_WINDOW_MS } from "../../../src/web/components/remote-desktop/remote-desktop-double-tap-drag.ts";
 
 const BOX = { left: 0, top: 0, width: 400, height: 400, right: 400, bottom: 400, x: 0, y: 0 };
 
@@ -26,6 +27,11 @@ afterEach(async () => {
   uninstallDom();
 });
 
+// Stable across renders, as the connection's own `sendMessage` is: a new function per render
+// would re-run the hook's effect, which ends any touch in progress.
+const record = (m: Record<string, unknown>) => { sent.push(m); };
+const markUsed = () => { used += 1; };
+
 function Harness({ mode, armed }: { mode: RemoteDesktopInputMode; armed: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -34,9 +40,9 @@ function Harness({ mode, armed }: { mode: RemoteDesktopInputMode; armed: boolean
     canvasRef,
     mode,
     enabled: true,
-    sendMessage: (m) => { sent.push(m); },
+    sendMessage: record,
     rightClickArmed: armed,
-    onRightClickUsed: () => { used += 1; },
+    onRightClickUsed: markUsed,
   });
   return (
     <div
@@ -163,5 +169,82 @@ describe("Right click button", () => {
     touch(stage, "touchend", [], [{ x: 160, y: 100 }]);
     expect(clicks()).toEqual([]);
     expect(used).toBe(0);
+  });
+});
+
+describe("double tap and drag = drag and drop (mouse mode)", () => {
+  const presses = () => sent.filter((m) => m.button === "left" && m.down === true);
+  const releases = () => sent.filter((m) => m.button === "left" && m.down === false);
+
+  /** A tap, then a second touch down `gapMs` later that drags 60px right. */
+  async function tapThenDrag(stage: HTMLElement, gapMs: number) {
+    touch(stage, "touchstart", [{ x: 200, y: 200 }]);
+    touch(stage, "touchend", [], [{ x: 200, y: 200 }]);
+    await sleep(gapMs);
+    touch(stage, "touchstart", [{ x: 200, y: 200 }]);
+    touch(stage, "touchmove", [{ x: 230, y: 200 }]);
+    touch(stage, "touchmove", [{ x: 260, y: 200 }]);
+  }
+
+  it("presses at the cursor where the drag started, only after the double-click time, and releases where it ends", async () => {
+    const stage = await setup("mouse");
+    await tapThenDrag(stage, 50);
+    expect(presses()).toHaveLength(1); // the tap's own click only, nothing yet for the drag
+    await sleep(DOUBLE_CLICK_GUARD_MS);
+    expect(presses()).toHaveLength(2);
+    expect(presses()[1]).toMatchObject({ xFrac: 0.5, yFrac: 0.5 });
+    touch(stage, "touchend", [], [{ x: 260, y: 200 }]);
+    const up = releases().at(-1)!;
+    expect(up.xFrac as number).toBeCloseTo(0.5 + 60 / 400, 6);
+    expect(up.yFrac).toBe(0.5);
+    expect(sent.some((m) => m.button === "right")).toBe(false);
+  });
+
+  it("a drag that ends before the press was due still presses and releases", async () => {
+    const stage = await setup("mouse");
+    await tapThenDrag(stage, 50);
+    touch(stage, "touchend", [], [{ x: 260, y: 200 }]);
+    expect(presses()).toHaveLength(2);
+    expect(releases().at(-1)!.xFrac as number).toBeCloseTo(0.65, 6);
+    await sleep(DOUBLE_CLICK_GUARD_MS);
+    expect(presses()).toHaveLength(2); // the cancelled timer does not press again
+  });
+
+  it("a second tap is a double click, not a drag", async () => {
+    const stage = await setup("mouse");
+    for (let i = 0; i < 2; i++) {
+      touch(stage, "touchstart", [{ x: 200, y: 200 }]);
+      touch(stage, "touchend", [], [{ x: 200, y: 200 }]);
+    }
+    await sleep(DOUBLE_CLICK_GUARD_MS + 50);
+    expect(clicks()).toHaveLength(4);
+    expect(presses().every((m) => m.xFrac === 0.5)).toBe(true);
+  });
+
+  it("a touch that comes too late after the tap only moves the cursor", async () => {
+    const stage = await setup("mouse");
+    await tapThenDrag(stage, DOUBLE_TAP_WINDOW_MS + 80);
+    await sleep(DOUBLE_CLICK_GUARD_MS);
+    touch(stage, "touchend", [], [{ x: 260, y: 200 }]);
+    expect(presses()).toHaveLength(1);
+  });
+
+  it("a touchcancel mid-drag lets go of the button", async () => {
+    const stage = await setup("mouse");
+    await tapThenDrag(stage, 50);
+    await sleep(DOUBLE_CLICK_GUARD_MS);
+    touch(stage, "touchcancel", []);
+    expect(releases().at(-1)).toMatchObject({ button: "left", down: false });
+    expect(presses()).toHaveLength(2);
+    expect(releases()).toHaveLength(2);
+  });
+
+  it("a second touch soon after a tap is not a long press", async () => {
+    const stage = await setup("mouse");
+    touch(stage, "touchstart", [{ x: 200, y: 200 }]);
+    touch(stage, "touchend", [], [{ x: 200, y: 200 }]);
+    touch(stage, "touchstart", [{ x: 200, y: 200 }]);
+    await sleep(LONG_PRESS_MS + 80);
+    expect(sent.some((m) => m.button === "right")).toBe(false);
   });
 });
