@@ -5,7 +5,8 @@
  * touch.md`): TOUCH maps a 1-finger drag straight to an absolute drag at the touch point;
  * MOUSE keeps a client-side virtual cursor that a 1-finger drag moves *relatively*, with a tap
  * clicking wherever the cursor currently sits. Two-finger gestures are shared by both modes:
- * tap = right click, pinch = zoom, drag = pan (while zoomed) or scroll wheel (otherwise). The
+ * tap = right click (at the cursor in MOUSE mode, between the fingers in TOUCH mode), pinch =
+ * zoom, drag = pan (while zoomed) or scroll wheel (otherwise). The
  * actual decision rules live in `remote-desktop-touch-gesture-tracker.ts`; this file only wires
  * DOM touch events to them and to React state.
  *
@@ -131,6 +132,11 @@ export function useRemoteDesktopTouch({
         const t = e.touches[0]!;
         single = beginSingleTouch(t.clientX, t.clientY, rect);
       } else if (e.touches.length === 2) {
+        // A second finger landing after the first had already started a touch-mode drag would
+        // otherwise leave the host's left button held down: that drag never gets its touchend.
+        if (single?.moved && modeRef.current === "touch") {
+          sendAll(resolveSingleTouchEnd(single, single.last.x, single.last.y, "touch", transformRef.current, cursorRef.current));
+        }
         single = null;
         const [a, b] = [e.touches[0]!, e.touches[1]!];
         two = beginTwoFingerTouch({ x: a.clientX, y: a.clientY }, { x: b.clientX, y: b.clientY }, transformRef.current.scale);
@@ -189,7 +195,7 @@ export function useRemoteDesktopTouch({
         single = null;
       }
       if (two) {
-        sendAll(resolveTwoFingerEnd(two, getVideoRect(), transformRef.current));
+        sendAll(resolveTwoFingerEnd(two, getVideoRect(), transformRef.current, modeRef.current, cursorRef.current));
         two = null;
       }
     };

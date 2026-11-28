@@ -182,14 +182,22 @@ export function advanceTwoFingerTouch(
   return result;
 }
 
+/**
+ * A two-finger tap is a right click, aimed by the same rule a one-finger tap uses in that mode:
+ * MOUSE clicks where the virtual cursor sits (the fingers only say "right click", like a
+ * trackpad), TOUCH clicks the point between the fingers. Mouse mode used to aim at the midpoint
+ * too, so the menu opened wherever the fingers happened to land and the host cursor jumped
+ * there, away from the marker the user had positioned.
+ */
 export function resolveTwoFingerEnd(
   track: TwoFingerTrack,
   rect: Rect,
   transform: ZoomPanTransform,
+  mode: RemoteDesktopInputMode,
+  cursor: Fraction,
 ): Record<string, unknown>[] {
-  if (track.gesture === null && performance.now() - track.startTime <= TAP_MAX_DURATION_MS) {
-    const frac = fractionFromZoomedPoint(track.lastMid.x, track.lastMid.y, rect, transform);
-    return clickMessages(frac.xFrac, frac.yFrac, "right");
-  }
-  return [];
+  if (track.gesture !== null || performance.now() - track.startTime > TAP_MAX_DURATION_MS) return [];
+  if (mode === "mouse") return clickMessages(cursor.xFrac, cursor.yFrac, "right");
+  const frac = fractionFromZoomedPoint(track.lastMid.x, track.lastMid.y, rect, transform);
+  return clickMessages(frac.xFrac, frac.yFrac, "right");
 }
