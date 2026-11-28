@@ -1892,9 +1892,15 @@ message id in the `assistant_telegram_card_desk` config row. Three things are lo
   instead" and "Don't send" (`assistant-telegram-desk-held-replies.ts`); a press sends the very
   message on as a reply to that card's own message. A card the user never saw is only ever reached
   by their own press. A reply to a desk `/cards` moved down is matched the same way.
-- **Edits are spaced out** (`DeskTiming`): a change waits 2 s for the next one, the desk holds still
-  45 s after the user writes in the chat, edits it makes by itself keep 15 s apart, and nothing
-  waits more than 2 min; what the user does on the desk is drawn at once.
+- **Edits are paced by what changed** (`DeskTiming`): a card that stopped waiting (answered,
+  withdrawn) leaves within about 0.3 s, so several ending together are still one edit; a new card
+  waits 3 s for the next change and is shown within 5 s however many follow; two edits keep 1 s
+  apart; what the user does on the desk, and the first draw after a restart, go at once. The desk
+  does not hold still while the user writes (it used to, for 45 s, which with the 15 s gap and the
+  2 min cap made it lag behind the cards): the snapshots above already match a reply to what the
+  user saw. A desk edit refused with a 429 is handed back by the client (`returnRateLimit`) rather
+  than repeated with the same text; the send lane waits `retry_after` and the draw that follows reads
+  the cards as they are then, so one edit carries the newest list.
 - **Edits never ring**, so new cards still arrive as their own messages; with the desk on, a card's
   reminder is one line with a sound replying to the desk. The desk is always sent silently.
 - **Codes and restarts.** Every five minutes (`DESK_TICK_MS`) the listed cards' code groups are

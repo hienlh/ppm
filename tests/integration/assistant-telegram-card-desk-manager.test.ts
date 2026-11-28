@@ -38,7 +38,7 @@ function rig(chat: number, store: CardDeskStore) {
   let cards: AssistantTelegramManagerCards | null = null;
   const desk = new AssistantTelegramCardsDesk({
     queue, codes, store, enabled: () => true, restore: (c) => cards!.restoreDesk(c),
-    timing: { debounceMs: 0, quietAfterUserMs: 0, minGapMs: 0, maxWaitMs: 0 },
+    timing: { debounceMs: 0, maxWaitMs: 0, removeDelayMs: 0, minGapMs: 0 },
   });
   cards = new AssistantTelegramManagerCards({
     queue, codes, desk,

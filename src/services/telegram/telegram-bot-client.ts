@@ -4,9 +4,9 @@
  * sent.
  *
  * Telegram's limits are handled here so no caller has to: a 429 is waited out once (Telegram
- * says how long), a message Telegram cannot parse as HTML is resent as plain text rather than
- * lost, and repeated edits of one message are spaced out, because editing a streaming answer on
- * every delta is exactly what draws a 429.
+ * says how long; an edit may ask for the 429 back instead), a message Telegram cannot parse as
+ * HTML is resent as plain text rather than lost, and repeated edits of one message are spaced
+ * out, because editing a streaming answer on every delta is exactly what draws a 429.
  *
  * The token is in every URL, so nothing here logs a URL or a raw fetch error: a failure is
  * logged as the method, Telegram's error code and its description.
@@ -294,7 +294,15 @@ export class TelegramBotClient {
     chatId: number | string,
     messageId: number,
     html: string,
-    options: { replyMarkup?: InlineKeyboardMarkup; final?: boolean } = {},
+    options: {
+      replyMarkup?: InlineKeyboardMarkup;
+      final?: boolean;
+      /**
+       * A 429 is returned rather than waited out and the same text sent again: for a caller that
+       * redraws after the wait, so what goes out is what is true by then.
+       */
+      returnRateLimit?: boolean;
+    } = {},
   ): Promise<TelegramEditResult> {
     const key = `${chatId}:${messageId}`;
     const now = Date.now();
@@ -309,7 +317,7 @@ export class TelegramBotClient {
       parse_mode: "HTML",
       link_preview_options: { is_disabled: true },
       ...(options.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
-    }, { notModifiedIsOk: true });
+    }, { notModifiedIsOk: true, ...(options.returnRateLimit ? { returnRateLimit: true } : {}) });
     return res.ok ? { ok: true, result: true } : res;
   }
 
@@ -437,12 +445,13 @@ export class TelegramBotClient {
   private async call<T>(
     method: string,
     body: Record<string, unknown>,
-    options: { signal?: AbortSignal; quiet?: boolean; notModifiedIsOk?: boolean; goneIsOk?: boolean; timeoutMs?: number } = {},
+    options: { signal?: AbortSignal; quiet?: boolean; notModifiedIsOk?: boolean; goneIsOk?: boolean; timeoutMs?: number; returnRateLimit?: boolean } = {},
   ): Promise<TelegramCallResult<T>> {
     body = withoutVaultValues(body);
     let res = await this.request<T>(method, body, options);
 
-    if (!res.ok && res.errorCode === 429 && res.retryAfter !== undefined && res.retryAfter <= this.maxRetryAfterS) {
+    if (!res.ok && res.errorCode === 429 && !options.returnRateLimit
+      && res.retryAfter !== undefined && res.retryAfter <= this.maxRetryAfterS) {
       log.warn(`${method} rate-limited: retrying in ${res.retryAfter}s`);
       await this.sleep(res.retryAfter * 1000);
       if (options.signal?.aborted) return res;
