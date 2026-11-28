@@ -11,6 +11,8 @@ import { triggerDownload } from "@/lib/file-download";
 import { useTabStore } from "@/stores/tab-store";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { canOpenInPpm, viewerKindOf } from "../can-open-in-ppm";
+import { isMobileDevice } from "@/hooks/use-is-mobile";
+import { useMobileExplorerOpenState } from "../use-explorer-open-state";
 
 /**
  * Open a file in the tab that can display it.
@@ -27,6 +29,10 @@ export function openEntryInPpm(entry: FsEntry): boolean {
     metadata: { filePath: entry.path },
     closable: true,
   });
+  // On a phone the explorer is a full-screen sheet over the tab just opened: a clip tapped from a
+  // `/files?path=` link played behind it, out of sight. Close it so the file is what shows. A
+  // desktop explorer is a floating window beside the tab and stays.
+  if (isMobileDevice()) useMobileExplorerOpenState.getState().close();
   return true;
 }
 

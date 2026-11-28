@@ -30,7 +30,8 @@ import { loopKit } from "./assistant-manager-loop/loop-kit.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-card-files-e2e-"));
 const shotsDir = resolve(process.env.PPM_CARD_FILES_SHOTS ?? join(sandbox, "shots"));
-const logs = join(sandbox, "logs");
+// Beside the shots, so a run in a throwaway container leaves its logs behind.
+const logs = join(shotsDir, "logs");
 const ppm = join(sandbox, "ppm"), home = join(sandbox, "home"), alpha = join(sandbox, "alpha");
 await Promise.all([shotsDir, logs, ppm, home, alpha, join(alpha, "out"), join(alpha, "docs")].map((p) => mkdir(p, { recursive: true })));
 for (const name of readdirSync(shotsDir)) if (name.endsWith(".png")) rmSync(join(shotsDir, name), { force: true });
@@ -120,6 +121,7 @@ try {
     ...process.env, PPM_HOME: ppm, HOME: home, USERPROFILE: home, PPM_HTML_TEST_REAL_HOME: homedir(),
     PPM_HTML_TEST_PORT: String(port), PPM_ASSISTANT_WEB_DIR: webDir,
     PPM_ASSISTANT_FIXTURE_STATE: join(sandbox, "scripted-provider-state.json"),
+    PPM_ASSISTANT_APPROVAL_TIMEOUT_MS: "180000",
     PPM_ASSISTANT_MANAGER_LOOP: "1",
     PPM_ASSISTANT_FAKE_TELEGRAM: "1", PPM_TELEGRAM_API_BASE: fakeInfo.api, PPM_ASSISTANT_FAKE_TELEGRAM_TOKEN: fakeInfo.token,
     PPM_ASSISTANT_FAKE_TELEGRAM_CHATS: JSON.stringify([[String(OWNER), String(OWNER), "Phone"]]),
@@ -288,6 +290,8 @@ try {
 
   // 6. The File Explorer: Original in the browser's own player, Smooth through the live transcode.
   const name = clip.split(/[\\/]/).pop();
+  // An explorer row (a span), never the card's own row for the same file (a div) behind the sheet.
+  const explorerRow = (pg) => pg.locator("span.truncate").filter({ hasText: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }).first();
   const explorerVideo = async (pg, label, copy) => {
     const pane = pg.locator(`[data-video-preview="${copy}"]:visible`).first();
     await pane.waitFor({ timeout: 60000 });
@@ -301,7 +305,7 @@ try {
   };
   // Phone: starts on Smooth (the choice made above).
   await mob.goto(`${web}/files?path=${encodeURIComponent(clip)}`);
-  const entry = mob.getByText(name, { exact: true }).first();
+  const entry = explorerRow(mob);
   await entry.waitFor({ timeout: 30000 });
   await entry.tap();
   await explorerVideo(mob, "390 explorer smooth", "smooth");
@@ -311,18 +315,24 @@ try {
   await explorerVideo(mob, "390 explorer original", "original");
   await mob.waitForTimeout(300);
   await mob.screenshot({ path: join(shotsDir, "390-explorer-original.png") });
-  // Desktop: starts on Original.
-  await page.goto(`${web}/files?path=${encodeURIComponent(clip)}`);
-  const deskEntry = page.getByText(name, { exact: true }).first();
+  // Desktop, in a fresh context: the Assistant window the earlier steps opened would sit over the
+  // tab. Starts on Original (a desktop's default).
+  const deskCtx = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
+  await deskCtx.addInitScript(onboardingDone);
+  const desk2 = await deskCtx.newPage();
+  await desk2.goto(`${web}/files?path=${encodeURIComponent(clip)}`);
+  const deskEntry = explorerRow(desk2);
   await deskEntry.waitFor({ timeout: 30000 });
   await deskEntry.dblclick();
-  await explorerVideo(page, "1440 explorer original", "original");
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: join(shotsDir, "1440-explorer-original.png") });
-  await page.locator('[data-quality-toggle]:visible [data-quality="smooth"]').first().click();
-  await explorerVideo(page, "1440 explorer smooth", "smooth");
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: join(shotsDir, "1440-explorer-smooth.png") });
+  // The explorer is a floating window over the editor's own bar; its close light is the first button.
+  await desk2.locator('[role="toolbar"][aria-label$="title bar"] button').first().click();
+  await explorerVideo(desk2, "1440 explorer original", "original");
+  await desk2.waitForTimeout(300);
+  await desk2.screenshot({ path: join(shotsDir, "1440-explorer-original.png") });
+  await desk2.locator('[data-quality-toggle]:visible [data-quality="smooth"]').first().click();
+  await explorerVideo(desk2, "1440 explorer smooth", "smooth");
+  await desk2.waitForTimeout(300);
+  await desk2.screenshot({ path: join(shotsDir, "1440-explorer-smooth.png") });
   ok("File Explorer at 390 and 1440: Original plays in the browser's own player, Smooth plays through the ~4 Mbit/s transcode");
   // The Settings section where the folder is listed.
   await page.goto(`${web}/?openSettings=assistant`);

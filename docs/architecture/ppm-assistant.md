@@ -1675,6 +1675,18 @@ original pictures, a PDF, a zip. The user gets them in PPM and on Telegram.
   (`zoomable-image.tsx`), and a PDF is shown inline. Download is a link the server answers as an
   attachment, so a large clip never sits in the page's memory. Only files a report copied can be
   opened, so the allowed-folder and secret checks above already applied.
+- **Original / Smooth.** A video on a card gets a Smooth copy made in the background when the card
+  is filed (`card-file-smooth.ts`, `encodeSmoothCopy`): two-pass H.264 at 4 Mbit/s, same
+  resolution, AAC 128 kbps, faststart, kept as `<id>.smooth.mp4`. A clip already at 5.5 Mbit/s or
+  less is marked skipped, and a failed encode is marked too (`<id>.smooth.json`), so neither is retried.
+  `/info` reports `smooth: ready | pending | none`, and restarts a job a server restart cut off.
+  `?variant=smooth` serves the copy with Range. The viewer's Original / Smooth chip
+  (`components/media/quality-toggle.tsx`) is remembered per device in localStorage
+  (`video-quality-pref.ts`): a phone starts on Smooth, a desktop on Original. While the copy is
+  being made the original plays, and the copy takes over at the same second once it is ready.
+  Download always gives the original. Why it exists: measured on 28/11/2026, the host uploads at
+  65–69 Mbit/s and the tunnel carries 50–63 Mbit/s with Range intact, but a phone on mobile data
+  could not hold the 16 Mbit/s of a 1080×1920 CapCut export.
 - **On Telegram** (`assistant-telegram-card-files.ts`). The card's text lists the files. When PPM
   has an address for the phone (`notificationLink`: the tunnel, else the Tailscale Service, else
   localhost), each name links to its viewer page. Each file then follows as a silent reply to the
