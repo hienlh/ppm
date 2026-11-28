@@ -117,11 +117,11 @@ const digestCards = (): StoredDigest[] =>
     Array<{ id: string; title: string; payload_json: string; outbound: string }>)
     .map((r) => ({ id: r.id, title: r.title, payload: JSON.parse(r.payload_json) as AssistantCard["payload"], outbound: r.outbound }));
 
-async function answer(sessionId: string, items: string[]) {
+async function answer(sessionId: string, items: string[] | undefined, extra: Record<string, unknown> = {}) {
   const token = sessionCollabMcpTokens.mint({ sessionId });
   const res = await app.request("/mcp", {
     method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "report_to_assistant", arguments: { kind: "digest", title: "Status", items } } }),
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "report_to_assistant", arguments: { kind: "digest", title: "Status", ...(items ? { items } : {}), ...extra } } }),
   });
   const result = (await res.json() as { result: { content: Array<{ text: string }>; isError?: boolean } }).result;
   return { text: result.content[0]!.text, isError: result.isError === true };
@@ -183,6 +183,26 @@ describe("the morning digest", () => {
     await advance(DIGEST_ANSWER_WINDOW_MS);
     const [card] = digestCards();
     expect(card!.payload.projects!.map((p) => [p.name, p.state])).toEqual([["dg-a", "answered"], ["dg-b", "no_answer"]]);
+    await idle(assistant);
+  });
+
+  it("refuses a digest written into body, so the manager's items are not lost to an empty section", async () => {
+    await morning();
+    const b = asksTo(mgrB).length;
+    await advance(60_000);
+    await until(() => asksTo(mgrB).length === b + 1, "both asked");
+    await idle(mgrA);
+    await idle(mgrB);
+    const bodyOnly = await answer(mgrA, undefined, { body: ["**Done**", "- Released 2.14", "", "**Waiting on you**", "- PR #50"].join("\n") });
+    expect(bodyOnly.isError).toBe(true);
+    expect(bodyOnly.text).toContain("`body` does not go with digest");
+    expect((await answer(mgrB, ["PR #50 reviewed"])).text).toContain("Your 1 item is in the morning digest");
+    expect(digestCards()).toHaveLength(0);
+    expect((await answer(mgrA, ["Released 2.14", "PR #50 waits on you"])).text).toContain("Your 2 items are");
+    const [card] = digestCards();
+    expect(card!.payload.projects!.map((p) => [p.name, p.state, p.items])).toEqual([
+      ["dg-a", "answered", ["Released 2.14", "PR #50 waits on you"]], ["dg-b", "answered", ["PR #50 reviewed"]],
+    ]);
     await idle(assistant);
   });
 

@@ -2089,9 +2089,13 @@ PPM asks every manager chat whose digest switch is on (`PATCH /api/assistant/man
   records which chats were asked, each ask's client id, which asks a turn took (`turn_started`
   naming that id, or an answer), and the answers.
 - **Answers** arrive as `report_to_assistant` with kind `digest`: cleaned like every report field,
-  at most 12 items, one answer per asked project (a second replaces the first). An answer from a
-  chat that was not asked, or after the digest was put together, is refused with a hint to report
-  it as `done` or `needs_decision` instead.
+  at most 12 items, one answer per asked project (a second replaces the first). The card shows
+  `items` and nothing else, so a digest answer without `items` (`items: []` says there is nothing
+  to report) or with a `body` is refused, saying to put each line in `items`: on 28/11/2026 a
+  manager wrote its whole status into `body`, the answer was taken with no items, the tool said it
+  was in the digest, and the card showed that project with nothing. A taken answer is told how
+  many items went in. An answer from a chat that was not asked, or after the digest was put
+  together, is refused with a hint to report it as `done` or `needs_decision` instead.
 - **The card** is made when every asked project answered or `DIGEST_ANSWER_WINDOW_MS` (60 min)
   passed: kind `digest`, no project, payload `{date, projects: [{name, state, items, titleOnly?, waiting?, waitingMore?, waitingMine?}],
   resurfaced?}`, where `resurfaced` is PPM's own "Back from snooze today" section — the tasks of
