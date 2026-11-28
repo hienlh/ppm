@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.26.47] - 2026-11-28
+
+### Added
+
+- **Manager reports can carry files**: the card lists them with Open and Download, a PPM page plays a video full screen, and Telegram gets each file as a document (a video over 50 MB is compressed first).
+- **Files on cards are limited to the manager's project and folders you list** in Settings → PPM Assistant → Manager chats; private folders, `.env` files and keys are refused.
+- **Original / Smooth for card videos and the File Explorer**: Smooth is a lighter ~4 Mbit/s copy for slow links, remembered per device; Download still gives the original.
+
+### Fixed
+
+- **The File Explorer plays videos in the browser's own player**, so a tap no longer toggles play and full screen works on iPhone.
+- **On a phone, opening a file from the explorer closes the explorer sheet** instead of playing behind it.
+- **The pinned "Waiting for you" list on Telegram keeps up with the cards**: an answered card leaves within about a second and a new one shows within 5 s.
+
 ## [0.26.46] - 2026-11-28
 
 ### Fixed
